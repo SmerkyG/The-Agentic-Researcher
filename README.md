@@ -26,13 +26,13 @@
 
 ---
 
-The Agentic Researcher launches AI coding agents inside **sandboxed containers** with filesystem isolation, GPU support, and structured research instructions.
+The Agentic Researcher launches AI coding agents with structured research instructions, GPU workflow guidance, and optional filesystem isolation. The default path uses **sandboxed containers**; an opt-in native runtime runs the selected CLI directly on the host without containers or bind mounts.
 
 Supports [Claude Code](https://github.com/anthropics/claude-code), [OpenCode](https://opencode.ai), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Codex CLI](https://github.com/openai/codex), and [pi](https://github.com/badlogic/pi-mono).
 
 ## Prerequisites
 
-- **Docker** (default), **Podman**, or **Apptainer** (Linux only)
+- **Docker** (default), **Podman**, or **Apptainer** (Linux only) for sandboxed mode, or a host-installed CLI tool for native mode
 - An API key or OAuth login for your chosen CLI tool (see [supported tools](#supported-cli-tools))
 - GPU drivers installed on the host if you want GPU passthrough
 - Project dependencies managed with [uv](https://docs.astral.sh/uv/) (recommended) — the agent runs `uv sync` inside the sandbox
@@ -55,6 +55,9 @@ agentic-researcher --podman --build
 
 # 3c. Build container for Apptainer (Linux only)
 agentic-researcher --apptainer --build
+
+# 3d. Or use native mode (no container build)
+agentic-researcher --native
 ```
 
 Docker is the default runtime when available. If Docker is not installed or not on `PATH`, but Podman is, the launcher and install script automatically fall back to Podman for OCI builds. Podman uses the same OCI image and launch flow as Docker, but runs through the `podman` CLI instead. When building with Podman, the build script requests Docker image format (`podman build --format docker`) so Dockerfile `SHELL` directives keep working and Podman avoids noisy OCI-format warnings. By default the launcher stores state under `~/.cache/agentic-researcher` and launches Claude Code. Claude uses OAuth by default; other CLIs handle auth inside the tool, with standard API key env vars passed through if set.
@@ -63,7 +66,7 @@ Docker is the default runtime when available. If Docker is not installed or not 
 
 Run `agentic-researcher --setup` to create a configuration file at `${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh`. The setup wizard lets you configure:
 
-- **Container runtime** — Docker, Podman, or Apptainer
+- **Runtime** — Docker, Podman, Apptainer, or native host execution
 - **CLI tool** — Claude Code, OpenCode, Gemini CLI, Codex CLI, or pi
 - **Authentication** — OAuth login or API key (with configurable env var name)
 - **Custom API endpoint** — point Claude at an Anthropic-compatible proxy or gateway
@@ -71,6 +74,7 @@ Run `agentic-researcher --setup` to create a configuration file at `${XDG_CONFIG
 - **Extra environment variables** (`AR_EXTRA_ENV`) — pipe-separated `KEY=VALUE` pairs forwarded into the container (e.g. `HF_TOKEN=hf_...|WANDB_API_KEY=...`)
 - **Network proxy** — HTTP/HTTPS proxy settings for use inside the container
 - **Extra bind directories** — additional host paths to mount into the sandbox
+- **GPU backend** — auto, none, cluster-run, or remote-run
 
 You can re-run `--setup` at any time to update your configuration.
 
@@ -86,9 +90,14 @@ agentic-researcher ~/my-project
 # Use a different CLI tool
 agentic-researcher --tool gemini
 
+# Run without containers or bind mounts
+agentic-researcher --native --tool codex
+
 # Auto-approve all tool calls
 agentic-researcher --yolo
 ```
+
+Native mode runs in your real host environment and does not provide Agentic Researcher filesystem isolation. Install the selected CLI tool on `PATH` before launching native mode.
 
 ### Multi-Node Dispatch (Slurm + Apptainer)
 
@@ -101,6 +110,18 @@ agentic-researcher --multi-node --test  # Validate setup without launching
 ```
 
 Off by default. Requires Apptainer runtime and an active multi-node Slurm allocation. Single-node workflows are unaffected.
+
+### GPU Backend Skills
+
+Agentic Researcher can render project skills for GPU placement backends. In native mode, `AR_GPU_BACKEND=auto` uses `cluster-run` when it is available on `PATH`; otherwise no external GPU backend is configured.
+
+```bash
+agentic-researcher --native --gpu-backend cluster-run
+cluster-run status
+cluster-run --detach --num-gpus 1 --name exp-e005 -- uv run python train.py --exp E005
+```
+
+The existing `--multi-node` flow selects the `remote-run` backend for Apptainer plus Slurm allocations.
 
 ## Supported CLI Tools
 
@@ -135,6 +156,8 @@ When you relaunch the sandbox on a project that already has filled-in instructio
 | **Path traversal protection** | Symlinks resolved; system directories blocked |
 
 `--yolo` auto-approves tool calls but does **not** weaken filesystem isolation.
+
+Native mode intentionally disables Agentic Researcher filesystem isolation: the selected CLI runs directly in the project directory with your host `HOME`, `PATH`, and credentials.
 
 ### Research Agent Instructions
 

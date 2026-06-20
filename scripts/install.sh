@@ -44,7 +44,7 @@ Options:
   --bin-dir DIR       Create launcher symlink in DIR
   --repo-url URL      Git repository to clone for bootstrap installs
   --ref NAME          Git branch or tag to clone for bootstrap installs
-  --runtime NAME      Default runtime in generated config (docker|podman|apptainer)
+  --runtime NAME      Default runtime in generated config (docker|podman|apptainer|native)
   --tool NAME         Default tool in generated config (claude|opencode|gemini|codex|pi)
   --state-root DIR    State/cache root in generated config
   --write-config      Write ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh
@@ -57,6 +57,7 @@ Examples:
   ./scripts/install.sh --write-config --build
   ./scripts/install.sh --runtime apptainer --tool codex --write-config
   ./scripts/install.sh --runtime podman --write-config --build
+  ./scripts/install.sh --runtime native --tool codex --write-config
 EOF
 }
 
@@ -123,7 +124,7 @@ if [[ -z "$RUNTIME" ]]; then
 fi
 
 case "$RUNTIME" in
-    docker|podman|apptainer) ;;
+    docker|podman|apptainer|native) ;;
     *)
         echo "Error: Unsupported runtime: $RUNTIME" >&2
         exit 1
@@ -243,6 +244,7 @@ AR_HTTPS_PROXY=""
 AR_HTTP_PROXY=""
 AR_STATE_ROOT="$STATE_ROOT"
 AR_EXTRA_BIND_DIRS=""
+AR_GPU_BACKEND="auto"
 EOF
 }
 
@@ -286,6 +288,8 @@ run_build() {
     local launcher="$BIN_DIR/agentic-researcher"
     if [[ "$RUNTIME" == "docker" || "$RUNTIME" == "podman" ]]; then
         "$launcher" --"$RUNTIME" --build
+    elif [[ "$RUNTIME" == "native" ]]; then
+        "$launcher" --native --build
     else
         "$launcher" --apptainer --build
     fi
@@ -308,11 +312,20 @@ print_path_hint
 
 if [[ "$BUILD_IMAGE" == "true" ]]; then
     echo ""
-    echo "Building container..."
+    if [[ "$RUNTIME" == "native" ]]; then
+        echo "Preparing native runtime..."
+    else
+        echo "Building container..."
+    fi
     run_build
 fi
 
 echo ""
 echo "Next steps:"
-echo "  1. Build the container: agentic-researcher --build"
-echo "  2. Start the agent:     agentic-researcher ~/your-project"
+if [[ "$RUNTIME" == "native" ]]; then
+    echo "  1. Make sure your selected CLI tool is installed on PATH"
+    echo "  2. Start the agent:     agentic-researcher ~/your-project"
+else
+    echo "  1. Build the container: agentic-researcher --build"
+    echo "  2. Start the agent:     agentic-researcher ~/your-project"
+fi

@@ -1,14 +1,40 @@
 #!/bin/bash
 #
-# agentic-researcher: Launch an AI coding agent in a sandboxed container.
+# agentic-researcher: Launch an AI coding agent for structured research.
 # Usage: agentic-researcher [OPTIONS] [DIRECTORY] [TOOL_OPTIONS...]
 # Run with --help for details.
 #
 
 set -e
 SCRIPT_PATH="${BASH_SOURCE[0]}"
+resolve_realpath() {
+    local path="$1"
+    local dir base resolved_dir
+
+    if command -v realpath >/dev/null 2>&1; then
+        realpath "$path"
+        return
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        if python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$path" 2>/dev/null; then
+            return
+        fi
+    fi
+
+    if [[ -d "$path" ]]; then
+        (cd "$path" && pwd -P)
+        return
+    fi
+
+    dir="$(dirname "$path")"
+    base="$(basename "$path")"
+    resolved_dir="$(cd "$dir" && pwd -P)" || return 1
+    printf '%s/%s\n' "$resolved_dir" "$base"
+}
+
 if [[ -L "$SCRIPT_PATH" ]]; then
-    SCRIPT_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$SCRIPT_PATH")"
+    SCRIPT_PATH="$(resolve_realpath "$SCRIPT_PATH")"
 fi
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 USER=${USER:-$(whoami)}
@@ -23,6 +49,7 @@ capture_env_overrides() {
         AR_EXTRA_BIND_DIRS
         AR_EXTRA_ENV
         AR_DOCKER_GPUS
+        AR_GPU_BACKEND
         AR_AUTH_MODE
         AR_API_PROVIDER
         AR_API_KEY_ENV
@@ -65,6 +92,7 @@ apply_env_overrides() {
         AR_EXTRA_BIND_DIRS
         AR_EXTRA_ENV
         AR_DOCKER_GPUS
+        AR_GPU_BACKEND
         AR_AUTH_MODE
         AR_API_PROVIDER
         AR_API_KEY_ENV
@@ -83,6 +111,9 @@ apply_env_overrides() {
 
     if [[ -n "${AR_CONTAINER_RUNTIME_OVERRIDE:-}" ]]; then
         AR_CONTAINER_RUNTIME="$AR_CONTAINER_RUNTIME_OVERRIDE"
+    fi
+    if [[ -n "${AR_GPU_BACKEND_OVERRIDE:-}" ]]; then
+        AR_GPU_BACKEND="$AR_GPU_BACKEND_OVERRIDE"
     fi
     if [[ -n "${AR_CLI_TOOL_OVERRIDE:-}" ]]; then
         AR_CLI_TOOL="$AR_CLI_TOOL_OVERRIDE"
@@ -138,6 +169,7 @@ apply_defaults() {
     AR_EXTRA_BIND_DIRS="${AR_EXTRA_BIND_DIRS:-}"
     AR_EXTRA_ENV="${AR_EXTRA_ENV:-}"
     AR_DOCKER_GPUS="${AR_DOCKER_GPUS:-auto}"
+    AR_GPU_BACKEND="${AR_GPU_BACKEND:-auto}"
 
     case "$AR_CLI_TOOL" in
         claude)
@@ -183,6 +215,10 @@ parse_arguments() {
                 load_config
                 apply_env_overrides
                 apply_defaults
+                if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+                    echo "Native runtime selected; no container image to build."
+                    exit 0
+                fi
                 exec "$SCRIPT_DIR/container/build.sh" \
                     ${AR_CONTAINER_RUNTIME:+--$AR_CONTAINER_RUNTIME}
                 ;;
@@ -218,12 +254,24 @@ parse_arguments() {
                 AR_CONTAINER_RUNTIME_OVERRIDE="apptainer"
                 shift
                 ;;
+            --native|--host)
+                AR_CONTAINER_RUNTIME_OVERRIDE="native"
+                shift
+                ;;
             --tool)
                 if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
                     echo "Error: --tool requires a value (claude|opencode|gemini|codex|pi)"
                     exit 1
                 fi
                 AR_CLI_TOOL_OVERRIDE="$2"
+                shift 2
+                ;;
+            --gpu-backend)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --gpu-backend requires a value (auto|none|cluster-run|remote-run)"
+                    exit 1
+                fi
+                AR_GPU_BACKEND_OVERRIDE="$2"
                 shift 2
                 ;;
             --yolo)
@@ -290,14 +338,16 @@ Usage:
 
 Options:
   --setup             Run the optional interactive setup wizard
-  --build             Build or rebuild the container image
+  --build             Build or rebuild the container image (no-op for --native)
   --clean             Remove launcher-managed local state
   --uninstall         Remove the installed launcher and optional local state
   --docker            Force Docker runtime for this invocation
   --podman            Force Podman runtime for this invocation
   --apptainer         Force Apptainer runtime for this invocation
+  --native, --host    Run the selected CLI directly on the host (no sandbox)
   --test              Quick validation of sandbox environment
   --multi-node        Enable multi-node dispatch (Apptainer + Slurm only)
+  --gpu-backend NAME  GPU job backend (auto|none|cluster-run|remote-run)
   --debug-launch      Print extra launcher details and enable tool startup logs where supported
   --tool TOOL         Select CLI tool (claude|opencode|gemini|codex|pi)
   --yolo              Auto-approve all permissions (Claude Code only)
@@ -312,6 +362,8 @@ Examples:
   agentic-researcher --docker --build             # Build Docker container
   agentic-researcher --podman --build             # Build Podman container
   agentic-researcher --apptainer --build          # Build Apptainer container
+  agentic-researcher --native                     # Host-native launch, no container
+  agentic-researcher --native --gpu-backend cluster-run
   agentic-researcher --setup                      # Optional setup wizard
   agentic-researcher --clean                      # Interactive cleanup of local state
   agentic-researcher --uninstall                  # Remove installed launcher
@@ -335,6 +387,7 @@ What's Sandboxed:
 
 Security:
   --yolo auto-approves tool calls but maintains filesystem isolation.
+  --native/--host disables Agentic Researcher filesystem isolation.
   OpenCode/Gemini/Codex have no built-in permission system.
   Review changes before committing to git.
 EOF
@@ -346,10 +399,13 @@ validate_workspace() {
     fi
 
     # Resolve symlinks in a macOS/Linux portable way.
-    if ! WORKSPACE_DIR="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$WORKSPACE_DIR" 2>/dev/null)"; then
-        echo "Error: Cannot resolve path: $WORKSPACE_DIR"
+    local original_workspace resolved_workspace
+    original_workspace="$WORKSPACE_DIR"
+    if ! resolved_workspace="$(resolve_realpath "$WORKSPACE_DIR")"; then
+        echo "Error: Cannot resolve path: $original_workspace"
         exit 1
     fi
+    WORKSPACE_DIR="$resolved_workspace"
 
     if [[ ! -d "$WORKSPACE_DIR" ]]; then
         echo "Error: Directory does not exist: $WORKSPACE_DIR"
@@ -421,6 +477,18 @@ validate_apptainer_host() {
     fi
 }
 
+validate_runtime() {
+    case "$AR_CONTAINER_RUNTIME" in
+        docker|podman|apptainer|native)
+            ;;
+        *)
+            echo "Error: Unsupported runtime: $AR_CONTAINER_RUNTIME"
+            echo "Supported runtimes: docker, podman, apptainer, native"
+            exit 1
+            ;;
+    esac
+}
+
 validate_container() {
     if [[ "$AR_CONTAINER_RUNTIME" == "apptainer" ]]; then
         validate_apptainer_host
@@ -452,12 +520,92 @@ validate_container() {
     fi
     # Docker/Podman validation happens at launch time
 }
+
+resolve_gpu_backend() {
+    local requested="${AR_GPU_BACKEND:-auto}"
+
+    case "$requested" in
+        auto|none|cluster-run|remote-run)
+            ;;
+        *)
+            echo "Error: Unsupported GPU backend: $requested"
+            echo "Supported GPU backends: auto, none, cluster-run, remote-run"
+            exit 1
+            ;;
+    esac
+
+    if [[ "$MULTI_NODE" == "true" ]]; then
+        if [[ "$requested" != "auto" && "$requested" != "remote-run" ]]; then
+            echo "Error: --multi-node uses the remote-run GPU backend, but AR_GPU_BACKEND=$requested."
+            exit 1
+        fi
+        GPU_BACKEND="remote-run"
+        return
+    fi
+
+    if [[ "$requested" == "remote-run" ]]; then
+        GPU_BACKEND="remote-run"
+        MULTI_NODE=true
+        return
+    fi
+
+    if [[ "$requested" == "cluster-run" ]]; then
+        GPU_BACKEND="cluster-run"
+        return
+    fi
+
+    if [[ "$requested" == "none" ]]; then
+        GPU_BACKEND="none"
+        return
+    fi
+
+    # auto
+    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]] && command -v cluster-run >/dev/null 2>&1; then
+        GPU_BACKEND="cluster-run"
+    else
+        GPU_BACKEND="none"
+    fi
+}
+
+validate_gpu_backend() {
+    case "${GPU_BACKEND:-none}" in
+        none)
+            return
+            ;;
+        cluster-run)
+            if [[ "$AR_CONTAINER_RUNTIME" != "native" ]]; then
+                echo "Error: cluster-run GPU backend requires --native/--host."
+                exit 1
+            fi
+            if ! command -v cluster-run >/dev/null 2>&1; then
+                echo "Error: cluster-run GPU backend selected, but 'cluster-run' is not on PATH."
+                exit 1
+            fi
+            if ! cluster-run --help >/dev/null 2>&1; then
+                echo "Error: cluster-run is on PATH but did not run successfully."
+                exit 1
+            fi
+            ;;
+        remote-run)
+            ;;
+    esac
+}
+
 setup_storage() {
     STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-researcher}"
 
     UV_CACHE_DIR="$STATE_ROOT/uv/cache"
     UV_PYTHON_INSTALL_DIR="$STATE_ROOT/uv/python"
     UV_TOOL_DIR="$STATE_ROOT/uv/tools"
+
+    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+        mkdir -p "$STATE_ROOT"
+        CACHE_BASE="$STATE_ROOT"
+        HF_HOME="${HF_HOME:-$CACHE_BASE/hf_home}"
+        TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$CACHE_BASE/triton_cache}"
+        WANDB_DIR="${WANDB_DIR:-$CACHE_BASE/wandb}"
+        return
+    fi
 
     # Sandbox-specific config directory (isolated from host)
     AR_CONFIG_STORE="$STATE_ROOT/agentic-researcher-config"
@@ -576,7 +724,7 @@ strip_command_frontmatter() {
         !in_frontmatter { print }
     ' "$source_path"
 }
-render_codex_skill() {
+render_command_skill() {
     local skill_name="$1"
     local description="$2"
     local source_path="$3"
@@ -597,34 +745,130 @@ render_codex_skill() {
 
     mv "$temp_path" "$target_path"
 }
-setup_codex_project_skills() {
-    CODEX_PROJECT_SKILLS_DIR="$WORKSPACE_DIR/.agents/skills"
-    mkdir -p "$CODEX_PROJECT_SKILLS_DIR"
+project_skill_roots_for_tool() {
+    case "$AR_CLI_TOOL" in
+        claude)
+            printf '%s\n' "$WORKSPACE_DIR/.claude/skills"
+            ;;
+        opencode|gemini|codex|pi)
+            printf '%s\n' "$WORKSPACE_DIR/.agents/skills"
+            ;;
+    esac
+}
 
+setup_research_command_project_skills() {
     local managed_marker="Generated by agentic-researcher"
-    local skill_name description source_path skill_dir target_path
+    local skill_root skill_name description source_path skill_dir target_path
 
-    while IFS='|' read -r skill_name description; do
-        source_path="$SCRIPT_DIR/commands/$skill_name.md"
-        if [[ ! -f "$source_path" ]]; then
-            continue
-        fi
+    while IFS= read -r skill_root; do
+        [[ -n "$skill_root" ]] || continue
+        mkdir -p "$skill_root"
 
-        skill_dir="$CODEX_PROJECT_SKILLS_DIR/$skill_name"
-        target_path="$skill_dir/SKILL.md"
+        while IFS='|' read -r skill_name description; do
+            source_path="$SCRIPT_DIR/commands/$skill_name.md"
+            if [[ ! -f "$source_path" ]]; then
+                continue
+            fi
 
-        if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
-            echo "Warning: Skipping existing Codex skill at $target_path (not managed by agentic-researcher)"
-            continue
-        fi
+            skill_dir="$skill_root/$skill_name"
+            target_path="$skill_dir/SKILL.md"
 
-        mkdir -p "$skill_dir"
-        render_codex_skill "$skill_name" "$description" "$source_path" "$target_path"
-    done << 'EOF'
+            if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
+                echo "Warning: Skipping existing skill at $target_path (not managed by agentic-researcher)"
+                continue
+            fi
+
+            mkdir -p "$skill_dir"
+            render_command_skill "$skill_name" "$description" "$source_path" "$target_path"
+        done << 'EOF'
 setup_research_plan|Set up or resume a research project in this workspace
 retro|Reflect on the current research session and propose instruction improvements
 update_base|Update the project instruction file from the latest base template
 EOF
+    done < <(project_skill_roots_for_tool)
+}
+
+render_managed_skill_file() {
+    local source_path="$1"
+    local target_path="$2"
+    local temp_path="${target_path}.tmp"
+
+    awk '
+        BEGIN { inserted=0; in_frontmatter=0 }
+        NR == 1 && $0 == "---" { in_frontmatter=1; print; next }
+        in_frontmatter && $0 == "---" {
+            print
+            print ""
+            print "<!-- Generated by agentic-researcher. Edit the source backend skill to change this file. -->"
+            inserted=1
+            in_frontmatter=0
+            next
+        }
+        { print }
+        END {
+            if (inserted == 0) {
+                print "<!-- Generated by agentic-researcher. Edit the source backend skill to change this file. -->"
+            }
+        }
+    ' "$source_path" > "$temp_path"
+
+    mv "$temp_path" "$target_path"
+}
+
+setup_gpu_backend_project_skill() {
+    if [[ "${GPU_BACKEND:-none}" == "none" ]]; then
+        return 0
+    fi
+
+    local source_path="$SCRIPT_DIR/gpu-backends/$GPU_BACKEND/SKILL.md"
+    if [[ ! -f "$source_path" ]]; then
+        echo "Warning: GPU backend skill not found for $GPU_BACKEND: $source_path"
+        return
+    fi
+
+    local managed_marker="Generated by agentic-researcher"
+    local skill_root skill_dir target_path
+
+    while IFS= read -r skill_root; do
+        [[ -n "$skill_root" ]] || continue
+        skill_dir="$skill_root/$GPU_BACKEND"
+        target_path="$skill_dir/SKILL.md"
+
+        if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
+            echo "Warning: Skipping existing GPU backend skill at $target_path (not managed by agentic-researcher)"
+            continue
+        fi
+
+        mkdir -p "$skill_dir"
+        render_managed_skill_file "$source_path" "$target_path"
+    done < <(project_skill_roots_for_tool)
+}
+
+setup_gpu_backend_instruction_block() {
+    local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
+    [[ -f "$instruction_path" ]] || return 0
+
+    local begin_marker="<!-- AGENTIC-RESEARCHER-GPU-BACKEND-START -->"
+    local end_marker="<!-- AGENTIC-RESEARCHER-GPU-BACKEND-END -->"
+    local temp_path="${instruction_path}.tmp"
+    local backend_instructions="$SCRIPT_DIR/gpu-backends/${GPU_BACKEND:-none}/INSTRUCTIONS.md"
+
+    awk -v begin="$begin_marker" -v end="$end_marker" '
+        $0 == begin { skip=1; next }
+        $0 == end { skip=0; next }
+        skip != 1 { print }
+    ' "$instruction_path" > "$temp_path"
+
+    if [[ "${GPU_BACKEND:-none}" != "none" && -f "$backend_instructions" ]]; then
+        {
+            printf '\n%s\n' "$begin_marker"
+            printf '\n'
+            cat "$backend_instructions"
+            printf '\n%s\n' "$end_marker"
+        } >> "$temp_path"
+    fi
+
+    mv "$temp_path" "$instruction_path"
 }
 translate_tool_args() {
     local tool="$AR_CLI_TOOL"
@@ -811,6 +1055,12 @@ setup_optional_binds() {
     EXTRA_DIR_ROOT_BIND=()
     EXTRA_DIR_BINDS=()
     EXTRA_DIR_DEBUG_MOUNTS=()
+    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+        if [[ -n "${AR_EXTRA_BIND_DIRS:-}" ]]; then
+            echo "Native runtime: AR_EXTRA_BIND_DIRS is ignored because host paths are directly accessible."
+        fi
+        return
+    fi
     if [[ -n "${AR_EXTRA_BIND_DIRS:-}" ]]; then
         local used_mount_names=()
 
@@ -929,6 +1179,7 @@ DISPEOF
     )
     MULTI_NODE_ENV=(
         --env "AR_DISPATCH_DIR=$DISPATCH_DIR"
+        --env "AR_GPU_BACKEND=remote-run"
         --env "AR_GPUS_PER_NODE=$MN_GPUS_PER_NODE"
         --env "AR_NUM_NODES=$MN_NUM_NODES"
         --env "AR_HEAD_NODE=$MN_HEAD_NODE"
@@ -1049,6 +1300,7 @@ build_env_args() {
         --env "TERM=${TERM:-xterm-256color}"
         --env "USER=$USER"
         --env "GIT_SSH_COMMAND=$GIT_SSH_COMMAND"
+        --env "AR_GPU_BACKEND=${GPU_BACKEND:-none}"
     )
 
     # Standard API key pass-through so CLIs can handle auth inside the container.
@@ -1112,10 +1364,13 @@ print_debug_launch() {
     echo "Launch debug:"
     echo "  Runtime:        $AR_CONTAINER_RUNTIME"
     echo "  Tool:           $AR_CLI_TOOL"
+    echo "  GPU backend:    ${GPU_BACKEND:-none}"
     echo "  Workspace:      $WORKSPACE_DIR"
     echo "  State root:     $STATE_ROOT"
     if [[ "$AR_CONTAINER_RUNTIME" == "docker" || "$AR_CONTAINER_RUNTIME" == "podman" ]]; then
         echo "  Runtime image:  agentic-researcher:latest"
+    elif [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+        echo "  Runtime image:  none (host native)"
     else
         echo "  Container:      $CONTAINER_IMAGE"
     fi
@@ -1305,6 +1560,7 @@ launch_oci_runtime() {
         -e "HOST_USER=$host_user"
         -e "HOST_GROUP=$host_group"
         -e "SANDBOX_TOOL=$AR_CLI_TOOL"
+        -e "AR_GPU_BACKEND=${GPU_BACKEND:-none}"
     )
 
     for env_name in ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY GEMINI_API_KEY; do
@@ -1410,6 +1666,159 @@ launch_oci_runtime() {
     fi
 }
 
+native_tool_command() {
+    case "$AR_CLI_TOOL" in
+        claude)   printf '%s\n' "claude" ;;
+        opencode) printf '%s\n' "opencode" ;;
+        gemini)   printf '%s\n' "gemini" ;;
+        codex)    printf '%s\n' "codex" ;;
+        pi)       printf '%s\n' "pi" ;;
+        *)        printf '%s\n' "$AR_CLI_TOOL" ;;
+    esac
+}
+
+setup_native_environment() {
+    export AR_GPU_BACKEND="${GPU_BACKEND:-none}"
+    export AR_CLI_TOOL="$AR_CLI_TOOL"
+
+    if [[ -n "${AR_HTTPS_PROXY:-}" ]]; then
+        export https_proxy="$AR_HTTPS_PROXY"
+        export http_proxy="${AR_HTTP_PROXY:-$AR_HTTPS_PROXY}"
+    fi
+
+    if [[ -n "${AR_CUSTOM_ANTHROPIC_ENDPOINT:-}" && "${AR_AUTH_MODE:-}" == "api-key" ]]; then
+        export ANTHROPIC_BASE_URL="$AR_CUSTOM_ANTHROPIC_ENDPOINT"
+    fi
+
+    if [[ "${AR_AUTH_MODE:-}" == "api-key" ]]; then
+        local _ar_key_var="${AR_API_KEY_ENV:-ANTHROPIC_API_KEY}"
+        if [[ "$_ar_key_var" != "ANTHROPIC_API_KEY" && -n "${!_ar_key_var:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
+            export ANTHROPIC_API_KEY="${!_ar_key_var}"
+        fi
+    fi
+
+    if [[ -n "${AR_EXTRA_ENV:-}" ]]; then
+        local IFS='|'
+        local entry
+        for entry in $AR_EXTRA_ENV; do
+            [[ -n "$entry" ]] && export "$entry"
+        done
+    fi
+}
+
+run_native_test() {
+    local tool_cmd="$1"
+    local pass_count=0
+    local fail_count=0
+    local warn_count=0
+
+    native_pass() { echo "  [PASS] $1"; ((pass_count++)); }
+    native_fail() { echo "  [FAIL] $1"; ((fail_count++)); }
+    native_warn() { echo "  [WARN] $1"; ((warn_count++)); }
+
+    echo "=== Native Runtime ==="
+    if [[ "$HOME" != "/claude-home" ]]; then
+        native_pass "Using host HOME: $HOME"
+    else
+        native_warn "HOME is /claude-home; native mode normally uses the host HOME"
+    fi
+
+    if [[ -d "$WORKSPACE_DIR" ]]; then
+        native_pass "Workspace exists: $WORKSPACE_DIR"
+    else
+        native_fail "Workspace does not exist: $WORKSPACE_DIR"
+    fi
+
+    local testfile="$WORKSPACE_DIR/.agentic_researcher_native_test_$$"
+    if touch "$testfile" 2>/dev/null; then
+        native_pass "Workspace is writable"
+        rm -f "$testfile"
+    else
+        native_fail "Workspace is not writable"
+    fi
+
+    echo ""
+    echo "=== CLI Tool ==="
+    if command -v "$tool_cmd" >/dev/null 2>&1; then
+        native_pass "$tool_cmd found ($(command -v "$tool_cmd"))"
+    else
+        native_fail "$tool_cmd not found on PATH"
+    fi
+
+    echo ""
+    echo "=== GPU ==="
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+        local gpu_count
+        gpu_count=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')
+        native_pass "GPU visible via nvidia-smi ($gpu_count device(s))"
+    else
+        native_warn "No local GPU visible via nvidia-smi"
+    fi
+
+    echo ""
+    echo "=== GPU Backend: ${GPU_BACKEND:-none} ==="
+    case "${GPU_BACKEND:-none}" in
+        none)
+            native_pass "No external GPU backend configured"
+            ;;
+        cluster-run)
+            if command -v cluster-run >/dev/null 2>&1 && cluster-run --help >/dev/null 2>&1; then
+                native_pass "cluster-run is available"
+            else
+                native_fail "cluster-run is not available or not runnable"
+            fi
+            ;;
+        remote-run)
+            native_fail "remote-run backend is container/Slurm only; use --multi-node with Apptainer"
+            ;;
+    esac
+
+    echo ""
+    echo "=== Network (optional) ==="
+    if command -v curl >/dev/null 2>&1; then
+        if curl -sf --max-time 10 https://api.anthropic.com/ >/dev/null 2>&1 || \
+           curl -sf --max-time 10 https://www.google.com/ >/dev/null 2>&1; then
+            native_pass "Network connectivity (HTTPS)"
+        else
+            native_warn "No HTTPS connectivity detected"
+        fi
+    else
+        native_warn "curl not found; skipped network check"
+    fi
+
+    echo ""
+    echo "================================"
+    echo "Results: $pass_count passed, $fail_count failed, $warn_count warnings"
+    if [[ "$fail_count" -eq 0 ]]; then
+        echo "Status: ALL REQUIRED CHECKS PASSED"
+        exit 0
+    fi
+
+    echo "Status: SOME CHECKS FAILED"
+    exit 1
+}
+
+launch_native() {
+    local mode="${1:-run}"
+    local tool_cmd
+    tool_cmd="$(native_tool_command)"
+
+    setup_native_environment
+
+    if [[ "$mode" == "test" ]]; then
+        run_native_test "$tool_cmd"
+    fi
+
+    if ! command -v "$tool_cmd" >/dev/null 2>&1; then
+        echo "Error: Native runtime selected, but '$tool_cmd' is not installed or not on PATH."
+        echo "Install the selected CLI tool on the host or use a container runtime."
+        exit 1
+    fi
+
+    cd "$WORKSPACE_DIR"
+    exec "$tool_cmd" "${TOOL_ARGS[@]}"
+}
+
 main() {
     check_install_staleness
     capture_env_overrides
@@ -1417,12 +1826,16 @@ main() {
     load_config
     apply_env_overrides
     apply_defaults
+    validate_runtime
     validate_workspace
     validate_api_key
+    resolve_gpu_backend
+    validate_gpu_backend
     validate_container
     validate_multi_node
     setup_storage
     setup_instruction_file
+    setup_gpu_backend_instruction_block
     translate_tool_args
     setup_auth_binds
     setup_research_binds
@@ -1432,12 +1845,11 @@ main() {
     print_debug_launch
 
     # Tool-specific setup
-    if [[ "$AR_CLI_TOOL" == "opencode" ]]; then
+    if [[ "$AR_CONTAINER_RUNTIME" != "native" && "$AR_CLI_TOOL" == "opencode" ]]; then
         setup_opencode
-    elif [[ "$AR_CLI_TOOL" == "codex" || "$AR_CLI_TOOL" == "pi" ]]; then
-        # Both Codex and pi auto-discover project skills under .agents/skills/.
-        setup_codex_project_skills
     fi
+    setup_research_command_project_skills
+    setup_gpu_backend_project_skill
 
     # Display banner
     local tool_display
@@ -1452,8 +1864,10 @@ main() {
     local banner_width=64
     echo "╔$(printf '═%.0s' $(seq 1 $banner_width))╗"
     local title
-    if [[ "$MULTI_NODE" == "true" ]]; then
+    if [[ "${GPU_BACKEND:-none}" == "remote-run" ]]; then
         title="Agentic Researcher - $tool_display (Multi-Node)"
+    elif [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+        title="Agentic Researcher - $tool_display (Native)"
     else
         title="Agentic Researcher - $tool_display"
     fi
@@ -1462,7 +1876,7 @@ main() {
     echo "╚$(printf '═%.0s' $(seq 1 $banner_width))╝"
     echo ""
 
-    if [[ "$MULTI_NODE" == "true" ]]; then
+    if [[ "${GPU_BACKEND:-none}" == "remote-run" ]]; then
         echo "Slurm Job:      $SLURM_JOB_ID"
         echo "Nodes:          $MN_NUM_NODES ($MN_NODELIST)"
         echo "Head node:      $MN_HEAD_NODE"
@@ -1472,8 +1886,13 @@ main() {
     fi
 
     echo "Workspace:      $WORKSPACE_DIR"
-    echo "Sandboxed:      Only /workspace is accessible"
-    if [[ "$MULTI_NODE" == "true" ]]; then
+    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+        echo "Sandboxed:      No (host-native; full host filesystem access)"
+    else
+        echo "Sandboxed:      Only /workspace is accessible"
+    fi
+    echo "GPU backend:    ${GPU_BACKEND:-none}"
+    if [[ "${GPU_BACKEND:-none}" == "remote-run" ]]; then
         echo "Dispatch dir:   $DISPATCH_DIR"
     fi
     echo "UV Cache:       $UV_CACHE_DIR"
@@ -1486,13 +1905,13 @@ main() {
     echo ""
 
     # Multi-node test mode
-    if [[ "$MULTI_NODE" == "true" && "$TEST_MODE" == "true" ]]; then
+    if [[ "${GPU_BACKEND:-none}" == "remote-run" && "$TEST_MODE" == "true" ]]; then
         test_multi_node
         # test_multi_node calls exit 0
     fi
 
     # Multi-node: start dispatcher and register cleanup
-    if [[ "$MULTI_NODE" == "true" ]]; then
+    if [[ "${GPU_BACKEND:-none}" == "remote-run" ]]; then
         trap cleanup_multi_node EXIT
         start_dispatcher
     fi
@@ -1507,6 +1926,12 @@ main() {
             launch_oci_runtime test
         else
             launch_oci_runtime run
+        fi
+    elif [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+        if [[ "$TEST_MODE" == "true" ]]; then
+            launch_native test
+        else
+            launch_native run
         fi
     else
         if [[ "$TEST_MODE" == "true" ]]; then

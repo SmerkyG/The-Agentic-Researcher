@@ -27,6 +27,10 @@ case "${1:-}" in
     --podman|podman)
         OCI_RUNTIME="podman"
         ;;
+    --native|native)
+        echo "Native runtime selected; no container image to build."
+        exit 0
+        ;;
 esac
 
 if [[ -n "$OCI_RUNTIME" ]]; then

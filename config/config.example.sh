@@ -4,7 +4,7 @@
 # Location: ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh
 # Edit individual settings:  agentic-researcher --setup KEY=VALUE
 
-# Container runtime: apptainer | docker | podman
+# Runtime: apptainer | docker | podman | native
 AR_CONTAINER_RUNTIME="apptainer"
 
 # Authentication: oauth | tool | api-key
@@ -41,4 +41,10 @@ AR_STATE_ROOT="$HOME/.cache/agentic-researcher"
 # Additional directories to bind into the sandbox (colon-separated)
 # Accepts commas or spaces too — they get normalized to colons
 # Inside the container they appear under /workspace/.mount/<basename>
+# Native mode ignores this setting because host paths are already visible
 AR_EXTRA_BIND_DIRS=""
+
+# GPU job backend: auto | none | cluster-run | remote-run
+# auto uses cluster-run when available in native mode, otherwise none.
+# --multi-node selects remote-run for Apptainer + Slurm allocations.
+AR_GPU_BACKEND="auto"
