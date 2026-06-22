@@ -117,12 +117,11 @@ From: ubuntu:22.04
     export XDG_STATE_HOME="$HOME/.local/state"
     export JULIA_DEPOT_PATH="$HOME/.julia"
     mkdir -p \
-        "$XDG_CONFIG_HOME/opencode/commands" \
+        "$XDG_CONFIG_HOME/opencode" \
         "$XDG_CACHE_HOME" \
         "$XDG_DATA_HOME/opencode" \
         "$XDG_STATE_HOME" \
         "$HOME/.local/bin" \
-        "$HOME/.gemini/commands" \
         "$HOME/.gemini/skills" \
         "$HOME/.gemini/agents" \
         "$HOME/.gemini/history" \

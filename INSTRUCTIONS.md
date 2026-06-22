@@ -351,7 +351,7 @@ code still not runs correctly or the method still underperforms, you can move on
 
 ## 8. Project Instructions
 
-<!-- Filled by /setup_research_plan. Replace placeholders with actual values. -->
+<!-- Filled by the setup_research_plan skill. Replace placeholders with actual values. -->
 
 **Goal:** [Research objective]
 

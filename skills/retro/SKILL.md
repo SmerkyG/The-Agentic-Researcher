@@ -1,11 +1,11 @@
 ---
-description: Reflect on the current research session and collect improvement suggestions
-argument-hint: "[optional feedback, e.g. 'the report lacked detail on failed experiments']"
+name: "retro"
+description: "Reflect on the current research session and propose instruction improvements."
 ---
 
 You are reflecting on the current research session to identify improvements for the agent's base instructions. This is a retrospective -- not about what went wrong, but about what can be made better for future research sessions.
 
-User feedback (may be empty): $ARGUMENTS
+Use any extra user text supplied with the skill invocation as feedback to consider.
 
 ## Step 1: Gather Context
 

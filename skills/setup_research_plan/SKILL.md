@@ -1,9 +1,10 @@
 ---
-description: Set up or start a research project
-argument-hint: "[description of your research goal]"
+name: "setup_research_plan"
+description: "Set up or resume a research project in this workspace."
 ---
 
-You are a research agent. This command sets up and executes a research project.
+You are a research agent. This skill sets up and executes a research project.
+If the user supplied extra text alongside the skill invocation, use it to bootstrap the setup questions and skip questions already answered by that text.
 
 Detect which instruction file exists in the workspace and use it throughout:
 - Check for: `CLAUDE.md`, `GEMINI.md`, `AGENTS.md` (in that order)
@@ -41,7 +42,7 @@ This is a resuming session. The project is already in progress.
 
 ### Interactive Setup
 
-Guide the user through filling in the Project Instructions section. Use `$ARGUMENTS` (the user's slash command argument) to bootstrap Round 1 -- skip questions already answered by the argument.
+Guide the user through filling in the Project Instructions section. Use any extra user text that accompanied the skill invocation to bootstrap Round 1 -- skip questions already answered by that text.
 
 #### Round 1 -- Goal & Context
 Ask (2-3 questions max):

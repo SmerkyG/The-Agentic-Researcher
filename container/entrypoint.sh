@@ -22,9 +22,7 @@ prepare_home_layout_for_user() {
         /claude-home/.local/share
         /claude-home/.local/state
         /claude-home/.claude
-        /claude-home/.claude/commands
         /claude-home/.gemini
-        /claude-home/.gemini/commands
         /claude-home/.gemini/skills
         /claude-home/.gemini/agents
         /claude-home/.gemini/history
@@ -99,10 +97,9 @@ setup_home_layout() {
         "$HOME/.local/bin" \
         "$HOME/.local/share" \
         "$HOME/.local/state" \
-        "$HOME/.claude/commands" \
-        "$HOME/.config/opencode/commands" \
+        "$HOME/.claude" \
+        "$HOME/.config/opencode" \
         "$HOME/.local/share/opencode" \
-        "$HOME/.gemini/commands" \
         "$HOME/.gemini/skills" \
         "$HOME/.gemini/agents" \
         "$HOME/.gemini/history" \

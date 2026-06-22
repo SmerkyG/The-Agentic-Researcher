@@ -92,11 +92,19 @@ if command -v nvidia-smi &>/dev/null; then
     if nvidia-smi &>/dev/null; then
         GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
         pass "GPU available: $GPU_NAME"
+    elif command -v rocm-smi &>/dev/null && rocm-smi &>/dev/null; then
+        pass "GPU available via rocm-smi"
     else
-        warn "nvidia-smi found but failed to run (no GPU allocated?)"
+        warn "No local GPU visible via nvidia-smi or rocm-smi"
+    fi
+elif command -v rocm-smi &>/dev/null; then
+    if rocm-smi &>/dev/null; then
+        pass "GPU available via rocm-smi"
+    else
+        warn "rocm-smi found but failed to run (no GPU allocated?)"
     fi
 else
-    warn "nvidia-smi not found (no GPU support)"
+    warn "nvidia-smi and rocm-smi not found (no local GPU support)"
 fi
 echo ""
 

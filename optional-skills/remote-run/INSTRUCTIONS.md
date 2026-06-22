@@ -1,6 +1,6 @@
 ### GPU Job Backend: remote-run
 
-`AR_GPU_BACKEND=remote-run` is active. Use `remote-run` for independent GPU jobs on remote nodes in the current Slurm allocation.
+The `remote-run` optional skill is active. Use `remote-run` for independent GPU jobs on remote nodes in the current Slurm allocation.
 
 At session startup, still check local GPUs with `nvidia-smi` and then `rocm-smi`. Separately discover remote/backend GPUs with:
 

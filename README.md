@@ -1,5 +1,7 @@
 # The Agentic Researcher
 
+### FORKED from the original, with added features: native (non-sandboxed) mode, AMD GPU detection, gpu backend plugins, skills (instead of commands), and subagent support.
+
 **A Practical Guide to AI-Assisted Research in Mathematics and Machine Learning**
 
 <p align="center">
@@ -75,6 +77,7 @@ Run `agentic-researcher --setup` to create a configuration file at `${XDG_CONFIG
 - **Network proxy** — HTTP/HTTPS proxy settings for use inside the container
 - **Extra bind directories** — additional host paths to mount into the sandbox
 - **GPU backend** — auto, none, cluster-run, or remote-run
+- **Optional skills** (`AR_OPTIONAL_SKILLS`) — comma-separated selectable skills from `optional-skills/`
 
 You can re-run `--setup` at any time to update your configuration.
 
@@ -115,8 +118,13 @@ Off by default. Requires Apptainer runtime and an active multi-node Slurm alloca
 
 Agentic Researcher can render project skills for GPU placement backends. In native mode, `AR_GPU_BACKEND=auto` uses `cluster-run` when it is available on `PATH`; otherwise no external GPU backend is configured.
 
+Skill definitions start from neutral Agentic Researcher sources. Always-on skills live in `skills/`; selectable skills live in `optional-skills/`. Both are rendered into the selected CLI's project discovery path: `.claude/skills` for Claude, `.gemini/skills` for Gemini, `.opencode/skills` for OpenCode, and `.agents/skills` for Codex/pi. If a selected skill has `INSTRUCTIONS.md`, that file is also injected into the workspace instruction file.
+
+Subagent definitions start from neutral Markdown files in `agents/` and are rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that subagent.
+
 ```bash
 agentic-researcher --native --gpu-backend cluster-run
+agentic-researcher --optional-skill cluster-run
 cluster-run status
 cluster-run --detach --num-gpus 1 --name exp-e005 -- uv run python train.py --exp E005
 ```
@@ -138,12 +146,12 @@ The existing `--multi-node` flow selects the `remote-run` backend for Apptainer 
 ### Starting a New Project
 
 1. **Launch** the sandbox from your project directory: e.g., `agentic-researcher --yolo`
-2. **Run `/setup_research_plan`** inside the CLI agent. This starts an interactive dialogue that asks about your research goal, evaluation metrics, constraints, and compute budget.
+2. **Ask the agent to use the `setup_research_plan` skill.** This starts an interactive dialogue that asks about your research goal, evaluation metrics, constraints, and compute budget.
 3. The agent fills in the **Project Instructions** section of the instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) and creates the initial tracking files (`report.tex`, `TODO.md`).
 
 ### Resuming a Session
 
-When you relaunch the sandbox on a project that already has filled-in instructions, running `/setup_research_plan` will automatically detect the existing state, read `report.tex` and `TODO.md`, and summarize where the project left off before continuing.
+When you relaunch the sandbox on a project that already has filled-in instructions, using the `setup_research_plan` skill will automatically detect the existing state, read `report.tex` and `TODO.md`, and summarize where the project left off before continuing.
 
 ## Architecture
 
@@ -161,7 +169,7 @@ Native mode intentionally disables Agentic Researcher filesystem isolation: the 
 
 ### Research Agent Instructions
 
-The framework ships `INSTRUCTIONS.md` as a canonical template containing universal research commandments (e.g., never manipulate evaluation, one variable per experiment, record everything) and domain-specific modules for mathematical and compute-intensive research. At launch it is copied into the workspace under the filename required by the selected tool. The `/setup_research_plan` command then fills in the project-specific section through an interactive dialogue.
+The framework ships `INSTRUCTIONS.md` as a canonical template containing universal research commandments (e.g., never manipulate evaluation, one variable per experiment, record everything) and domain-specific modules for mathematical and compute-intensive research. At launch it is copied into the workspace under the filename required by the selected tool. The `setup_research_plan` skill then fills in the project-specific section through an interactive dialogue.
 
 ## Citation
 

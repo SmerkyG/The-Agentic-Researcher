@@ -5,7 +5,7 @@ description: "Place and manage GPU jobs with the cluster-run command."
 
 # Cluster Run GPU Jobs
 
-Use `cluster-run` for independent GPU experiments on remote/backend GPUs when `AR_GPU_BACKEND=cluster-run`.
+Use `cluster-run` for independent GPU experiments on remote/backend GPUs when this optional skill is active.
 Run `cluster-run --help` when you need the full current command reference.
 
 Start each work batch by checking local GPUs with `nvidia-smi`, then `rocm-smi` if needed. Check remote/backend capacity separately:

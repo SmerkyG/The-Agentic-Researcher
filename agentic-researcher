@@ -50,6 +50,7 @@ capture_env_overrides() {
         AR_EXTRA_ENV
         AR_DOCKER_GPUS
         AR_GPU_BACKEND
+        AR_OPTIONAL_SKILLS
         AR_AUTH_MODE
         AR_API_PROVIDER
         AR_API_KEY_ENV
@@ -93,6 +94,7 @@ apply_env_overrides() {
         AR_EXTRA_ENV
         AR_DOCKER_GPUS
         AR_GPU_BACKEND
+        AR_OPTIONAL_SKILLS
         AR_AUTH_MODE
         AR_API_PROVIDER
         AR_API_KEY_ENV
@@ -114,6 +116,13 @@ apply_env_overrides() {
     fi
     if [[ -n "${AR_GPU_BACKEND_OVERRIDE:-}" ]]; then
         AR_GPU_BACKEND="$AR_GPU_BACKEND_OVERRIDE"
+    fi
+    if [[ -n "${AR_OPTIONAL_SKILLS_OVERRIDE:-}" ]]; then
+        if [[ -n "${AR_OPTIONAL_SKILLS:-}" ]]; then
+            AR_OPTIONAL_SKILLS="$AR_OPTIONAL_SKILLS,$AR_OPTIONAL_SKILLS_OVERRIDE"
+        else
+            AR_OPTIONAL_SKILLS="$AR_OPTIONAL_SKILLS_OVERRIDE"
+        fi
     fi
     if [[ -n "${AR_CLI_TOOL_OVERRIDE:-}" ]]; then
         AR_CLI_TOOL="$AR_CLI_TOOL_OVERRIDE"
@@ -170,6 +179,7 @@ apply_defaults() {
     AR_EXTRA_ENV="${AR_EXTRA_ENV:-}"
     AR_DOCKER_GPUS="${AR_DOCKER_GPUS:-auto}"
     AR_GPU_BACKEND="${AR_GPU_BACKEND:-auto}"
+    AR_OPTIONAL_SKILLS="${AR_OPTIONAL_SKILLS:-}"
 
     case "$AR_CLI_TOOL" in
         claude)
@@ -203,6 +213,16 @@ MODEL_SPECIFIED=false
 DEBUG_LAUNCH=false
 WORKSPACE_DIR=""
 TOOL_ARGS=()
+SELECTED_OPTIONAL_SKILLS=()
+
+append_optional_skill_override() {
+    local skill_name="$1"
+    if [[ -n "${AR_OPTIONAL_SKILLS_OVERRIDE:-}" ]]; then
+        AR_OPTIONAL_SKILLS_OVERRIDE="$AR_OPTIONAL_SKILLS_OVERRIDE,$skill_name"
+    else
+        AR_OPTIONAL_SKILLS_OVERRIDE="$skill_name"
+    fi
+}
 
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
@@ -272,6 +292,14 @@ parse_arguments() {
                     exit 1
                 fi
                 AR_GPU_BACKEND_OVERRIDE="$2"
+                shift 2
+                ;;
+            --optional-skill)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --optional-skill requires a value"
+                    exit 1
+                fi
+                append_optional_skill_override "$2"
                 shift 2
                 ;;
             --yolo)
@@ -348,6 +376,8 @@ Options:
   --test              Quick validation of sandbox environment
   --multi-node        Enable multi-node dispatch (Apptainer + Slurm only)
   --gpu-backend NAME  GPU job backend (auto|none|cluster-run|remote-run)
+  --optional-skill NAME
+                      Install an optional skill from optional-skills/ (repeatable)
   --debug-launch      Print extra launcher details and enable tool startup logs where supported
   --tool TOOL         Select CLI tool (claude|opencode|gemini|codex|pi)
   --yolo              Auto-approve all permissions (Claude Code only)
@@ -364,6 +394,7 @@ Examples:
   agentic-researcher --apptainer --build          # Build Apptainer container
   agentic-researcher --native                     # Host-native launch, no container
   agentic-researcher --native --gpu-backend cluster-run
+  agentic-researcher --optional-skill cluster-run # Install optional skill + instructions
   agentic-researcher --setup                      # Optional setup wizard
   agentic-researcher --clean                      # Interactive cleanup of local state
   agentic-researcher --uninstall                  # Remove installed launcher
@@ -591,6 +622,62 @@ validate_gpu_backend() {
     esac
 }
 
+append_selected_optional_skill() {
+    local skill_name="$1"
+    local existing
+
+    [[ -n "$skill_name" && "$skill_name" != "none" ]] || return 0
+
+    for existing in "${SELECTED_OPTIONAL_SKILLS[@]}"; do
+        if [[ "$existing" == "$skill_name" ]]; then
+            return 0
+        fi
+    done
+
+    SELECTED_OPTIONAL_SKILLS+=("$skill_name")
+}
+
+append_optional_skills_from_list() {
+    local skill_list="$1"
+    local normalized skill_name
+
+    normalized="${skill_list//,/ }"
+    for skill_name in $normalized; do
+        append_selected_optional_skill "$skill_name"
+    done
+}
+
+resolve_optional_skills() {
+    SELECTED_OPTIONAL_SKILLS=()
+    append_optional_skills_from_list "${AR_OPTIONAL_SKILLS:-}"
+
+    if [[ "${GPU_BACKEND:-none}" != "none" ]]; then
+        append_selected_optional_skill "$GPU_BACKEND"
+    fi
+}
+
+validate_optional_skills() {
+    local skill_name skill_dir
+
+    for skill_name in "${SELECTED_OPTIONAL_SKILLS[@]}"; do
+        if [[ ! "$skill_name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Error: Invalid optional skill name: $skill_name"
+            echo "Optional skill names may contain only letters, numbers, dots, underscores, and hyphens."
+            exit 1
+        fi
+        skill_dir="$SCRIPT_DIR/optional-skills/$skill_name"
+        if [[ ! -d "$skill_dir" ]]; then
+            echo "Error: Optional skill not found: $skill_name"
+            echo "Expected directory: $skill_dir"
+            exit 1
+        fi
+        if [[ ! -f "$skill_dir/SKILL.md" && ! -f "$skill_dir/INSTRUCTIONS.md" ]]; then
+            echo "Error: Optional skill $skill_name has neither SKILL.md nor INSTRUCTIONS.md"
+            exit 1
+        fi
+    done
+}
+
 setup_storage() {
     STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-researcher}"
 
@@ -612,17 +699,15 @@ setup_storage() {
     CLAUDE_JSON="$AR_CONFIG_STORE/claude.json"
 
     mkdir -p "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$UV_TOOL_DIR" \
-             "$AR_CONFIG_STORE" "$AR_CONFIG_STORE/commands"
+             "$AR_CONFIG_STORE"
 
     mkdir -p \
         "$AR_CONFIG_STORE/.cache" \
-        "$AR_CONFIG_STORE/.config/opencode/commands" \
+        "$AR_CONFIG_STORE/.config/opencode" \
         "$AR_CONFIG_STORE/.local/bin" \
         "$AR_CONFIG_STORE/.local/share/opencode" \
         "$AR_CONFIG_STORE/.local/state" \
-        "$AR_CONFIG_STORE/.claude/commands" \
         "$AR_CONFIG_STORE/.codex" \
-        "$AR_CONFIG_STORE/.gemini/commands" \
         "$AR_CONFIG_STORE/.gemini/skills" \
         "$AR_CONFIG_STORE/.gemini/agents" \
         "$AR_CONFIG_STORE/.gemini/history" \
@@ -668,7 +753,6 @@ setup_storage() {
     mkdir -p "$OPENCODE_CONFIG_DIR" "$OPENCODE_DATA_DIR" "$GEMINI_STATE_DIR" "$CODEX_STATE_DIR" "$PI_STATE_DIR/agent"
 
     mkdir -p \
-        "$GEMINI_STATE_DIR/commands" \
         "$GEMINI_STATE_DIR/skills" \
         "$GEMINI_STATE_DIR/agents" \
         "$GEMINI_STATE_DIR/history" \
@@ -715,7 +799,7 @@ setup_instruction_file() {
 
     INSTRUCTION_TARGET="$target"
 }
-strip_command_frontmatter() {
+strip_frontmatter() {
     local source_path="$1"
 
     awk '
@@ -724,52 +808,58 @@ strip_command_frontmatter() {
         !in_frontmatter { print }
     ' "$source_path"
 }
-render_command_skill() {
-    local skill_name="$1"
-    local description="$2"
-    local source_path="$3"
-    local target_path="$4"
-    local temp_path="${target_path}.tmp"
 
-    {
-        printf -- '---\n'
-        printf 'name: "%s"\n' "$skill_name"
-        printf 'description: "%s"\n' "$description"
-        printf -- '---\n\n'
-        printf '<!-- Generated by agentic-researcher. Edit commands/%s.md to change this skill. -->\n\n' "$skill_name"
-        printf 'This project skill mirrors the `%s` research command.\n\n' "$skill_name"
-        printf 'If the user supplied extra text alongside this skill invocation, treat that text as the command argument.\n\n'
-        strip_command_frontmatter "$source_path" \
-            | sed 's/\$ARGUMENTS/any extra user text that accompanied the skill invocation/g'
-    } > "$temp_path"
+frontmatter_value() {
+    local source_path="$1"
+    local key="$2"
 
-    mv "$temp_path" "$target_path"
+    awk -v key="$key" '
+        NR == 1 && $0 == "---" { in_frontmatter=1; next }
+        in_frontmatter && $0 == "---" { exit }
+        in_frontmatter {
+            pattern = "^[[:space:]]*" key ":[[:space:]]*"
+            if ($0 ~ pattern) {
+                sub(pattern, "")
+                sub(/^"/, "")
+                sub(/"$/, "")
+                print
+                exit
+            }
+        }
+    ' "$source_path"
 }
+
 project_skill_roots_for_tool() {
+    # Source skill definitions live in this repo under skills/ and optional-skills/.
+    # The launcher renders generated SKILL.md files into the selected CLI's
+    # project discovery path. Codex and pi use the shared agent-compatible path.
     case "$AR_CLI_TOOL" in
         claude)
             printf '%s\n' "$WORKSPACE_DIR/.claude/skills"
             ;;
-        opencode|gemini|codex|pi)
+        opencode)
+            printf '%s\n' "$WORKSPACE_DIR/.opencode/skills"
+            ;;
+        gemini)
+            printf '%s\n' "$WORKSPACE_DIR/.gemini/skills"
+            ;;
+        codex|pi)
             printf '%s\n' "$WORKSPACE_DIR/.agents/skills"
             ;;
     esac
 }
 
-setup_research_command_project_skills() {
+setup_project_skills() {
     local managed_marker="Generated by agentic-researcher"
-    local skill_root skill_name description source_path skill_dir target_path
+    local skill_root source_path skill_name skill_dir target_path
 
     while IFS= read -r skill_root; do
         [[ -n "$skill_root" ]] || continue
         mkdir -p "$skill_root"
 
-        while IFS='|' read -r skill_name description; do
-            source_path="$SCRIPT_DIR/commands/$skill_name.md"
-            if [[ ! -f "$source_path" ]]; then
-                continue
-            fi
-
+        for source_path in "$SCRIPT_DIR"/skills/*/SKILL.md; do
+            [[ -f "$source_path" ]] || continue
+            skill_name="$(basename "$(dirname "$source_path")")"
             skill_dir="$skill_root/$skill_name"
             target_path="$skill_dir/SKILL.md"
 
@@ -779,12 +869,23 @@ setup_research_command_project_skills() {
             fi
 
             mkdir -p "$skill_dir"
-            render_command_skill "$skill_name" "$description" "$source_path" "$target_path"
-        done << 'EOF'
-setup_research_plan|Set up or resume a research project in this workspace
-retro|Reflect on the current research session and propose instruction improvements
-update_base|Update the project instruction file from the latest base template
-EOF
+            render_managed_skill_file "$source_path" "$target_path"
+        done
+
+        for skill_name in "${SELECTED_OPTIONAL_SKILLS[@]}"; do
+            source_path="$SCRIPT_DIR/optional-skills/$skill_name/SKILL.md"
+            [[ -f "$source_path" ]] || continue
+            skill_dir="$skill_root/$skill_name"
+            target_path="$skill_dir/SKILL.md"
+
+            if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
+                echo "Warning: Skipping existing optional skill at $target_path (not managed by agentic-researcher)"
+                continue
+            fi
+
+            mkdir -p "$skill_dir"
+            render_managed_skill_file "$source_path" "$target_path"
+        done
     done < <(project_skill_roots_for_tool)
 }
 
@@ -799,7 +900,7 @@ render_managed_skill_file() {
         in_frontmatter && $0 == "---" {
             print
             print ""
-            print "<!-- Generated by agentic-researcher. Edit the source backend skill to change this file. -->"
+            print "<!-- Generated by agentic-researcher. Edit the source skill to change this file. -->"
             inserted=1
             in_frontmatter=0
             next
@@ -807,7 +908,7 @@ render_managed_skill_file() {
         { print }
         END {
             if (inserted == 0) {
-                print "<!-- Generated by agentic-researcher. Edit the source backend skill to change this file. -->"
+                print "<!-- Generated by agentic-researcher. Edit the source skill to change this file. -->"
             }
         }
     ' "$source_path" > "$temp_path"
@@ -815,58 +916,177 @@ render_managed_skill_file() {
     mv "$temp_path" "$target_path"
 }
 
-setup_gpu_backend_project_skill() {
-    if [[ "${GPU_BACKEND:-none}" == "none" ]]; then
-        return 0
-    fi
+toml_escape() {
+    sed 's/\\/\\\\/g; s/"/\\"/g'
+}
 
-    local source_path="$SCRIPT_DIR/gpu-backends/$GPU_BACKEND/SKILL.md"
-    if [[ ! -f "$source_path" ]]; then
-        echo "Warning: GPU backend skill not found for $GPU_BACKEND: $source_path"
-        return
-    fi
+project_agent_root_for_tool() {
+    case "$AR_CLI_TOOL" in
+        claude)
+            printf '%s\n' "$WORKSPACE_DIR/.claude/agents"
+            ;;
+        opencode)
+            printf '%s\n' "$WORKSPACE_DIR/.opencode/agents"
+            ;;
+        gemini)
+            printf '%s\n' "$WORKSPACE_DIR/.gemini/agents"
+            ;;
+        codex)
+            printf '%s\n' "$WORKSPACE_DIR/.codex/agents"
+            ;;
+        pi)
+            ;;
+    esac
+}
+
+render_agent_for_tool() {
+    local source_path="$1"
+    local target_path="$2"
+    local agent_name="$3"
+    local description="$4"
+    local codex_reasoning_effort="$5"
+    local temp_path="${target_path}.tmp"
+    local name_escaped description_escaped reasoning_escaped
+
+    case "$AR_CLI_TOOL" in
+        codex)
+            name_escaped="$(printf '%s' "$agent_name" | toml_escape)"
+            description_escaped="$(printf '%s' "$description" | toml_escape)"
+            reasoning_escaped="$(printf '%s' "$codex_reasoning_effort" | toml_escape)"
+            {
+                printf 'name = "%s"\n' "$name_escaped"
+                printf 'description = "%s"\n' "$description_escaped"
+                if [[ -n "$reasoning_escaped" ]]; then
+                    printf 'model_reasoning_effort = "%s"\n' "$reasoning_escaped"
+                fi
+                printf 'developer_instructions = """\n'
+                printf '<!-- Generated by agentic-researcher. Edit agents/%s.md to change this agent. -->\n\n' "$agent_name"
+                strip_frontmatter "$source_path" | sed 's/"""/\\"""/g'
+                printf '\n"""\n'
+            } > "$temp_path"
+            ;;
+        opencode)
+            description_escaped="$(printf '%s' "$description" | toml_escape)"
+            {
+                printf -- '---\n'
+                printf 'description: "%s"\n' "$description_escaped"
+                printf 'mode: subagent\n'
+                printf -- '---\n\n'
+                printf '<!-- Generated by agentic-researcher. Edit agents/%s.md to change this agent. -->\n\n' "$agent_name"
+                strip_frontmatter "$source_path"
+            } > "$temp_path"
+            ;;
+        claude|gemini)
+            awk -v agent_name="$agent_name" '
+                BEGIN { inserted=0; in_frontmatter=0 }
+                NR == 1 && $0 == "---" { in_frontmatter=1; print; next }
+                in_frontmatter && $0 ~ /^[[:space:]]*(codex_reasoning_effort|model_reasoning_effort):[[:space:]]*/ { next }
+                in_frontmatter && $0 == "---" {
+                    print
+                    print ""
+                    print "<!-- Generated by agentic-researcher. Edit agents/" agent_name ".md to change this agent. -->"
+                    inserted=1
+                    in_frontmatter=0
+                    next
+                }
+                { print }
+                END {
+                    if (inserted == 0) {
+                        print "<!-- Generated by agentic-researcher. Edit agents/" agent_name ".md to change this agent. -->"
+                    }
+                }
+            ' "$source_path" > "$temp_path"
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    mv "$temp_path" "$target_path"
+}
+
+setup_project_agents() {
+    local agent_root
+    agent_root="$(project_agent_root_for_tool)"
+    [[ -n "$agent_root" ]] || return 0
+    [[ -d "$SCRIPT_DIR/agents" ]] || return 0
 
     local managed_marker="Generated by agentic-researcher"
-    local skill_root skill_dir target_path
+    local source_path file_stem agent_name description codex_reasoning_effort target_path
+    mkdir -p "$agent_root"
 
-    while IFS= read -r skill_root; do
-        [[ -n "$skill_root" ]] || continue
-        skill_dir="$skill_root/$GPU_BACKEND"
-        target_path="$skill_dir/SKILL.md"
+    for source_path in "$SCRIPT_DIR"/agents/*.md; do
+        [[ -f "$source_path" ]] || continue
+        file_stem="$(basename "$source_path" .md)"
+        agent_name="$(frontmatter_value "$source_path" "name")"
+        description="$(frontmatter_value "$source_path" "description")"
+        codex_reasoning_effort="$(frontmatter_value "$source_path" "codex_reasoning_effort")"
+        if [[ -z "$codex_reasoning_effort" ]]; then
+            codex_reasoning_effort="$(frontmatter_value "$source_path" "model_reasoning_effort")"
+        fi
+        [[ -n "$agent_name" ]] || agent_name="$file_stem"
+        [[ -n "$description" ]] || description="$agent_name agent."
+
+        case "$AR_CLI_TOOL" in
+            codex)
+                target_path="$agent_root/$agent_name.toml"
+                ;;
+            *)
+                target_path="$agent_root/$agent_name.md"
+                ;;
+        esac
 
         if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
-            echo "Warning: Skipping existing GPU backend skill at $target_path (not managed by agentic-researcher)"
+            echo "Warning: Skipping existing agent at $target_path (not managed by agentic-researcher)"
             continue
         fi
 
-        mkdir -p "$skill_dir"
-        render_managed_skill_file "$source_path" "$target_path"
-    done < <(project_skill_roots_for_tool)
+        render_agent_for_tool "$source_path" "$target_path" "$agent_name" "$description" "$codex_reasoning_effort"
+    done
 }
 
-setup_gpu_backend_instruction_block() {
+append_skill_instruction_block() {
+    local output_path="$1"
+    local skill_name="$2"
+    local instruction_source="$3"
+    local begin_marker="<!-- AGENTIC-RESEARCHER-SKILL-INSTRUCTIONS-START $skill_name -->"
+    local end_marker="<!-- AGENTIC-RESEARCHER-SKILL-INSTRUCTIONS-END $skill_name -->"
+
+    [[ -f "$instruction_source" ]] || return 0
+
+    {
+        printf '\n%s\n' "$begin_marker"
+        printf '\n'
+        cat "$instruction_source"
+        printf '\n%s\n' "$end_marker"
+    } >> "$output_path"
+}
+
+setup_skill_instruction_blocks() {
     local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
     [[ -f "$instruction_path" ]] || return 0
 
-    local begin_marker="<!-- AGENTIC-RESEARCHER-GPU-BACKEND-START -->"
-    local end_marker="<!-- AGENTIC-RESEARCHER-GPU-BACKEND-END -->"
     local temp_path="${instruction_path}.tmp"
-    local backend_instructions="$SCRIPT_DIR/gpu-backends/${GPU_BACKEND:-none}/INSTRUCTIONS.md"
+    local source_path skill_name
 
-    awk -v begin="$begin_marker" -v end="$end_marker" '
-        $0 == begin { skip=1; next }
-        $0 == end { skip=0; next }
+    awk '
+        /^<!-- AGENTIC-RESEARCHER-SKILL-INSTRUCTIONS-START / { skip=1; next }
+        /^<!-- AGENTIC-RESEARCHER-SKILL-INSTRUCTIONS-END / { skip=0; next }
+        $0 == "<!-- AGENTIC-RESEARCHER-GPU-BACKEND-START -->" { skip=1; next }
+        $0 == "<!-- AGENTIC-RESEARCHER-GPU-BACKEND-END -->" { skip=0; next }
         skip != 1 { print }
     ' "$instruction_path" > "$temp_path"
 
-    if [[ "${GPU_BACKEND:-none}" != "none" && -f "$backend_instructions" ]]; then
-        {
-            printf '\n%s\n' "$begin_marker"
-            printf '\n'
-            cat "$backend_instructions"
-            printf '\n%s\n' "$end_marker"
-        } >> "$temp_path"
-    fi
+    for source_path in "$SCRIPT_DIR"/skills/*/INSTRUCTIONS.md; do
+        [[ -f "$source_path" ]] || continue
+        skill_name="$(basename "$(dirname "$source_path")")"
+        append_skill_instruction_block "$temp_path" "$skill_name" "$source_path"
+    done
+
+    for skill_name in "${SELECTED_OPTIONAL_SKILLS[@]}"; do
+        source_path="$SCRIPT_DIR/optional-skills/$skill_name/INSTRUCTIONS.md"
+        append_skill_instruction_block "$temp_path" "$skill_name" "$source_path"
+    done
 
     mv "$temp_path" "$instruction_path"
 }
@@ -1021,11 +1241,6 @@ setup_auth_binds() {
 }
 setup_research_binds() {
     RESEARCH_BINDS=()
-    for cmd_file in setup_research_plan retro update_base; do
-        if [[ -f "$SCRIPT_DIR/commands/$cmd_file.md" ]]; then
-            RESEARCH_BINDS+=(--bind "$SCRIPT_DIR/commands/$cmd_file.md:/claude-home/.claude/commands/$cmd_file.md:ro")
-        fi
-    done
     if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
         RESEARCH_BINDS+=(--bind "$SCRIPT_DIR/INSTRUCTIONS.md:/claude-home/.claude/INSTRUCTIONS.md.template:ro")
     fi
@@ -1275,8 +1490,7 @@ test_multi_node() {
 }
 
 setup_opencode() {
-    OPENCODE_COMMANDS_DIR="$OPENCODE_CONFIG_DIR/commands"
-    mkdir -p "$OPENCODE_DATA_DIR" "$OPENCODE_CONFIG_DIR" "$OPENCODE_COMMANDS_DIR"
+    mkdir -p "$OPENCODE_DATA_DIR" "$OPENCODE_CONFIG_DIR"
 
     # Generate opencode config from template if custom endpoint is set
     local oc_config="$OPENCODE_CONFIG_DIR/opencode.json"
@@ -1598,11 +1812,6 @@ launch_oci_runtime() {
     # Instead, copy files into $AR_CONFIG_STORE before mounting the directory.
     case "$AR_CLI_TOOL" in
         claude)
-            for cmd_file in setup_research_plan retro update_base; do
-                if [[ -f "$SCRIPT_DIR/commands/$cmd_file.md" ]]; then
-                    cp "$SCRIPT_DIR/commands/$cmd_file.md" "$AR_CONFIG_STORE/commands/$cmd_file.md"
-                fi
-            done
             if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
                 render_instruction_template "$AR_CONFIG_STORE/INSTRUCTIONS.md.template"
             fi
@@ -1616,12 +1825,6 @@ launch_oci_runtime() {
             ;;
         opencode)
             if [[ -d "${OPENCODE_CONFIG_DIR:-}" ]]; then
-                for cmd_file in setup_research_plan retro update_base; do
-                    if [[ -f "$SCRIPT_DIR/commands/$cmd_file.md" ]]; then
-                        mkdir -p "$OPENCODE_CONFIG_DIR/commands"
-                        cp "$SCRIPT_DIR/commands/$cmd_file.md" "$OPENCODE_CONFIG_DIR/commands/$cmd_file.md"
-                    fi
-                done
                 OCI_ARGS+=(-v "$OPENCODE_CONFIG_DIR:/claude-home/.config/opencode")
             fi
             if [[ -d "${OPENCODE_DATA_DIR:-}" ]]; then
@@ -1712,9 +1915,9 @@ run_native_test() {
     local fail_count=0
     local warn_count=0
 
-    native_pass() { echo "  [PASS] $1"; ((pass_count++)); }
-    native_fail() { echo "  [FAIL] $1"; ((fail_count++)); }
-    native_warn() { echo "  [WARN] $1"; ((warn_count++)); }
+    native_pass() { echo "  [PASS] $1"; pass_count=$((pass_count + 1)); }
+    native_fail() { echo "  [FAIL] $1"; fail_count=$((fail_count + 1)); }
+    native_warn() { echo "  [WARN] $1"; warn_count=$((warn_count + 1)); }
 
     echo "=== Native Runtime ==="
     if [[ "$HOME" != "/claude-home" ]]; then
@@ -1751,8 +1954,10 @@ run_native_test() {
         local gpu_count
         gpu_count=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')
         native_pass "GPU visible via nvidia-smi ($gpu_count device(s))"
+    elif command -v rocm-smi >/dev/null 2>&1 && rocm-smi >/dev/null 2>&1; then
+        native_pass "GPU visible via rocm-smi"
     else
-        native_warn "No local GPU visible via nvidia-smi"
+        native_warn "No local GPU visible via nvidia-smi or rocm-smi"
     fi
 
     echo ""
@@ -1830,12 +2035,14 @@ main() {
     validate_workspace
     validate_api_key
     resolve_gpu_backend
+    resolve_optional_skills
     validate_gpu_backend
+    validate_optional_skills
     validate_container
     validate_multi_node
     setup_storage
     setup_instruction_file
-    setup_gpu_backend_instruction_block
+    setup_skill_instruction_blocks
     translate_tool_args
     setup_auth_binds
     setup_research_binds
@@ -1848,8 +2055,8 @@ main() {
     if [[ "$AR_CONTAINER_RUNTIME" != "native" && "$AR_CLI_TOOL" == "opencode" ]]; then
         setup_opencode
     fi
-    setup_research_command_project_skills
-    setup_gpu_backend_project_skill
+    setup_project_skills
+    setup_project_agents
 
     # Display banner
     local tool_display

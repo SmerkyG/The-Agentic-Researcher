@@ -304,6 +304,9 @@ AR_EXTRA_BIND_DIRS="$AR_EXTRA_BIND_DIRS"
 
 # GPU job backend: auto | none | cluster-run | remote-run
 AR_GPU_BACKEND="$AR_GPU_BACKEND"
+
+# Optional skills from optional-skills/ to install at launch (comma-separated)
+AR_OPTIONAL_SKILLS=""
 EOF
 
 echo "════════════════════════════════════════════════════════════════"

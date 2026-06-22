@@ -34,6 +34,10 @@ AGENTS.md
 CLAUDE.md
 GEMINI.md
 .agents/
+.claude/
+.codex/
+.gemini/
+.opencode/
 
 # Hive-One docs
 HIVE-ONE-PUBLIC.md

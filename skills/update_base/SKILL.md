@@ -1,5 +1,6 @@
 ---
-description: Update project instruction file with the latest base template while preserving project-specific instructions
+name: "update_base"
+description: "Update the project instruction file from the latest base template."
 ---
 
 You need to update the project's instruction file with the latest base template while keeping the project-specific content intact.
