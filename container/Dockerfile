@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
         ripgrep \
         chktex \
         python3 \
+        python3-yaml \
         unzip \
         xz-utils \
     && rm -rf /var/lib/apt/lists/*

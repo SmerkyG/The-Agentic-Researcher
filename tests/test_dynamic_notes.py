@@ -1,7 +1,9 @@
+import json
 import os
 import shutil
 import stat
 import subprocess
+import sys
 import time
 import importlib.util
 from importlib.machinery import SourceFileLoader
@@ -173,6 +175,99 @@ def test_generate_instruction_injects_general_notes_and_lists_specific_notes(tmp
     assert "  - kernel-optimization.md" in text
     assert "  - evaluation.md" in text
     assert "  - general.md" not in text
+
+
+def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path: Path) -> None:
+    org_remote = seed_org_remote(tmp_path)
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path, org_remote)
+
+    run([str(AR_NOTES), "init-org-notes", "--repo", str(org_remote)], env=env)
+    run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
+    state = state_checkout(env)
+    (state / ".agentic" / "notes" / "general.md").write_text(
+        "# Project General\n\nOld project body.\n", encoding="utf-8"
+    )
+    git(state, "add", ".agentic/notes/general.md")
+    git(state, "commit", "-m", "seed old project note")
+    git(state, "push")
+    run(
+        [
+            str(AR_NOTES),
+            "generate-instructions",
+            "--project-dir",
+            str(project),
+            "--role",
+            "gpu-kernel-engineer",
+            "--tool",
+            "codex",
+        ],
+        env=env,
+    )
+    assert "Old project body." in (project / "AGENTS.md").read_text(encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["AR_GPU_BACKEND"] = "none"
+    launch = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--native",
+            "--tool",
+            "codex",
+            str(project),
+        ],
+        env=env,
+    )
+    assert launch.returncode == 0
+    hook = project / ".codex" / "hooks" / "agentic-researcher-compaction.py"
+    assert hook.exists()
+
+    org_update = tmp_path / "org-update"
+    run(["git", "clone", str(org_remote), str(org_update)])
+    configure_git(org_update)
+    (org_update / "notes" / "general.md").write_text(
+        "# Org General\n\nFresh org body.\n", encoding="utf-8"
+    )
+    git(org_update, "add", "notes/general.md")
+    git(org_update, "commit", "-m", "fresh org note")
+    git(org_update, "push")
+
+    state_update = tmp_path / "state-update"
+    run(["git", "clone", str(project_remote), str(state_update)])
+    configure_git(state_update)
+    git(state_update, "fetch", "origin", "agentic/state")
+    git(state_update, "checkout", "-B", "agentic/state", "origin/agentic/state")
+    (state_update / ".agentic" / "notes" / "general.md").write_text(
+        "# Project General\n\nFresh project body.\n", encoding="utf-8"
+    )
+    git(state_update, "add", ".agentic/notes/general.md")
+    git(state_update, "commit", "-m", "fresh project note")
+    git(state_update, "push", "origin", "agentic/state")
+
+    result = run(
+        [
+            sys.executable,
+            str(hook),
+            str(project / "AGENTS.md"),
+            str(AR_NOTES),
+            str(project),
+            "gpu-kernel-engineer",
+            "codex",
+        ],
+        env=env,
+        input='{"hook_event_name":"SessionStart"}',
+    )
+
+    payload = json.loads(result.stdout)
+    text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Agentic Researcher refreshed post-compaction instructions." in payload["systemMessage"]
+    assert "just experienced context compaction" in payload["hookSpecificOutput"]["additionalContext"]
+    assert "Fresh org body." in text
+    assert "Fresh project body." in text
+    assert "Old project body." not in text
 
 
 def test_note_updater_creates_new_org_note_and_commits(tmp_path: Path) -> None:

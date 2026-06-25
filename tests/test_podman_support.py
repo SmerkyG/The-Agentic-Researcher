@@ -254,6 +254,10 @@ def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str]
     assert "-it" not in podman_log
     assert "--userns keep-id" in podman_log
     assert ":/claude-home" in podman_log
+    assert f"{REPO_ROOT}:/opt/agentic-researcher:ro" in podman_log
+    assert "AR_CONTAINER_RUNTIME=podman" in podman_log
+    assert "AR_RUNTIME_DIR=/opt/agentic-researcher" in podman_log
+    assert "AR_NOTES_CLI=/opt/agentic-researcher/scripts/ar-notes" in podman_log
     assert "--entrypoint /bin/bash" in podman_log
     assert "/test_sandbox.sh" in podman_log
 
@@ -301,14 +305,18 @@ def test_launcher_native_runs_host_tool_without_container(
     assert "developer_instructions" in codex_agent_text
     codex_hook = workspace / ".codex" / "hooks" / "agentic-researcher-compaction.py"
     assert codex_hook.exists()
+    assert not (workspace / ".agents" / "hooks" / "agentic-researcher-compaction-refresh.py").exists()
     codex_hook_text = codex_hook.read_text()
     assert "You have just experienced context compaction" in codex_hook_text
     assert "since the last compaction" in codex_hook_text
+    assert "run_refresh" in codex_hook_text
     codex_hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
     codex_command = codex_hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
     assert codex_hooks["hooks"]["SessionStart"][0]["matcher"] == "compact"
     assert "agentic-researcher-compaction.py" in codex_command
+    assert str(REPO_ROOT / "scripts" / "ar-notes") in codex_command
     assert str(workspace / "AGENTS.md") in codex_command
+    assert str(workspace) in codex_command
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
@@ -542,14 +550,18 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
     assert "codex_reasoning_effort" not in claude_agent.read_text()
     claude_hook = workspace / ".claude" / "hooks" / "agentic-researcher-compaction.py"
     assert claude_hook.exists()
+    assert not (workspace / ".agents" / "hooks" / "agentic-researcher-compaction-refresh.py").exists()
     claude_hook_text = claude_hook.read_text()
     assert "You have just experienced context compaction" in claude_hook_text
     assert "since the last compaction" in claude_hook_text
+    assert "run_refresh" in claude_hook_text
     claude_settings = json.loads((workspace / ".claude" / "settings.local.json").read_text())
     claude_command = claude_settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
     assert claude_settings["hooks"]["SessionStart"][0]["matcher"] == "compact"
     assert "agentic-researcher-compaction.py" in claude_command
+    assert str(REPO_ROOT / "scripts" / "ar-notes") in claude_command
     assert str(workspace / "CLAUDE.md") in claude_command
+    assert str(workspace) in claude_command
 
 
 def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
@@ -582,14 +594,18 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     assert not (workspace / ".agents" / "skills" / "cluster-run" / "SKILL.md").exists()
     gemini_hook = workspace / ".gemini" / "hooks" / "agentic-researcher-compaction.py"
     assert gemini_hook.exists()
+    assert not (workspace / ".agents" / "hooks" / "agentic-researcher-compaction-refresh.py").exists()
     gemini_hook_text = gemini_hook.read_text()
     assert "You have just experienced context compaction" in gemini_hook_text
     assert "since the last compaction" in gemini_hook_text
+    assert "run_refresh" in gemini_hook_text
     gemini_settings = json.loads((workspace / ".gemini" / "settings.json").read_text())
     precompress_command = gemini_settings["hooks"]["PreCompress"][0]["hooks"][0]["command"]
     before_model_command = gemini_settings["hooks"]["BeforeModel"][0]["hooks"][0]["command"]
     assert "agentic-researcher-compaction.py' mark" in precompress_command
     assert "agentic-researcher-compaction.py' inject" in before_model_command
+    assert str(REPO_ROOT / "scripts" / "ar-notes") in precompress_command
+    assert str(REPO_ROOT / "scripts" / "ar-notes") in before_model_command
     assert str(workspace / "GEMINI.md") in precompress_command
     assert str(workspace / "GEMINI.md") in before_model_command
 
@@ -630,6 +646,8 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     assert "experimental.session.compacting" in opencode_plugin_text
     assert "You have just experienced context compaction" in opencode_plugin_text
     assert "since the last compaction" in opencode_plugin_text
+    assert "execFileSync" in opencode_plugin_text
+    assert str(REPO_ROOT / "scripts" / "ar-notes") in opencode_plugin_text
     assert str(workspace / "AGENTS.md") in opencode_plugin_text
 
 
@@ -713,6 +731,8 @@ def test_launcher_podman_runs_pi_tool(base_env: dict[str, str], tmp_path: Path) 
     podman_log = read_log(base_env["FAKE_PODMAN_LOG"])
     assert "run --rm" in podman_log
     assert "SANDBOX_TOOL=pi" in podman_log
+    assert f"{REPO_ROOT}:/opt/agentic-researcher:ro" in podman_log
+    assert "AR_NOTES_CLI=/opt/agentic-researcher/scripts/ar-notes" in podman_log
     # pi reads AGENTS.md; the launcher must seed it into the workspace.
     assert (workspace / "AGENTS.md").exists()
     # pi uses the shared agent-compatible project skill path.
@@ -720,10 +740,13 @@ def test_launcher_podman_runs_pi_tool(base_env: dict[str, str], tmp_path: Path) 
         assert (workspace / ".agents" / "skills" / skill / "SKILL.md").exists()
     pi_extension = workspace / ".pi" / "extensions" / "agentic-researcher-compaction.ts"
     assert pi_extension.exists()
+    assert not (workspace / ".agents" / "hooks" / "agentic-researcher-compaction-refresh.py").exists()
     pi_extension_text = pi_extension.read_text()
     assert 'pi.on("session_compact"' in pi_extension_text
     assert "You have just experienced context compaction" in pi_extension_text
     assert "since the last compaction" in pi_extension_text
+    assert "execFileSync" in pi_extension_text
+    assert "/opt/agentic-researcher/scripts/ar-notes" in pi_extension_text
     assert "/workspace/AGENTS.md" in pi_extension_text
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 

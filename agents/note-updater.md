@@ -32,7 +32,7 @@ Rules:
 - Keep notes concise and preserve useful existing text.
 - Prefer merging into an existing bullet over appending duplicates.
 - Do not blindly append the request.
-- Use `scripts/ar-notes update-note --request REQUEST.yaml --project-dir PATH --refresh-parent`.
+- Use `${AR_NOTES_CLI:-scripts/ar-notes} update-note --request REQUEST.yaml --project-dir PATH --refresh-parent`.
 - Never force-push.
 - If a push is rejected, fetch latest, re-read the target note, reapply the semantic merge, recommit, and push again.
 - If a real semantic conflict remains, stop and report the conflict.
@@ -43,4 +43,4 @@ Target mapping:
 - `role`: organization notes checkout `roles/<role_id>/notes/<note_name>.md`
 - `project`: project state checkout `.agentic/notes/<note_name>.md` on the configured `agentic/state` branch
 
-After a successful update, refresh the parent agent worktree instructions with `scripts/ar-notes refresh` and `scripts/ar-notes generate-instructions` when the helper did not already do so.
+After a successful update, refresh the parent agent worktree instructions with `${AR_NOTES_CLI:-scripts/ar-notes} refresh` and `${AR_NOTES_CLI:-scripts/ar-notes} generate-instructions` when the helper did not already do so.

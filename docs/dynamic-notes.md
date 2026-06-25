@@ -64,6 +64,8 @@ Multiple top-level agents may work in separate Git worktrees of the same project
 
 Subagents inherit the parent launch's project id and rendered note list. They do not need separate project-state configuration unless they are launched as independent top-level agents.
 
+In container mode, the launcher mounts the AR runtime read-only at `/opt/agentic-researcher` and mounts `$AR_STATE_ROOT` read-write. The org notes checkout and each project's cached `agentic/state` checkout live under that writable state root, not inside the read-only runtime mount.
+
 ## Instruction Generation
 
 The launcher keeps the existing `INSTRUCTIONS.md` behavior for `CLAUDE.md`, `GEMINI.md`, and `AGENTS.md`. It appends a managed "Agentic Notes" section that injects the full text of available `general.md` files:
@@ -74,7 +76,7 @@ The launcher keeps the existing `INSTRUCTIONS.md` behavior for `CLAUDE.md`, `GEM
 
 Specific notes are not injected. They are listed by source directory and filename, excluding `general.md`, so the working agent can read only the notes relevant to the current task. Agents should not open source `general.md` note files directly; their contents are already injected when available.
 
-The launcher also renders a managed compaction hook for the selected CLI. The hook tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary for note-reading rules, points at the invocation-specific instruction file that was just rendered into the worktree, and asks the model to read that file before resuming the interrupted task. This gives post-compaction sessions a concrete refresh path without relying on a vague instruction to remember injected context.
+The launcher also renders a managed compaction hook for the selected CLI. The hook pulls the org notes and project `agentic/state` checkouts under local locks, rematerializes the invocation-specific instruction file in the worktree, tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary for note-reading rules, and asks the model to read the refreshed file before resuming the interrupted task. This gives post-compaction sessions a concrete refresh path without relying on a vague instruction to remember injected context.
 
 Subagent configs are rendered through the existing launcher machinery. When a subagent is rendered, its note section uses that subagent's role name, plus org and project notes.
 
@@ -118,7 +120,7 @@ experiment index.
 
 ## Commands
 
-`scripts/ar-notes` provides the local helper commands:
+Inside launched agents, `$AR_NOTES_CLI` points at the invocation's Agentic Notes helper (`scripts/ar-notes` in native mode, `/opt/agentic-researcher/scripts/ar-notes` in container mode). From an AR source checkout you can also run `scripts/ar-notes` directly. It provides these commands:
 
 ```text
 init-org-notes --repo PATH_OR_URL

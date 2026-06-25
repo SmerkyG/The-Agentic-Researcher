@@ -178,7 +178,7 @@ To add lab- or site-specific backends, create an optional skill under `optional-
 | [Codex CLI](https://github.com/openai/codex) | `AGENTS.md` | OpenAI | `--tool codex` |
 | [pi](https://github.com/badlogic/pi-mono) | `AGENTS.md` | Any | `--tool pi` |
 
-At launch, AR also renders a project-local compaction hook for the selected CLI. After context compaction, the hook tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary, asks it to read the instruction file rendered for that exact invocation (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`), and then resumes the task it was already doing. Claude and Codex use compact-session hooks, Gemini uses `PreCompress` plus a one-shot `BeforeModel` refresh, OpenCode uses a compaction plugin, and pi uses a launch-specific extension.
+At launch, AR also renders a project-local compaction hook for the selected CLI. After context compaction, the hook uses `$AR_NOTES_CLI` to pull the org notes and project `agentic/state` checkouts under local locks, rematerializes the instruction file rendered for that exact invocation (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`), tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary, asks it to read the refreshed instruction file, and then resumes the task it was already doing. In container mode the AR runtime is mounted read-only at `/opt/agentic-researcher`, while `AR_STATE_ROOT` is mounted read-write so the org checkout and project state branch can be updated. Claude and Codex use compact-session hooks, Gemini uses `PreCompress` plus a one-shot `BeforeModel` refresh, OpenCode uses a compaction plugin, and pi uses a launch-specific extension.
 
 ## Workflow
 
@@ -198,7 +198,7 @@ When you relaunch the sandbox on a project that already has filled-in instructio
 
 | Layer | Details |
 |-------|---------|
-| **Filesystem isolation** | The agent can only access `/workspace`; extra directories from `AR_EXTRA_BIND_DIRS` are mounted under `/workspace/.mount/<basename>` |
+| **Filesystem isolation** | The agent can write `/workspace` and the mounted `AR_STATE_ROOT`; the AR runtime is mounted read-only at `/opt/agentic-researcher`; extra directories from `AR_EXTRA_BIND_DIRS` are mounted under `/workspace/.mount/<basename>` |
 | **Namespace isolation** | Apptainer `--compat` enables user/mount namespaces |
 | **Path traversal protection** | Symlinks resolved; system directories blocked |
 

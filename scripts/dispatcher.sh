@@ -42,6 +42,7 @@ build_apptainer_args() {
         --no-mount home
         --home /claude-home
         --bind "$WORKSPACE_HOST:/workspace"
+        --bind "$AR_RUNTIME_HOST:$AR_RUNTIME_CONTAINER:ro"
         --bind "$UV_CACHE_DIR:/uv-cache"
         --bind "$UV_PYTHON_INSTALL_DIR:/uv-python"
         --bind "$UV_TOOL_DIR:/uv-tools"
@@ -55,6 +56,21 @@ build_apptainer_args() {
         --env "TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
         --env "WANDB_DIR=$WANDB_DIR"
         --env "TERM=${TERM:-xterm-256color}"
+        --env AR_CONTAINER_RUNTIME=apptainer
+        --env "AR_RUNTIME_DIR=$AR_RUNTIME_CONTAINER"
+        --env "AR_NOTES_CLI=$AR_RUNTIME_CONTAINER/scripts/ar-notes"
+        --env "AR_GPU_BACKEND=remote-run"
+        --env "AR_STATE_ROOT=$STATE_ROOT"
+        --env "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
+        --env "AR_ROLE_ID=${AR_ROLE_ID:-researcher}"
+        --env "AR_USER_ID=${AR_USER_ID:-}"
+        --env "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
+        --env "AR_AGENTIC_STATE_BRANCH=${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
+        --env "AR_NOTES_AUTO_REFRESH=${AR_NOTES_AUTO_REFRESH:-true}"
+        --env "AR_RESOLVER_GIT_NAME=${AR_RESOLVER_GIT_NAME:-}"
+        --env "AR_RESOLVER_GIT_EMAIL=${AR_RESOLVER_GIT_EMAIL:-}"
+        --env "AR_NOTES_GIT_NAME=${AR_NOTES_GIT_NAME:-}"
+        --env "AR_NOTES_GIT_EMAIL=${AR_NOTES_GIT_EMAIL:-}"
     )
 
     # Proxy
