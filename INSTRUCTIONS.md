@@ -56,18 +56,19 @@ Agentic Notes are Markdown files stored in Git-backed organization, role, and
 project state checkouts.
 
 This document may include a generated **Agentic Notes** section below.
-Injected `general.md` note content is already part of the instruction context.
-Never open source note files named `general.md` directly. The generated section
-also lists specific non-general note files by source directory. Before working
+Injected `always-injected.md` note content is already part of the instruction context.
+Never open source note files named `always-injected.md` directly. The generated section
+also lists on-demand note files by source directory. Before working
 on a package, library, architecture, benchmark, project convention, or other
-work item that appears related to a listed specific note, read that non-general
+work item that appears related to a listed on-demand note, read that
 note file if you have not read it since the last compaction.
 
 When you make a meaningful mistake and learn something reusable while
 correcting it, launch the `note-updater` subagent with a `note_update_request`.
 Use package notes for package-specific lessons, architecture notes for
-architecture optimization lessons, role `general.md` for role-wide lessons, org
-`general.md` for org-wide lessons, and project notes for project-only lessons.
+architecture optimization lessons, role `always-injected.md` for role-wide
+lessons, org `always-injected.md` for org-wide lessons, and project notes for
+project-only lessons.
 
 Do not edit org, role, or project source notes directly from the main agent.
 Use `note-updater` so pulls, semantic merging, commits, pushes, and instruction
@@ -244,7 +245,7 @@ sequentially within one job or on the same local device.
 ### Session startup (every session or after context compaction)
 1. Use the Project Instructions listed below as the authoritative project contract.
 2. Use any Agentic Notes text below as active guidance. Do not open source
-   `general.md` note files. Identify listed non-general notes that may be
+   `always-injected.md` note files. Identify listed on-demand notes that may be
    relevant to the current work.
 3. If the Agentic Researcher experiment log is available, read its
    `SUMMARY.md` first; open individual experiment YAML files only when needed.

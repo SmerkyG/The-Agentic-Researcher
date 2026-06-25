@@ -10,7 +10,7 @@ Organization notes are checked out under `$AR_STATE_ROOT/repos/org-agentic-notes
 
 ```text
 notes/
-  general.md
+  always-injected.md
   triton.md
   pytorch.md
   git.md
@@ -18,20 +18,20 @@ notes/
 roles/
   gpu-kernel-engineer/
     notes/
-      general.md
+      always-injected.md
       triton.md
       kernel-optimization.md
       benchmarking.md
 ```
 
-Role notes live inside the organization notes repo at `roles/<role_id>/notes/`. Role `general.md` is injected for agents running that role; specific role notes are listed for on-demand reading.
+Role notes live inside the organization notes repo at `roles/<role_id>/notes/`. Role `always-injected.md` is injected for agents running that role; other notes are listed for on-demand reading.
 
 Project notes and experiment logs live on the project `agentic/state` branch, cached at `$AR_STATE_ROOT/projects/$AR_PROJECT_ID/agentic-state/`:
 
 ```text
 .agentic/
   notes/
-    general.md
+    always-injected.md
     evaluation.md
     data-loading.md
     cluster.md
@@ -66,13 +66,13 @@ In container mode, the launcher mounts the AR runtime read-only at `/opt/agentic
 
 ## Instruction Generation
 
-The launcher keeps the existing `INSTRUCTIONS.md` behavior for `CLAUDE.md`, `GEMINI.md`, and `AGENTS.md`. It appends a managed "Agentic Notes" section that injects the full text of available `general.md` files:
+The launcher keeps the existing `INSTRUCTIONS.md` behavior for `CLAUDE.md`, `GEMINI.md`, and `AGENTS.md`. It appends a managed "Agentic Notes" section that injects the full text of available `always-injected.md` files:
 
-- organization `notes/general.md`
-- current role `roles/$AR_ROLE_ID/notes/general.md`
-- project `.agentic/notes/general.md`
+- organization `notes/always-injected.md`
+- current role `roles/$AR_ROLE_ID/notes/always-injected.md`
+- project `.agentic/notes/always-injected.md`
 
-Specific notes are not injected. They are listed by source directory and filename, excluding `general.md`, so the working agent can read only the notes relevant to the current task. Agents should not open source `general.md` note files directly; their contents are already injected when available.
+Other notes are not injected. They are listed by source directory and filename, excluding `always-injected.md`, so the working agent can read only the notes relevant to the current task. Agents should not open source `always-injected.md` note files directly; their contents are already injected when available.
 
 The launcher also renders a managed compaction hook for the selected CLI. The hook pulls the org notes and project `agentic/state` checkouts under local locks, rematerializes the invocation-specific instruction file in the worktree, tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary for note-reading rules, and asks the model to read the refreshed file before resuming the interrupted task. This gives post-compaction sessions a concrete refresh path without relying on a vague instruction to remember injected context.
 
@@ -84,7 +84,7 @@ Working agents do not edit note files directly. When a reusable lesson is learne
 
 If a push is rejected, the updater fetches latest, re-reads the target note, reapplies the semantic merge, recommits, and pushes again. If a semantic conflict remains, it stops and reports the conflict.
 
-Use package notes for package-specific lessons, architecture notes for architecture optimization lessons, role `general.md` for role-wide lessons, org `general.md` for org-wide lessons, and project notes for project-only lessons.
+Use package notes for package-specific lessons, architecture notes for architecture optimization lessons, role `always-injected.md` for role-wide lessons, org `always-injected.md` for org-wide lessons, and project notes for project-only lessons.
 
 ## Experiment Logs
 

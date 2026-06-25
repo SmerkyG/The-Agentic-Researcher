@@ -31,6 +31,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 NOTES_BEGIN = "<!-- AGENTIC-RESEARCHER-NOTES-START -->"
 NOTES_END = "<!-- AGENTIC-RESEARCHER-NOTES-END -->"
+ALWAYS_INJECTED_NOTE = "always-injected.md"
+ALWAYS_INJECTED_NOTE_STEM = "always-injected"
 
 
 class ArNotesError(RuntimeError):
@@ -283,9 +285,9 @@ def init_org_notes(args: argparse.Namespace) -> None:
         ensure_local_git_repo(repo_arg, "main")
         notes_dir = repo_arg / "notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
-        general = notes_dir / "general.md"
-        if not general.exists():
-            general.write_text("# General Organization Notes\n\n", encoding="utf-8")
+        always_injected = notes_dir / ALWAYS_INJECTED_NOTE
+        if not always_injected.exists():
+            always_injected.write_text("# Organization Notes\n\n", encoding="utf-8")
         commit_if_changed(repo_arg, "agentic: initialize org notes")
     checkout = ensure_org_checkout(args.repo)
     if checkout is not None:
@@ -351,10 +353,10 @@ def ensure_project_state_files(repo: Path) -> list[Path]:
     notes_dir.mkdir(parents=True, exist_ok=True)
     experiments_dir.mkdir(parents=True, exist_ok=True)
 
-    general = notes_dir / "general.md"
-    if not general.exists():
-        general.write_text("# General Project Notes\n\n", encoding="utf-8")
-        changed_paths.append(general)
+    always_injected = notes_dir / ALWAYS_INJECTED_NOTE
+    if not always_injected.exists():
+        always_injected.write_text("# Project Notes\n\n", encoding="utf-8")
+        changed_paths.append(always_injected)
 
     counter = repo / ".agentic" / "experiment-log" / "COUNTER.yaml"
     if not counter.exists():
@@ -404,7 +406,7 @@ def refresh(args: argparse.Namespace) -> None:
 def note_names(directory: Path) -> list[str]:
     if not directory.exists():
         return []
-    return sorted(p.name for p in directory.glob("*.md") if p.name != "general.md")
+    return sorted(p.name for p in directory.glob("*.md") if p.name != ALWAYS_INJECTED_NOTE)
 
 
 def read_text_if_exists(path: Path) -> str | None:
@@ -413,7 +415,7 @@ def read_text_if_exists(path: Path) -> str | None:
     return path.read_text(encoding="utf-8").rstrip()
 
 
-def append_general(lines: list[str], label: str, path: Path) -> None:
+def append_injected_note(lines: list[str], label: str, path: Path) -> None:
     text = read_text_if_exists(path)
     if text is None:
         return
@@ -446,18 +448,18 @@ def build_notes_section(project_dir: Path, role: str, *, markers: bool = True) -
             "",
             "The following Git-backed note files contain helpful knowledge about packages, tools, architectures, project conventions, and role-specific work.",
             "",
-            "General note content is injected below when available. Do not open source note files named `general.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed non-general note files, read the relevant note file if you have not read it since the last compaction.",
+            "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed on-demand note files, read the relevant note file if you have not read it since the last compaction.",
             "",
-            "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies to your role generally, update role `general.md`. If it applies to all roles generally, update org `general.md`. If it applies only to the project, update a project note.",
+            "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies across a whole role, update that role's `always-injected.md`. If it applies across the whole organization, update org `always-injected.md`. If it applies only to the project, update a project note.",
             "",
         ]
     )
 
-    append_general(lines, "Organization General Notes", org_notes / "general.md")
-    append_general(lines, f"Role General Notes: {role}", role_notes / "general.md")
-    append_general(lines, "Project General Notes", project_notes / "general.md")
+    append_injected_note(lines, "Organization Notes", org_notes / ALWAYS_INJECTED_NOTE)
+    append_injected_note(lines, f"Role Notes: {role}", role_notes / ALWAYS_INJECTED_NOTE)
+    append_injected_note(lines, "Project Notes", project_notes / ALWAYS_INJECTED_NOTE)
 
-    lines.extend(["### Available Specific Notes", ""])
+    lines.extend(["### Available On-Demand Notes", ""])
     lines.extend(["Org notes:", f"  Directory: {org_notes}/"])
     org_specific = note_names(org_notes)
     lines.extend([f"  - {name}" for name in org_specific] or ["  (none)"])
@@ -542,8 +544,7 @@ def normalize_note_name(raw: str) -> str:
     name = raw.strip()
     if name.endswith(".md"):
         name = name[:-3]
-    slug = slugify(name, default="general")
-    return "general" if slug == "general" else slug
+    return slugify(name, default=ALWAYS_INJECTED_NOTE_STEM)
 
 
 def note_path_for_request(request: dict[str, Any], project_dir: Path) -> tuple[Path, Path]:
@@ -551,7 +552,7 @@ def note_path_for_request(request: dict[str, Any], project_dir: Path) -> tuple[P
     if not isinstance(target, dict):
         raise ArNotesError("note update request requires target")
     scope = target.get("scope")
-    note_name = normalize_note_name(str(target.get("note_name") or "general"))
+    note_name = normalize_note_name(str(target.get("note_name") or ALWAYS_INJECTED_NOTE_STEM))
     if scope == "org":
         repo = ensure_org_checkout()
         if repo is None:
@@ -582,8 +583,8 @@ def canonical_lesson(request: dict[str, Any]) -> str:
 
 def note_title(note_path: Path) -> str:
     title = note_path.stem.replace("-", " ").replace("_", " ").title()
-    if note_path.stem == "general":
-        title = "General Notes"
+    if note_path.name == ALWAYS_INJECTED_NOTE:
+        title = "Always-Injected Notes"
     return title
 
 

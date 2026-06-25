@@ -20,7 +20,7 @@ Read the following files (skip any that don't exist):
 3. `/workspace/report.tex` -- branch-local narrative analysis and report quality
 4. `/workspace/TODO.md` -- branch-local open items and deferred work
 5. `/workspace/$INSTRUCTION_FILE` -- the instructions governing this session (especially Section 8: Project Instructions)
-6. The injected Agentic Notes section in `$INSTRUCTION_FILE`; read specific note files only when they are needed to evaluate a concrete note-related issue
+6. The injected Agentic Notes section in `$INSTRUCTION_FILE`; read on-demand note files only when they are needed to evaluate a concrete note-related issue
 7. Run `git log --oneline -30` -- see the commit history (style, frequency, quality)
 8. Run `git diff --stat HEAD~5..HEAD 2>/dev/null || true` -- recent change patterns
 
@@ -85,8 +85,8 @@ Reflect on these additional dimensions:
 - Were long runs estimated and confirmed before starting?
 
 ### G. Agentic Notes Hygiene
-- Were injected `general.md` notes treated as active guidance without opening source `general.md` note files?
-- Were relevant specific notes read before work that depended on those packages, libraries, architectures, benchmarks, or conventions?
+- Were injected `always-injected.md` notes treated as active guidance without opening source `always-injected.md` note files?
+- Were relevant on-demand notes read before work that depended on those packages, libraries, architectures, benchmarks, or conventions?
 - Were reusable lessons routed through the `note-updater` subagent instead of direct note edits by the main agent?
 - Were notes kept distinct from local `TODO.md` items and experiment history?
 

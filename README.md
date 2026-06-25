@@ -118,7 +118,7 @@ agentic-researcher --project-id my-project-2026 .
 On launch, AR creates or updates a cached checkout at `$AR_STATE_ROOT/projects/$AR_PROJECT_ID/agentic-state/` and uses the project `agentic/state` branch for:
 
 ```text
-.agentic/notes/general.md
+.agentic/notes/always-injected.md
 .agentic/experiment-log/COUNTER.yaml
 .agentic/experiment-log/SUMMARY.md
 .agentic/experiment-log/experiments/

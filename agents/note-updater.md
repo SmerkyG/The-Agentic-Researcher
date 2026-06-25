@@ -42,5 +42,6 @@ Target mapping:
 - `org`: organization notes checkout `notes/<note_name>.md`
 - `role`: organization notes checkout `roles/<role_id>/notes/<note_name>.md`
 - `project`: project state checkout `.agentic/notes/<note_name>.md` on the configured `agentic/state` branch
+- Use `note_name: always-injected` only for lessons that should be injected into every future agent context for that scope.
 
 After a successful update, refresh the parent agent worktree instructions with `${AR_NOTES_CLI:-scripts/ar-notes} refresh` and `${AR_NOTES_CLI:-scripts/ar-notes} generate-instructions` when the helper did not already do so.

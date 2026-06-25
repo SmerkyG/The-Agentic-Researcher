@@ -117,10 +117,10 @@ def seed_org_remote(tmp_path: Path) -> Path:
         tmp_path,
         "org-notes",
         {
-            "notes/general.md": "# Org General\n\nOrg body.\n",
+            "notes/always-injected.md": "# Org Notes\n\nOrg body.\n",
             "notes/triton.md": "# Triton\n\n",
             "notes/pytorch.md": "# PyTorch\n\n",
-            "roles/gpu-kernel-engineer/notes/general.md": "# Role General\n\nRole body.\n",
+            "roles/gpu-kernel-engineer/notes/always-injected.md": "# Role Notes\n\nRole body.\n",
             "roles/gpu-kernel-engineer/notes/kernel-optimization.md": "# Kernel Optimization\n\n",
         },
     )
@@ -130,7 +130,7 @@ def seed_project_remote(tmp_path: Path) -> Path:
     return init_bare_remote(tmp_path, "project", {"README.md": "# Project\n"})
 
 
-def test_generate_instruction_injects_general_notes_and_lists_specific_notes(tmp_path: Path) -> None:
+def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_notes(tmp_path: Path) -> None:
     org_remote = seed_org_remote(tmp_path)
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
@@ -139,13 +139,13 @@ def test_generate_instruction_injects_general_notes_and_lists_specific_notes(tmp
     run([str(AR_NOTES), "init-org-notes", "--repo", str(org_remote)], env=env)
     run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
     state = state_checkout(env)
-    (state / ".agentic" / "notes" / "general.md").write_text(
-        "# Project General\n\nProject body.\n", encoding="utf-8"
+    (state / ".agentic" / "notes" / "always-injected.md").write_text(
+        "# Project Notes\n\nProject body.\n", encoding="utf-8"
     )
     (state / ".agentic" / "notes" / "evaluation.md").write_text(
         "# Evaluation\n\n", encoding="utf-8"
     )
-    git(state, "add", ".agentic/notes/general.md", ".agentic/notes/evaluation.md")
+    git(state, "add", ".agentic/notes/always-injected.md", ".agentic/notes/evaluation.md")
     git(state, "commit", "-m", "seed project notes")
     git(state, "push")
 
@@ -174,7 +174,7 @@ def test_generate_instruction_injects_general_notes_and_lists_specific_notes(tmp
     assert "  - pytorch.md" in text
     assert "  - kernel-optimization.md" in text
     assert "  - evaluation.md" in text
-    assert "  - general.md" not in text
+    assert "  - always-injected.md" not in text
 
 
 def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path: Path) -> None:
@@ -186,10 +186,10 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     run([str(AR_NOTES), "init-org-notes", "--repo", str(org_remote)], env=env)
     run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
     state = state_checkout(env)
-    (state / ".agentic" / "notes" / "general.md").write_text(
-        "# Project General\n\nOld project body.\n", encoding="utf-8"
+    (state / ".agentic" / "notes" / "always-injected.md").write_text(
+        "# Project Notes\n\nOld project body.\n", encoding="utf-8"
     )
-    git(state, "add", ".agentic/notes/general.md")
+    git(state, "add", ".agentic/notes/always-injected.md")
     git(state, "commit", "-m", "seed old project note")
     git(state, "push")
     run(
@@ -228,10 +228,10 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     org_update = tmp_path / "org-update"
     run(["git", "clone", str(org_remote), str(org_update)])
     configure_git(org_update)
-    (org_update / "notes" / "general.md").write_text(
-        "# Org General\n\nFresh org body.\n", encoding="utf-8"
+    (org_update / "notes" / "always-injected.md").write_text(
+        "# Org Notes\n\nFresh org body.\n", encoding="utf-8"
     )
-    git(org_update, "add", "notes/general.md")
+    git(org_update, "add", "notes/always-injected.md")
     git(org_update, "commit", "-m", "fresh org note")
     git(org_update, "push")
 
@@ -240,10 +240,10 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     configure_git(state_update)
     git(state_update, "fetch", "origin", "agentic/state")
     git(state_update, "checkout", "-B", "agentic/state", "origin/agentic/state")
-    (state_update / ".agentic" / "notes" / "general.md").write_text(
-        "# Project General\n\nFresh project body.\n", encoding="utf-8"
+    (state_update / ".agentic" / "notes" / "always-injected.md").write_text(
+        "# Project Notes\n\nFresh project body.\n", encoding="utf-8"
     )
-    git(state_update, "add", ".agentic/notes/general.md")
+    git(state_update, "add", ".agentic/notes/always-injected.md")
     git(state_update, "commit", "-m", "fresh project note")
     git(state_update, "push", "origin", "agentic/state")
 
@@ -357,7 +357,7 @@ def test_project_state_initialization_creates_required_layout(tmp_path: Path) ->
     run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
 
     state = state_checkout(env)
-    assert (state / ".agentic" / "notes" / "general.md").exists()
+    assert (state / ".agentic" / "notes" / "always-injected.md").exists()
     assert (state / ".agentic" / "experiment-log" / "COUNTER.yaml").exists()
     assert (state / ".agentic" / "experiment-log" / "SUMMARY.md").exists()
     assert (state / ".agentic" / "experiment-log" / "experiments").is_dir()

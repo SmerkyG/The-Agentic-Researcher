@@ -301,7 +301,7 @@ def test_launcher_native_runs_host_tool_without_container(
     assert codex_agent.exists()
     codex_agent_text = codex_agent.read_text()
     assert 'name = "gpu-job-runner"' in codex_agent_text
-    assert 'model_reasoning_effort = "medium"' in codex_agent_text
+    assert 'model_reasoning_effort = "low"' in codex_agent_text
     assert "developer_instructions" in codex_agent_text
     experiment_logger = workspace / ".codex" / "agents" / "experiment-logger.toml"
     assert experiment_logger.exists()
