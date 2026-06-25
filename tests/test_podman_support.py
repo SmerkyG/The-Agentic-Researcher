@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import stat
@@ -65,6 +66,7 @@ def base_env(fake_bin: Path, tmp_path: Path) -> dict[str, str]:
     env["FAKE_PODMAN_LOG"] = str(tmp_path / "podman.log")
     env["FAKE_DOCKER_LOG"] = str(tmp_path / "docker.log")
     env["HOME"] = str(tmp_path / "home")
+    env["AR_PROJECT_ID"] = "test-project"
     Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
     return env
 
@@ -297,8 +299,113 @@ def test_launcher_native_runs_host_tool_without_container(
     assert 'name = "gpu-job-runner"' in codex_agent_text
     assert 'model_reasoning_effort = "medium"' in codex_agent_text
     assert "developer_instructions" in codex_agent_text
+    codex_hook = workspace / ".codex" / "hooks" / "agentic-researcher-compaction.py"
+    assert codex_hook.exists()
+    codex_hook_text = codex_hook.read_text()
+    assert "You have just experienced context compaction" in codex_hook_text
+    assert "since the last compaction" in codex_hook_text
+    codex_hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
+    codex_command = codex_hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert codex_hooks["hooks"]["SessionStart"][0]["matcher"] == "compact"
+    assert "agentic-researcher-compaction.py" in codex_command
+    assert str(workspace / "AGENTS.md") in codex_command
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
+
+
+def test_launcher_requires_project_id_for_launch(
+    base_env: dict[str, str], tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-missing-project-id"
+    workspace.mkdir()
+    env = {**base_env}
+    env.pop("AR_PROJECT_ID", None)
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--native",
+            "--tool",
+            "codex",
+            str(workspace),
+        ],
+        env,
+    )
+
+    assert result.returncode == 1
+    assert "requires a stable project id" in result.stdout
+    assert "agentic-researcher --project-id my-project-2026" in result.stdout
+
+
+def test_launcher_project_id_flag_overrides_missing_env(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-project-id-flag"
+    workspace.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = {**base_env}
+    env.pop("AR_PROJECT_ID", None)
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--native",
+            "--tool",
+            "codex",
+            "--project-id",
+            "flag-project",
+            str(workspace),
+        ],
+        env,
+    )
+
+    assert result.returncode == 0
+    assert (Path(env["HOME"]) / ".cache" / "agentic-researcher" / "projects" / "flag-project" / "agentic-state").exists()
+
+
+def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-existing-hooks"
+    workspace.mkdir()
+    (workspace / ".codex").mkdir()
+    (workspace / ".codex" / "hooks.json").write_text(
+        json.dumps({
+            "hooks": {
+                "Stop": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "printf existing",
+                            }
+                        ]
+                    }
+                ]
+            }
+        }) + "\n"
+    )
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+
+    command = [
+        str(AGENTIC_RESEARCHER),
+        "--native",
+        "--tool",
+        "codex",
+        str(workspace),
+    ]
+    env = {**base_env, "AR_GPU_BACKEND": "none"}
+    result = run(command, env)
+    result_again = run(command, env)
+
+    assert result.returncode == 0
+    assert result_again.returncode == 0
+    hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
+    assert hooks["hooks"]["Stop"][0]["hooks"][0]["command"] == "printf existing"
+    session_start = hooks["hooks"]["SessionStart"]
+    commands = [hook["command"] for group in session_start for hook in group["hooks"]]
+    managed_commands = [cmd for cmd in commands if "agentic-researcher-compaction.py" in cmd]
+    assert len(managed_commands) == 1
 
 
 def test_launcher_native_build_is_noop(base_env: dict[str, str]) -> None:
@@ -433,6 +540,16 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
     claude_agent = workspace / ".claude" / "agents" / "gpu-job-runner.md"
     assert claude_agent.exists()
     assert "codex_reasoning_effort" not in claude_agent.read_text()
+    claude_hook = workspace / ".claude" / "hooks" / "agentic-researcher-compaction.py"
+    assert claude_hook.exists()
+    claude_hook_text = claude_hook.read_text()
+    assert "You have just experienced context compaction" in claude_hook_text
+    assert "since the last compaction" in claude_hook_text
+    claude_settings = json.loads((workspace / ".claude" / "settings.local.json").read_text())
+    claude_command = claude_settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert claude_settings["hooks"]["SessionStart"][0]["matcher"] == "compact"
+    assert "agentic-researcher-compaction.py" in claude_command
+    assert str(workspace / "CLAUDE.md") in claude_command
 
 
 def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
@@ -463,6 +580,18 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     assert gemini_agent.exists()
     assert "codex_reasoning_effort" not in gemini_agent.read_text()
     assert not (workspace / ".agents" / "skills" / "cluster-run" / "SKILL.md").exists()
+    gemini_hook = workspace / ".gemini" / "hooks" / "agentic-researcher-compaction.py"
+    assert gemini_hook.exists()
+    gemini_hook_text = gemini_hook.read_text()
+    assert "You have just experienced context compaction" in gemini_hook_text
+    assert "since the last compaction" in gemini_hook_text
+    gemini_settings = json.loads((workspace / ".gemini" / "settings.json").read_text())
+    precompress_command = gemini_settings["hooks"]["PreCompress"][0]["hooks"][0]["command"]
+    before_model_command = gemini_settings["hooks"]["BeforeModel"][0]["hooks"][0]["command"]
+    assert "agentic-researcher-compaction.py' mark" in precompress_command
+    assert "agentic-researcher-compaction.py' inject" in before_model_command
+    assert str(workspace / "GEMINI.md") in precompress_command
+    assert str(workspace / "GEMINI.md") in before_model_command
 
 
 def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
@@ -495,6 +624,13 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     assert "mode: subagent" in opencode_agent_text
     assert "codex_reasoning_effort" not in opencode_agent_text
     assert not (workspace / ".agents" / "skills" / "cluster-run" / "SKILL.md").exists()
+    opencode_plugin = workspace / ".opencode" / "plugins" / "agentic-researcher-compaction.ts"
+    assert opencode_plugin.exists()
+    opencode_plugin_text = opencode_plugin.read_text()
+    assert "experimental.session.compacting" in opencode_plugin_text
+    assert "You have just experienced context compaction" in opencode_plugin_text
+    assert "since the last compaction" in opencode_plugin_text
+    assert str(workspace / "AGENTS.md") in opencode_plugin_text
 
 
 def test_install_script_auto_detects_podman_when_docker_is_absent(
@@ -582,6 +718,13 @@ def test_launcher_podman_runs_pi_tool(base_env: dict[str, str], tmp_path: Path) 
     # pi uses the shared agent-compatible project skill path.
     for skill in ("setup_research_plan", "retro", "update_base"):
         assert (workspace / ".agents" / "skills" / skill / "SKILL.md").exists()
+    pi_extension = workspace / ".pi" / "extensions" / "agentic-researcher-compaction.ts"
+    assert pi_extension.exists()
+    pi_extension_text = pi_extension.read_text()
+    assert 'pi.on("session_compact"' in pi_extension_text
+    assert "You have just experienced context compaction" in pi_extension_text
+    assert "since the last compaction" in pi_extension_text
+    assert "/workspace/AGENTS.md" in pi_extension_text
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
 
@@ -611,6 +754,7 @@ def test_pi_translates_resume_to_session_and_warns_on_yolo(
     assert "--session ABC123" in result.stdout
     # --debug-launch enables pi's verbose startup.
     assert "--verbose" in result.stdout
+    assert "-e /workspace/.pi/extensions/agentic-researcher-compaction.ts" in result.stdout
     # pi has no permission system, so --yolo is a no-op with a warning.
     assert "--yolo has no effect in pi mode" in result.stdout
 

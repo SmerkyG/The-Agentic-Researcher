@@ -9,32 +9,37 @@ If the user supplied extra text alongside the skill invocation, use it to bootst
 Detect which instruction file exists in the workspace and use it throughout:
 - Check for: `CLAUDE.md`, `GEMINI.md`, `AGENTS.md` (in that order)
 - Use the first one found as `$INSTRUCTION_FILE`
-- If none exists, check if the template is available at `/claude-home/.claude/INSTRUCTIONS.md.template` and copy it to `CLAUDE.md`
+- If none exists, choose the target from `$AR_CLI_TOOL`: `GEMINI.md` for Gemini; `AGENTS.md` for OpenCode, Codex, or pi; otherwise `CLAUDE.md`.
+- If no instruction file exists, locate a base template from `$AR_INSTRUCTIONS_TEMPLATE`, `/workspace/INSTRUCTIONS.md`, `./INSTRUCTIONS.md`, or legacy mounted paths `/claude-home/INSTRUCTIONS.md.template` and `/claude-home/.claude/INSTRUCTIONS.md.template`, then copy it to the chosen target.
+- If no instruction file or template is available, stop and ask the user to relaunch Agentic Researcher or set `AR_INSTRUCTIONS_TEMPLATE`.
 
 Check the state of `/workspace/$INSTRUCTION_FILE` to determine what to do.
 
 **Detection logic:**
 - If `/workspace/$INSTRUCTION_FILE` exists AND its "## 8. Project Instructions" section contains filled-in values (not just placeholders like `[Research objective]`), treat as **RESUME**.
 - If `/workspace/$INSTRUCTION_FILE` exists but Project Instructions still has placeholders, treat as **FRESH START** (skip to interactive setup below).
-- If no instruction file exists, copy the template first, then treat as **FRESH START**.
+- If no instruction file exists after the template discovery/copy step above, stop and ask the user to relaunch Agentic Researcher or provide `AR_INSTRUCTIONS_TEMPLATE`.
 
 **Backward compatibility:** If `/workspace/research_instructions.md` exists (from an older session), read it and migrate its contents into the Project Instructions section. Then proceed as RESUME.
 
-## RESUME (Project Instructions filled AND report.tex exists):
+## RESUME (Project Instructions filled):
 
 This is a resuming session. The project is already in progress.
 
-1. **Read** `/workspace/$INSTRUCTION_FILE` (especially Section 8), `report.tex`, and `TODO.md`
-2. **Run** `git log --oneline -20` to see recent experiment commits
-3. **Run** `git status` to check for uncommitted changes
-4. **Summarize** the current state to the user:
+1. **Read** `/workspace/$INSTRUCTION_FILE` (especially Section 8).
+2. If the Agentic Researcher experiment log is available, read its `SUMMARY.md` first and open individual experiment YAML files only when needed.
+3. Read `report.tex` if present for branch-local narrative analysis, derivations, and detailed results.
+4. Read `TODO.md` if present for branch-local open questions and deferred checks. Do not treat it as a shared multi-agent work queue unless the user has provided a separate coordination mechanism.
+5. **Run** `git log --oneline -20` to see recent experiment commits
+6. **Run** `git status` to check for uncommitted changes
+7. **Summarize** the current state to the user:
    - Best result so far and which experiment achieved it
    - What was tried last and whether it worked
-   - What's next (from TODO.md or the last experiment's "Next steps")
-5. **Ask** the user if they want to continue the planned direction or pivot
-6. **Continue** the autonomous experiment loop
+   - What's next (from TODO.md, report.tex, or the last logged experiment's next steps)
+8. **Ask** the user if they want to continue the planned direction or pivot
+9. **Continue** the autonomous experiment loop
 
-## FRESH START (Project Instructions has placeholders, report.tex does not exist):
+## FRESH START (Project Instructions has placeholders):
 
 1. **Read** `/workspace/$INSTRUCTION_FILE` Section 8 to confirm it needs filling
 2. If report.tex exists but Section 8 is empty, read report.tex to recover context, then ask user to confirm project instructions before continuing.
@@ -114,10 +119,11 @@ Wait for the user to respond before continuing.
    - **Explore** the codebase structure (`ls -la /workspace/`, read key files, understand the architecture)
    - **Check GPU** with `nvidia-smi` (note GPU model and VRAM)
    - **Install dependencies** with `uv sync`
-   - **Run baseline evaluation (E000)**: Execute the evaluation command from the instructions, record results
+   - **Run baseline evaluation**: Execute the evaluation command from the instructions and record results
    - **Initialize tracking files**:
-     - `report.tex` with full preamble (amsmath, amsthm, booktabs, graphicx, tcolorbox with verification box, theorem environments), title/date, experiment log table with E000 entry, and a baseline subsection
-     - `TODO.md` with initial open questions
+     - `report.tex` with full preamble (amsmath, amsthm, booktabs, graphicx, tcolorbox with verification box, theorem environments), title/date, and a baseline subsection for branch-local narrative analysis
+     - `TODO.md` with initial branch-local open questions and deferred checks
      - `mkdir -p scripts images` for verification/plotting scripts and figures
-   - **Commit**: `exp(E000): baseline measurement -- <metric>=<value>`
+   - **Log baseline**: If the Agentic Researcher experiment log is available, use `scripts/ar-notes log-experiment --request REQUEST.yaml --project-dir /workspace` so the shared summary table receives the assigned experiment ID
+   - **Commit**: Commit completed setup/report changes. If an experiment ID was assigned, use it in the commit message.
    - **Begin the autonomous experiment loop** as described in the research workflow

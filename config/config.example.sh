@@ -48,3 +48,23 @@ AR_EXTRA_BIND_DIRS=""
 # auto uses cluster-run when available in native mode, otherwise none.
 # --multi-node selects remote-run for Apptainer + Slurm allocations.
 AR_GPU_BACKEND="auto"
+
+# Git URL or local path for organization-wide Agentic Notes.
+# Leave empty to use only role/project-local note state.
+AR_ORG_NOTES_REPO=""
+
+# Current role, user, and required project id for Agentic Notes.
+# You can leave AR_PROJECT_ID empty here and pass --project-id per launch.
+# Use the same project id for all worktrees/agents that should share notes and
+# experiment logs.
+AR_ROLE_ID="researcher"
+AR_USER_ID="$USER"
+AR_PROJECT_ID=""
+
+# Durable project state branch and local note refresh behavior.
+AR_AGENTIC_STATE_BRANCH="agentic/state"
+AR_NOTES_AUTO_REFRESH="true"
+
+# Optional Git identity for note-updater and experiment-log commits.
+AR_NOTES_GIT_NAME=""
+AR_NOTES_GIT_EMAIL=""

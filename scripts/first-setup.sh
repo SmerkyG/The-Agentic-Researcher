@@ -305,6 +305,17 @@ AR_EXTRA_BIND_DIRS="$AR_EXTRA_BIND_DIRS"
 # GPU job backend: auto | none | cluster-run | remote-run
 AR_GPU_BACKEND="$AR_GPU_BACKEND"
 
+# Agentic Notes configuration. AR_PROJECT_ID is required at launch; leave it
+# empty here when you prefer passing --project-id per project.
+AR_ORG_NOTES_REPO=""
+AR_ROLE_ID="researcher"
+AR_USER_ID="\$USER"
+AR_PROJECT_ID=""
+AR_AGENTIC_STATE_BRANCH="agentic/state"
+AR_NOTES_AUTO_REFRESH="true"
+AR_NOTES_GIT_NAME=""
+AR_NOTES_GIT_EMAIL=""
+
 # Optional skills from optional-skills/ to install at launch (comma-separated)
 AR_OPTIONAL_SKILLS=""
 EOF

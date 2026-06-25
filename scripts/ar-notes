@@ -1,0 +1,967 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["PyYAML>=6.0"]
+# ///
+"""Manage Agentic Researcher Git-backed notes and experiment logs."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+from contextlib import ExitStack, contextmanager
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import textwrap
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback
+    fcntl = None  # type: ignore[assignment]
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+NOTES_BEGIN = "<!-- AGENTIC-RESEARCHER-NOTES-START -->"
+NOTES_END = "<!-- AGENTIC-RESEARCHER-NOTES-END -->"
+
+
+class ArNotesError(RuntimeError):
+    pass
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    check: bool = True,
+    capture: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        command,
+        cwd=str(cwd) if cwd is not None else None,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+    )
+    if check and result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise ArNotesError(f"{' '.join(command)} failed: {detail}")
+    return result
+
+
+def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return run(["git", *args], cwd=repo, check=check)
+
+
+def env_bool(name: str, default: bool = True) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def state_root() -> Path:
+    return Path(os.environ.get("AR_STATE_ROOT", "~/.cache/agentic-researcher")).expanduser()
+
+
+def state_branch() -> str:
+    return os.environ.get("AR_AGENTIC_STATE_BRANCH", "agentic/state")
+
+
+def role_id(value: str | None = None) -> str:
+    return value or os.environ.get("AR_ROLE_ID") or "researcher"
+
+
+def user_id(value: str | None = None) -> str:
+    return value or os.environ.get("AR_USER_ID") or os.environ.get("USER") or "user"
+
+
+def safe_load_yaml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def write_yaml(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=False)
+
+
+def project_id(project_dir: Path, explicit: str | None = None) -> str:
+    if explicit:
+        return slugify(explicit, default="project")
+    if os.environ.get("AR_PROJECT_ID"):
+        return slugify(os.environ["AR_PROJECT_ID"], default="project")
+    raise ArNotesError(
+        "AR_PROJECT_ID is required. Set it in config, export it for this launch, "
+        "or pass --project-id to agentic-researcher."
+    )
+
+
+def slugify(text: str, *, default: str = "item", max_len: int = 72) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", text.strip().lower()).strip("-")
+    slug = re.sub(r"-+", "-", slug)
+    if not slug:
+        slug = default
+    return slug[:max_len].rstrip("-") or default
+
+
+def org_checkout_path() -> Path:
+    return state_root() / "repos" / "org-agentic-notes"
+
+
+def project_state_path(project_dir: Path, explicit_project_id: str | None = None) -> Path:
+    return state_root() / "projects" / project_id(project_dir, explicit_project_id) / "agentic-state"
+
+
+def lock_file_for(name: str) -> Path:
+    return state_root() / "locks" / f"{slugify(name, default='state')}.lock"
+
+
+@contextmanager
+def state_lock(lock_path: Path):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if fcntl is not None:
+        with lock_path.open("w", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return
+
+    lock_dir = lock_path.with_suffix(lock_path.suffix + ".dir")
+    while True:  # pragma: no cover - exercised only without fcntl
+        try:
+            lock_dir.mkdir()
+            break
+        except FileExistsError:
+            time.sleep(0.1)
+    try:
+        yield
+    finally:
+        shutil.rmtree(lock_dir, ignore_errors=True)
+
+
+def is_git_repo(path: Path) -> bool:
+    if not path.exists():
+        return False
+    result = run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"], check=False)
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def git_remote(repo: Path) -> str | None:
+    result = git(repo, "remote", "get-url", "origin", check=False)
+    if result.returncode != 0:
+        return None
+    remote = result.stdout.strip()
+    return remote or None
+
+
+def current_branch(repo: Path) -> str | None:
+    result = git(repo, "branch", "--show-current", check=False)
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def local_branch_exists(repo: Path, branch: str) -> bool:
+    return git(repo, "rev-parse", "--verify", branch, check=False).returncode == 0
+
+
+def remote_branch_exists(repo: Path, branch: str) -> bool:
+    return git(repo, "ls-remote", "--exit-code", "--heads", "origin", branch, check=False).returncode == 0
+
+
+def has_commits(repo: Path) -> bool:
+    return git(repo, "rev-parse", "--verify", "HEAD", check=False).returncode == 0
+
+
+def configure_git_identity(repo: Path) -> None:
+    name = (
+        os.environ.get("AR_RESOLVER_GIT_NAME")
+        or os.environ.get("AR_NOTES_GIT_NAME")
+        or "Agentic Notes"
+    )
+    email = (
+        os.environ.get("AR_RESOLVER_GIT_EMAIL")
+        or os.environ.get("AR_NOTES_GIT_EMAIL")
+        or "agentic-notes@example.invalid"
+    )
+    git(repo, "config", "user.name", name)
+    git(repo, "config", "user.email", email)
+
+
+def commit_if_changed(repo: Path, message: str, paths: list[Path] | None = None) -> bool:
+    configure_git_identity(repo)
+    if paths:
+        for path in paths:
+            git(repo, "add", str(path.relative_to(repo)))
+    else:
+        git(repo, "add", ".")
+    status = git(repo, "status", "--porcelain").stdout.strip()
+    if not status:
+        return False
+    git(repo, "commit", "-m", message)
+    return True
+
+
+def push(repo: Path, branch: str | None = None) -> bool:
+    remote = git_remote(repo)
+    if not remote:
+        return True
+    branch = branch or current_branch(repo) or state_branch()
+    result = git(repo, "push", "-u", "origin", branch, check=False)
+    return result.returncode == 0
+
+
+def pull_ff(repo: Path, branch: str | None = None) -> None:
+    remote = git_remote(repo)
+    if not remote:
+        return
+    branch = branch or current_branch(repo)
+    git(repo, "fetch", "origin")
+    if branch:
+        git(repo, "pull", "--ff-only", "origin", branch, check=False)
+
+
+def ensure_local_git_repo(repo: Path, branch: str) -> Path:
+    repo.mkdir(parents=True, exist_ok=True)
+    if not (repo / ".git").exists():
+        run(["git", "init", "-b", branch, str(repo)], check=False)
+        if not (repo / ".git").exists():
+            run(["git", "init", str(repo)])
+            git(repo, "checkout", "-B", branch)
+    configure_git_identity(repo)
+    return repo
+
+
+def create_orphan_branch(repo: Path, branch: str) -> None:
+    git(repo, "checkout", "--orphan", branch)
+    git(repo, "rm", "-rf", ".", check=False)
+    for child in repo.iterdir():
+        if child.name == ".git":
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+
+def ensure_org_checkout(repo_url: str | None = None) -> Path | None:
+    repo_url = repo_url or os.environ.get("AR_ORG_NOTES_REPO")
+    if not repo_url:
+        return None
+    dest = org_checkout_path()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if (dest / ".git").exists():
+        configure_git_identity(dest)
+        return dest
+    if dest.exists() and any(dest.iterdir()):
+        raise ArNotesError(f"Org notes checkout exists but is not a Git repo: {dest}")
+    run(["git", "clone", repo_url, str(dest)])
+    configure_git_identity(dest)
+    return dest
+
+
+def init_org_notes(args: argparse.Namespace) -> None:
+    repo_arg = Path(args.repo).expanduser()
+    if not re.match(r"^[A-Za-z0-9_.+-]+://", args.repo) and not repo_arg.exists():
+        ensure_local_git_repo(repo_arg, "main")
+        notes_dir = repo_arg / "notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        general = notes_dir / "general.md"
+        if not general.exists():
+            general.write_text("# General Organization Notes\n\n", encoding="utf-8")
+        commit_if_changed(repo_arg, "agentic: initialize org notes")
+    checkout = ensure_org_checkout(args.repo)
+    if checkout is not None:
+        print(checkout)
+
+
+def project_origin(project_dir: Path) -> str | None:
+    if not is_git_repo(project_dir):
+        return None
+    remote = git_remote(project_dir)
+    if remote:
+        return remote
+    top = run(["git", "-C", str(project_dir), "rev-parse", "--show-toplevel"]).stdout.strip()
+    return top or None
+
+
+def ensure_project_checkout(project_dir: Path, explicit_project_id: str | None = None) -> Path:
+    branch = state_branch()
+    dest = project_state_path(project_dir, explicit_project_id)
+    origin = project_origin(project_dir)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if (dest / ".git").exists():
+        configure_git_identity(dest)
+        if local_branch_exists(dest, branch):
+            git(dest, "checkout", branch)
+        elif git_remote(dest) and remote_branch_exists(dest, branch):
+            git(dest, "fetch", "origin", branch)
+            git(dest, "checkout", "-B", branch, f"origin/{branch}")
+        else:
+            create_orphan_branch(dest, branch)
+        return dest
+
+    if dest.exists() and any(dest.iterdir()):
+        raise ArNotesError(f"Project state checkout exists but is not a Git repo: {dest}")
+
+    if origin:
+        run(["git", "clone", origin, str(dest)])
+        configure_git_identity(dest)
+        if remote_branch_exists(dest, branch):
+            git(dest, "fetch", "origin", branch)
+            git(dest, "checkout", "-B", branch, f"origin/{branch}")
+        else:
+            create_orphan_branch(dest, branch)
+    else:
+        ensure_local_git_repo(dest, branch)
+    return dest
+
+
+def initial_summary() -> str:
+    return (
+        "# Experiment Summary\n\n"
+        "Read this first. Open individual experiment files only when needed.\n\n"
+        "| ID | User | Status | Description | Key Result | Commit |\n"
+        "|---|---|---|---|---|---|\n"
+    )
+
+
+def ensure_project_state_files(repo: Path) -> list[Path]:
+    changed_paths: list[Path] = []
+    notes_dir = repo / ".agentic" / "notes"
+    experiments_dir = repo / ".agentic" / "experiment-log" / "experiments"
+    corrections_dir = repo / ".agentic" / "experiment-log" / "corrections"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    experiments_dir.mkdir(parents=True, exist_ok=True)
+    corrections_dir.mkdir(parents=True, exist_ok=True)
+
+    general = notes_dir / "general.md"
+    if not general.exists():
+        general.write_text("# General Project Notes\n\n", encoding="utf-8")
+        changed_paths.append(general)
+
+    counter = repo / ".agentic" / "experiment-log" / "COUNTER.yaml"
+    if not counter.exists():
+        write_yaml(
+            counter,
+            {
+                "schema_version": 1,
+                "next_experiment_number": 1,
+                "next_correction_number": 1,
+            },
+        )
+        changed_paths.append(counter)
+
+    summary = repo / ".agentic" / "experiment-log" / "SUMMARY.md"
+    if not summary.exists():
+        summary.write_text(initial_summary(), encoding="utf-8")
+        changed_paths.append(summary)
+
+    for directory in (notes_dir, experiments_dir, corrections_dir):
+        keep = directory / ".gitkeep"
+        if not any(p.name != ".gitkeep" for p in directory.iterdir()):
+            keep.touch()
+            changed_paths.append(keep)
+
+    return changed_paths
+
+
+def ensure_project_state(project_dir: Path, explicit_project_id: str | None = None) -> Path:
+    repo = ensure_project_checkout(project_dir, explicit_project_id)
+    branch = state_branch()
+    if git_remote(repo) and remote_branch_exists(repo, branch):
+        pull_ff(repo, branch)
+    ensure_project_state_files(repo)
+    if commit_if_changed(repo, "agentic: initialize project state"):
+        push(repo, branch)
+    return repo
+
+
+def refresh(args: argparse.Namespace) -> None:
+    org = ensure_org_checkout()
+    if org is not None:
+        pull_ff(org)
+    project_dir = Path(args.project_dir).resolve()
+    project_repo = ensure_project_state(project_dir)
+    pull_ff(project_repo, state_branch())
+
+
+def note_names(directory: Path) -> list[str]:
+    if not directory.exists():
+        return []
+    return sorted(p.name for p in directory.glob("*.md") if p.name != "general.md")
+
+
+def read_text_if_exists(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8").rstrip()
+
+
+def append_general(lines: list[str], label: str, path: Path) -> None:
+    text = read_text_if_exists(path)
+    if text is None:
+        return
+    lines.extend(
+        [
+            f"### {label}",
+            "",
+            f"Source: `{path}`",
+            "",
+            text,
+            "",
+        ]
+    )
+
+
+def build_notes_section(project_dir: Path, role: str, *, markers: bool = True) -> str:
+    project_repo = project_state_path(project_dir)
+    org_repo = org_checkout_path()
+    org_notes = org_repo / "notes"
+    role_notes = org_repo / "roles" / role / "notes"
+    project_notes = project_repo / ".agentic" / "notes"
+
+    lines: list[str] = []
+    if markers:
+        lines.append(NOTES_BEGIN)
+        lines.append("")
+    lines.extend(
+        [
+            "## Agentic Notes",
+            "",
+            "The following Git-backed note files contain helpful knowledge about packages, tools, architectures, project conventions, and role-specific work.",
+            "",
+            "General note content is injected below when available. Do not open source note files named `general.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed non-general note files, read the relevant note file if you have not read it since the last compaction.",
+            "",
+            "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies to your role generally, update role `general.md`. If it applies to all roles generally, update org `general.md`. If it applies only to the project, update a project note.",
+            "",
+        ]
+    )
+
+    append_general(lines, "Organization General Notes", org_notes / "general.md")
+    append_general(lines, f"Role General Notes: {role}", role_notes / "general.md")
+    append_general(lines, "Project General Notes", project_notes / "general.md")
+
+    lines.extend(["### Available Specific Notes", ""])
+    lines.extend(["Org notes:", f"  Directory: {org_notes}/"])
+    org_specific = note_names(org_notes)
+    lines.extend([f"  - {name}" for name in org_specific] or ["  (none)"])
+    lines.append("")
+    lines.extend([f"Current role notes: {role}", f"  Directory: {role_notes}/"])
+    role_specific = note_names(role_notes)
+    lines.extend([f"  - {name}" for name in role_specific] or ["  (none)"])
+    lines.append("")
+    lines.extend(["Project notes:", f"  Directory: {project_notes}/"])
+    project_specific = note_names(project_notes)
+    lines.extend([f"  - {name}" for name in project_specific] or ["  (none)"])
+    lines.append("")
+
+    if markers:
+        lines.append(NOTES_END)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def instruction_target(tool: str) -> str:
+    if tool == "gemini":
+        return "GEMINI.md"
+    if tool in {"opencode", "codex", "pi"}:
+        return "AGENTS.md"
+    return "CLAUDE.md"
+
+
+def render_instruction_template(target: Path) -> None:
+    source = REPO_ROOT / "INSTRUCTIONS.md"
+    text = source.read_text(encoding="utf-8")
+    if os.environ.get("AR_CONTAINER_RUNTIME") in {"docker", "podman"}:
+        text = re.sub(
+            r"<!-- DOCKER-OMIT-START -->.*?<!-- DOCKER-OMIT-END -->\n?",
+            "",
+            text,
+            flags=re.S,
+        )
+    target.write_text(text, encoding="utf-8")
+
+
+def strip_notes_section(text: str) -> str:
+    pattern = re.compile(
+        rf"\n?{re.escape(NOTES_BEGIN)}.*?{re.escape(NOTES_END)}\n?",
+        flags=re.S,
+    )
+    stripped = pattern.sub("\n", text).rstrip()
+    return stripped + "\n"
+
+
+def generate_instructions(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    role = role_id(args.role)
+    target = project_dir / instruction_target(args.tool)
+    if not target.exists():
+        render_instruction_template(target)
+    text = strip_notes_section(target.read_text(encoding="utf-8"))
+    section = build_notes_section(project_dir, role, markers=True)
+    target.write_text(text.rstrip() + "\n\n" + section, encoding="utf-8")
+
+
+def render_section(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    print(build_notes_section(project_dir, role_id(args.role), markers=False))
+
+
+def list_notes(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    role = role_id(args.role)
+    scope = args.scope
+    if scope == "org":
+        directory = org_checkout_path() / "notes"
+    elif scope == "role":
+        directory = org_checkout_path() / "roles" / role / "notes"
+    else:
+        directory = project_state_path(project_dir) / ".agentic" / "notes"
+    print(f"Directory: {directory}/")
+    for name in note_names(directory):
+        print(f"- {name}")
+
+
+def normalize_note_name(raw: str) -> str:
+    name = raw.strip()
+    if name.endswith(".md"):
+        name = name[:-3]
+    slug = slugify(name, default="general")
+    return "general" if slug == "general" else slug
+
+
+def note_path_for_request(request: dict[str, Any], project_dir: Path) -> tuple[Path, Path]:
+    target = request.get("target")
+    if not isinstance(target, dict):
+        raise ArNotesError("note update request requires target")
+    scope = target.get("scope")
+    note_name = normalize_note_name(str(target.get("note_name") or "general"))
+    if scope == "org":
+        repo = ensure_org_checkout()
+        if repo is None:
+            raise ArNotesError("AR_ORG_NOTES_REPO is required for org note updates")
+        note_path = repo / "notes" / f"{note_name}.md"
+    elif scope == "role":
+        repo = ensure_org_checkout()
+        if repo is None:
+            raise ArNotesError("AR_ORG_NOTES_REPO is required for role note updates")
+        req_role = str(target.get("role_id") or request.get("source", {}).get("role_id") or role_id())
+        note_path = repo / "roles" / req_role / "notes" / f"{note_name}.md"
+    elif scope == "project":
+        req_project_id = target.get("project_id") or request.get("source", {}).get("project_id")
+        repo = ensure_project_state(project_dir, str(req_project_id) if req_project_id else None)
+        note_path = repo / ".agentic" / "notes" / f"{note_name}.md"
+    else:
+        raise ArNotesError("target.scope must be org, role, or project")
+    return repo, note_path
+
+
+def canonical_lesson(request: dict[str, Any]) -> str:
+    lesson = str(request.get("lesson") or "").strip()
+    summary = str(request.get("summary") or "").strip()
+    if lesson:
+        return " ".join(lesson.split())
+    return " ".join(summary.split())
+
+
+def note_title(note_path: Path) -> str:
+    title = note_path.stem.replace("-", " ").replace("_", " ").title()
+    if note_path.stem == "general":
+        title = "General Notes"
+    return title
+
+
+def merge_note_text(existing: str, request: dict[str, Any], note_path: Path) -> str:
+    lesson = canonical_lesson(request)
+    summary = " ".join(str(request.get("summary") or "").split())
+    rationale = " ".join(str(request.get("rationale") or "").split())
+    if not lesson and not summary:
+        raise ArNotesError("note update request requires lesson or summary")
+
+    normalized_existing = " ".join(existing.split())
+    if lesson and lesson in normalized_existing:
+        return existing.rstrip() + "\n"
+    if summary and summary in normalized_existing and not lesson:
+        return existing.rstrip() + "\n"
+
+    bullet = lesson or summary
+    if summary and lesson and summary not in bullet:
+        bullet = f"{summary}: {bullet}"
+    if rationale:
+        bullet = f"{bullet} ({rationale})"
+
+    if not existing.strip():
+        return f"# {note_title(note_path)}\n\n## Lessons\n\n- {bullet}\n"
+
+    text = existing.rstrip()
+    if "## Lessons" not in text:
+        text += "\n\n## Lessons"
+    text += f"\n\n- {bullet}\n"
+    return text
+
+
+def update_note_once(request: dict[str, Any], project_dir: Path) -> tuple[Path, bool]:
+    repo, note_path = note_path_for_request(request, project_dir)
+    pull_ff(repo)
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = note_path.read_text(encoding="utf-8") if note_path.exists() else ""
+    merged = merge_note_text(existing, request, note_path)
+    if merged == existing:
+        return repo, False
+    note_path.write_text(merged, encoding="utf-8")
+    rel = note_path.relative_to(repo)
+    changed = commit_if_changed(repo, f"notes: update {rel}", [note_path])
+    return repo, changed
+
+
+def update_note(args: argparse.Namespace) -> None:
+    request = safe_load_yaml(Path(args.request))
+    if request.get("kind") != "note_update_request":
+        raise ArNotesError("request kind must be note_update_request")
+    project_dir = Path(args.project_dir).resolve()
+    repo: Path | None = None
+    for attempt in range(2):
+        repo, changed = update_note_once(request, project_dir)
+        if not changed:
+            print("No note changes needed.")
+            return
+        if push(repo):
+            if args.refresh_parent:
+                refresh(argparse.Namespace(project_dir=str(project_dir)))
+                generate_instructions(
+                    argparse.Namespace(
+                        project_dir=str(project_dir),
+                        role=request.get("source", {}).get("role_id") or role_id(),
+                        tool=os.environ.get("AR_CLI_TOOL", "codex"),
+                    )
+                )
+            print(f"Updated {repo}")
+            return
+        if attempt == 0:
+            branch = current_branch(repo) or state_branch()
+            git(repo, "fetch", "origin")
+            git(repo, "reset", "--hard", f"origin/{branch}")
+    raise ArNotesError("push was rejected after retry; semantic merge may need manual help")
+
+
+def load_counter(repo: Path) -> dict[str, Any]:
+    counter_path = repo / ".agentic" / "experiment-log" / "COUNTER.yaml"
+    data = safe_load_yaml(counter_path)
+    data.setdefault("schema_version", 1)
+    data.setdefault("next_experiment_number", 1)
+    data.setdefault("next_correction_number", 1)
+    return data
+
+
+def experiment_log_dir(repo: Path) -> Path:
+    return repo / ".agentic" / "experiment-log"
+
+
+def append_summary_row(summary_path: Path, row: str) -> None:
+    text = summary_path.read_text(encoding="utf-8") if summary_path.exists() else initial_summary()
+    if not text.endswith("\n"):
+        text += "\n"
+    summary_path.write_text(text + row + "\n", encoding="utf-8")
+
+
+def short_commit(request: dict[str, Any]) -> str:
+    code = request.get("code")
+    if isinstance(code, dict):
+        commit = str(code.get("commit") or "").strip()
+        if commit:
+            return commit[:7]
+    return ""
+
+
+def summary_cell(value: Any) -> str:
+    text = " ".join(str(value or "").split())
+    return text.replace("|", "\\|")
+
+
+def final_experiment_doc(request: dict[str, Any], experiment_id: str) -> dict[str, Any]:
+    fields = {
+        "schema_version": 1,
+        "kind": "experiment_result",
+        "experiment_id": experiment_id,
+        "title": request.get("title") or request.get("short_description") or experiment_id,
+        "created_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "user_id": request.get("user_id") or user_id(),
+        "source": request.get("source") or {},
+        "description": request.get("description") or "",
+        "code": request.get("code") or {},
+        "command": request.get("command") or "",
+        "status": request.get("status") or "completed",
+        "key_result": request.get("key_result") or "",
+        "metrics": request.get("metrics") or {},
+        "artifacts": request.get("artifacts") or {},
+        "notes": request.get("notes") or "",
+    }
+    return fields
+
+
+def log_experiment_once(request: dict[str, Any], project_dir: Path) -> tuple[Path, str]:
+    repo = ensure_project_state(project_dir)
+    pull_ff(repo, state_branch())
+    log_dir = experiment_log_dir(repo)
+    counter = load_counter(repo)
+    number = int(counter.get("next_experiment_number") or 1)
+    user_slug = slugify(str(request.get("user_id") or user_id()), default="user", max_len=32)
+    description = str(request.get("short_description") or request.get("title") or "experiment")
+    experiment_id = f"E{number:04d}_{user_slug}_{slugify(description, default='experiment')}"
+    experiment_path = log_dir / "experiments" / f"{experiment_id}.yaml"
+    if experiment_path.exists():
+        raise ArNotesError(f"experiment file already exists: {experiment_path}")
+    write_yaml(experiment_path, final_experiment_doc(request, experiment_id))
+    counter["next_experiment_number"] = number + 1
+    write_yaml(log_dir / "COUNTER.yaml", counter)
+    commit = short_commit(request)
+    commit_cell = f"`{commit}`" if commit else ""
+    row = (
+        f"| [{experiment_id}](experiments/{experiment_id}.yaml) "
+        f"| {summary_cell(request.get('user_id') or user_id())} "
+        f"| {summary_cell(request.get('status') or 'completed')} "
+        f"| {summary_cell(description)} "
+        f"| {summary_cell(request.get('key_result') or '')} "
+        f"| {commit_cell} |"
+    )
+    append_summary_row(log_dir / "SUMMARY.md", row)
+    commit_if_changed(
+        repo,
+        f"experiment: log {experiment_id}",
+        [experiment_path, log_dir / "COUNTER.yaml", log_dir / "SUMMARY.md"],
+    )
+    return repo, experiment_id
+
+
+def retry_generated_log(operation: str, func: Any, request: dict[str, Any], project_dir: Path) -> None:
+    repo: Path | None = None
+    generated_id = ""
+    for attempt in range(2):
+        repo, generated_id = func(request, project_dir)
+        if push(repo, state_branch()):
+            print(generated_id)
+            return
+        if attempt == 0:
+            git(repo, "fetch", "origin")
+            git(repo, "reset", "--hard", f"origin/{state_branch()}")
+    raise ArNotesError(f"{operation} push was rejected after retry")
+
+
+def log_experiment(args: argparse.Namespace) -> None:
+    request = safe_load_yaml(Path(args.request))
+    if request.get("kind") != "experiment_result_request":
+        raise ArNotesError("request kind must be experiment_result_request")
+    retry_generated_log("experiment", log_experiment_once, request, Path(args.project_dir).resolve())
+
+
+def final_correction_doc(request: dict[str, Any], correction_id: str) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "kind": "experiment_correction",
+        "correction_id": correction_id,
+        "experiment_id": request.get("experiment_id"),
+        "created_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "user_id": request.get("user_id") or user_id(),
+        "status": request.get("status") or "corrected",
+        "summary": request.get("summary") or "",
+        "correction": request.get("correction") or request.get("notes") or "",
+        "source": request.get("source") or {},
+    }
+
+
+def log_correction_once(request: dict[str, Any], project_dir: Path) -> tuple[Path, str]:
+    experiment_id = str(request.get("experiment_id") or "").strip()
+    if not experiment_id:
+        raise ArNotesError("correction request requires experiment_id")
+    repo = ensure_project_state(project_dir)
+    pull_ff(repo, state_branch())
+    log_dir = experiment_log_dir(repo)
+    counter = load_counter(repo)
+    number = int(counter.get("next_correction_number") or 1)
+    correction_id = f"C{number:04d}_{experiment_id}"
+    correction_path = log_dir / "corrections" / f"{correction_id}.yaml"
+    write_yaml(correction_path, final_correction_doc(request, correction_id))
+    counter["next_correction_number"] = number + 1
+    write_yaml(log_dir / "COUNTER.yaml", counter)
+    row = (
+        f"| [{correction_id}](corrections/{correction_id}.yaml) "
+        f"| {summary_cell(request.get('user_id') or user_id())} "
+        f"| correction "
+        f"| Correction for {summary_cell(experiment_id)} "
+        f"| {summary_cell(request.get('summary') or request.get('correction') or '')} "
+        f"|  |"
+    )
+    append_summary_row(log_dir / "SUMMARY.md", row)
+    commit_if_changed(
+        repo,
+        f"experiment: log {correction_id}",
+        [correction_path, log_dir / "COUNTER.yaml", log_dir / "SUMMARY.md"],
+    )
+    return repo, correction_id
+
+
+def log_correction(args: argparse.Namespace) -> None:
+    request = safe_load_yaml(Path(args.request))
+    if request.get("kind") not in {"experiment_correction_request", "correction_request"}:
+        raise ArNotesError("request kind must be experiment_correction_request")
+    retry_generated_log("correction", log_correction_once, request, Path(args.project_dir).resolve())
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("init-org-notes")
+    p.add_argument("--repo", required=True)
+    p.set_defaults(func=init_org_notes)
+
+    p = sub.add_parser("refresh")
+    p.add_argument("--project-dir", required=True)
+    p.set_defaults(func=refresh)
+
+    p = sub.add_parser("generate-instructions")
+    p.add_argument("--project-dir", required=True)
+    p.add_argument("--role", default=None)
+    p.add_argument("--tool", required=True, choices=["claude", "gemini", "opencode", "codex", "pi"])
+    p.set_defaults(func=generate_instructions)
+
+    p = sub.add_parser("list-notes")
+    p.add_argument("--scope", required=True, choices=["org", "role", "project"])
+    p.add_argument("--project-dir", default=".")
+    p.add_argument("--role", default=None)
+    p.set_defaults(func=list_notes)
+
+    p = sub.add_parser("update-note")
+    p.add_argument("--request", required=True)
+    p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
+    p.add_argument("--refresh-parent", action="store_true")
+    p.set_defaults(func=update_note)
+
+    p = sub.add_parser("ensure-project-state")
+    p.add_argument("--project-dir", required=True)
+    p.set_defaults(func=lambda args: print(ensure_project_state(Path(args.project_dir).resolve())))
+
+    p = sub.add_parser("log-experiment")
+    p.add_argument("--request", required=True)
+    p.add_argument("--project-dir", required=True)
+    p.set_defaults(func=log_experiment)
+
+    p = sub.add_parser("log-correction")
+    p.add_argument("--request", required=True)
+    p.add_argument("--project-dir", required=True)
+    p.set_defaults(func=log_correction)
+
+    return parser
+
+
+def request_target(request_path: str | None) -> dict[str, Any]:
+    if not request_path:
+        return {}
+    request = safe_load_yaml(Path(request_path))
+    target = request.get("target")
+    return target if isinstance(target, dict) else {}
+
+
+def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
+    command = getattr(args, "command", "")
+    project_dir = Path(getattr(args, "project_dir", ".")).resolve()
+    paths: list[Path] = []
+
+    def add_project_lock(explicit_project_id: str | None = None) -> None:
+        pid = project_id(project_dir, explicit_project_id)
+        paths.append(lock_file_for(f"project-{pid}"))
+
+    def add_org_lock() -> None:
+        paths.append(lock_file_for("org-agentic-notes"))
+
+    if command in {"ensure-project-state", "log-experiment", "log-correction"}:
+        add_project_lock(None)
+    elif command == "refresh":
+        if os.environ.get("AR_ORG_NOTES_REPO"):
+            add_org_lock()
+        add_project_lock(None)
+    elif command == "init-org-notes":
+        add_org_lock()
+    elif command in {"generate-instructions", "render-section"}:
+        if os.environ.get("AR_ORG_NOTES_REPO"):
+            add_org_lock()
+        add_project_lock(None)
+    elif command == "list-notes":
+        if getattr(args, "scope", "") in {"org", "role"}:
+            add_org_lock()
+        elif getattr(args, "scope", "") == "project":
+            add_project_lock(None)
+    elif command == "update-note":
+        target = request_target(getattr(args, "request", None))
+        scope = target.get("scope")
+        if scope in {"org", "role"}:
+            add_org_lock()
+        elif scope == "project":
+            explicit = target.get("project_id")
+            add_project_lock(str(explicit) if explicit else None)
+        if getattr(args, "refresh_parent", False):
+            if os.environ.get("AR_ORG_NOTES_REPO"):
+                add_org_lock()
+            add_project_lock(None)
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in sorted(paths):
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "render-section":
+        parser = argparse.ArgumentParser(description=argparse.SUPPRESS)
+        parser.add_argument("command")
+        parser.add_argument("--project-dir", required=True)
+        parser.add_argument("--role", default=None)
+        args = parser.parse_args(argv)
+        try:
+            with ExitStack() as stack:
+                for lock_path in lock_paths_for_args(args):
+                    stack.enter_context(state_lock(lock_path))
+                render_section(args)
+        except ArNotesError as exc:
+            print(f"ar-notes: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        with ExitStack() as stack:
+            for lock_path in lock_paths_for_args(args):
+                stack.enter_context(state_lock(lock_path))
+            args.func(args)
+    except ArNotesError as exc:
+        print(f"ar-notes: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

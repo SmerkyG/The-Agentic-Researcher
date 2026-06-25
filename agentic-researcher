@@ -51,6 +51,16 @@ capture_env_overrides() {
         AR_DOCKER_GPUS
         AR_GPU_BACKEND
         AR_OPTIONAL_SKILLS
+        AR_ORG_NOTES_REPO
+        AR_ROLE_ID
+        AR_USER_ID
+        AR_PROJECT_ID
+        AR_AGENTIC_STATE_BRANCH
+        AR_NOTES_AUTO_REFRESH
+        AR_RESOLVER_GIT_NAME
+        AR_RESOLVER_GIT_EMAIL
+        AR_NOTES_GIT_NAME
+        AR_NOTES_GIT_EMAIL
         AR_AUTH_MODE
         AR_API_PROVIDER
         AR_API_KEY_ENV
@@ -95,6 +105,16 @@ apply_env_overrides() {
         AR_DOCKER_GPUS
         AR_GPU_BACKEND
         AR_OPTIONAL_SKILLS
+        AR_ORG_NOTES_REPO
+        AR_ROLE_ID
+        AR_USER_ID
+        AR_PROJECT_ID
+        AR_AGENTIC_STATE_BRANCH
+        AR_NOTES_AUTO_REFRESH
+        AR_RESOLVER_GIT_NAME
+        AR_RESOLVER_GIT_EMAIL
+        AR_NOTES_GIT_NAME
+        AR_NOTES_GIT_EMAIL
         AR_AUTH_MODE
         AR_API_PROVIDER
         AR_API_KEY_ENV
@@ -123,6 +143,9 @@ apply_env_overrides() {
         else
             AR_OPTIONAL_SKILLS="$AR_OPTIONAL_SKILLS_OVERRIDE"
         fi
+    fi
+    if [[ -n "${AR_PROJECT_ID_OVERRIDE:-}" ]]; then
+        AR_PROJECT_ID="$AR_PROJECT_ID_OVERRIDE"
     fi
     if [[ -n "${AR_CLI_TOOL_OVERRIDE:-}" ]]; then
         AR_CLI_TOOL="$AR_CLI_TOOL_OVERRIDE"
@@ -180,6 +203,12 @@ apply_defaults() {
     AR_DOCKER_GPUS="${AR_DOCKER_GPUS:-auto}"
     AR_GPU_BACKEND="${AR_GPU_BACKEND:-auto}"
     AR_OPTIONAL_SKILLS="${AR_OPTIONAL_SKILLS:-}"
+    AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
+    AR_ROLE_ID="${AR_ROLE_ID:-researcher}"
+    AR_USER_ID="${AR_USER_ID:-$USER}"
+    AR_PROJECT_ID="${AR_PROJECT_ID:-}"
+    AR_AGENTIC_STATE_BRANCH="${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
+    AR_NOTES_AUTO_REFRESH="${AR_NOTES_AUTO_REFRESH:-true}"
 
     case "$AR_CLI_TOOL" in
         claude)
@@ -302,6 +331,14 @@ parse_arguments() {
                 append_optional_skill_override "$2"
                 shift 2
                 ;;
+            --project-id)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --project-id requires a value"
+                    exit 1
+                fi
+                AR_PROJECT_ID_OVERRIDE="$2"
+                shift 2
+                ;;
             --yolo)
                 YOLO_MODE=true
                 shift
@@ -378,6 +415,7 @@ Options:
   --gpu-backend NAME  GPU job backend (auto|none|cluster-run|remote-run)
   --optional-skill NAME
                       Install an optional skill from optional-skills/ (repeatable)
+  --project-id ID     Required stable project id for notes and experiment state
   --debug-launch      Print extra launcher details and enable tool startup logs where supported
   --tool TOOL         Select CLI tool (claude|opencode|gemini|codex|pi)
   --yolo              Auto-approve all permissions (Claude Code only)
@@ -392,23 +430,23 @@ Examples:
   agentic-researcher --docker --build             # Build Docker container
   agentic-researcher --podman --build             # Build Podman container
   agentic-researcher --apptainer --build          # Build Apptainer container
-  agentic-researcher --native                     # Host-native launch, no container
-  agentic-researcher --native --gpu-backend cluster-run
-  agentic-researcher --optional-skill cluster-run # Install optional skill + instructions
+  agentic-researcher --project-id my-project-2026 --native
+  agentic-researcher --project-id my-project-2026 --native --gpu-backend cluster-run
+  agentic-researcher --project-id my-project-2026 --optional-skill cluster-run
   agentic-researcher --setup                      # Optional setup wizard
   agentic-researcher --clean                      # Interactive cleanup of local state
   agentic-researcher --uninstall                  # Remove installed launcher
   agentic-researcher --clean --yes --include-config
-  agentic-researcher --test                       # Validate environment
-  agentic-researcher --tool opencode --debug-launch
-  agentic-researcher                              # Current directory
-  agentic-researcher ~/my-project                 # Specific directory
-  agentic-researcher --yolo                       # Auto-approve (Claude)
-  agentic-researcher --tool gemini                # Use Gemini CLI
-  agentic-researcher --tool codex ~/project       # Use Codex CLI
-  agentic-researcher --yolo --model opus          # YOLO + Opus
-  agentic-researcher --multi-node                 # Multi-node dispatch (Slurm)
-  agentic-researcher --multi-node --test          # Validate multi-node setup
+  agentic-researcher --project-id my-project-2026 --test
+  agentic-researcher --project-id my-project-2026 --tool opencode --debug-launch
+  agentic-researcher --project-id my-project-2026 # Current directory
+  agentic-researcher --project-id my-project-2026 ~/my-project
+  agentic-researcher --project-id my-project-2026 --yolo
+  agentic-researcher --project-id my-project-2026 --tool gemini
+  agentic-researcher --project-id my-project-2026 --tool codex ~/project
+  agentic-researcher --project-id my-project-2026 --yolo --model opus
+  agentic-researcher --project-id my-project-2026 --multi-node
+  agentic-researcher --project-id my-project-2026 --multi-node --test
 
 What's Sandboxed:
   The agent can ONLY access your project directory.
@@ -466,6 +504,21 @@ validate_workspace() {
             exit 1
             ;;
     esac
+}
+
+validate_project_id() {
+    if [[ -z "${AR_PROJECT_ID:-}" ]]; then
+        echo "Error: Agentic Researcher requires a stable project id."
+        echo ""
+        echo "Provide one per launch:"
+        echo "  agentic-researcher --project-id my-project-2026 $WORKSPACE_DIR"
+        echo ""
+        echo "Or set AR_PROJECT_ID in your config or environment:"
+        echo "  agentic-researcher --setup AR_PROJECT_ID=my-project-2026"
+        echo ""
+        echo "Use the same id for all worktrees and agents that should share notes and experiment logs."
+        exit 1
+    fi
 }
 
 validate_api_key() {
@@ -920,6 +973,26 @@ toml_escape() {
     sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+shell_quote() {
+    printf "'"
+    printf "%s" "$1" | sed "s/'/'\\\\''/g"
+    printf "'"
+}
+
+json_string() {
+    python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$1"
+}
+
+workspace_runtime_path() {
+    local relative_path="${1#./}"
+
+    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+        printf '%s/%s\n' "$WORKSPACE_DIR" "$relative_path"
+    else
+        printf '/workspace/%s\n' "$relative_path"
+    fi
+}
+
 project_agent_root_for_tool() {
     case "$AR_CLI_TOOL" in
         claude)
@@ -937,6 +1010,15 @@ project_agent_root_for_tool() {
         pi)
             ;;
     esac
+}
+
+render_agentic_notes_for_role() {
+    local render_role="$1"
+
+    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
+    "$SCRIPT_DIR/scripts/ar-notes" render-section \
+        --project-dir "$WORKSPACE_DIR" \
+        --role "$render_role" 2>/dev/null || true
 }
 
 render_agent_for_tool() {
@@ -962,6 +1044,8 @@ render_agent_for_tool() {
                 printf 'developer_instructions = """\n'
                 printf '<!-- Generated by agentic-researcher. Edit agents/%s.md to change this agent. -->\n\n' "$agent_name"
                 strip_frontmatter "$source_path" | sed 's/"""/\\"""/g'
+                printf '\n'
+                render_agentic_notes_for_role "$agent_name" | sed 's/"""/\\"""/g'
                 printf '\n"""\n'
             } > "$temp_path"
             ;;
@@ -974,6 +1058,8 @@ render_agent_for_tool() {
                 printf -- '---\n\n'
                 printf '<!-- Generated by agentic-researcher. Edit agents/%s.md to change this agent. -->\n\n' "$agent_name"
                 strip_frontmatter "$source_path"
+                printf '\n'
+                render_agentic_notes_for_role "$agent_name"
             } > "$temp_path"
             ;;
         claude|gemini)
@@ -996,6 +1082,10 @@ render_agent_for_tool() {
                     }
                 }
             ' "$source_path" > "$temp_path"
+            {
+                printf '\n'
+                render_agentic_notes_for_role "$agent_name"
+            } >> "$temp_path"
             ;;
         *)
             return 0
@@ -1089,6 +1179,500 @@ setup_skill_instruction_blocks() {
     done
 
     mv "$temp_path" "$instruction_path"
+}
+
+setup_agentic_notes_state() {
+    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
+
+    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_ROLE_ID AR_USER_ID AR_PROJECT_ID
+    export AR_AGENTIC_STATE_BRANCH AR_NOTES_AUTO_REFRESH
+    export AR_RESOLVER_GIT_NAME AR_RESOLVER_GIT_EMAIL AR_NOTES_GIT_NAME AR_NOTES_GIT_EMAIL
+
+    if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
+        if ! "$SCRIPT_DIR/scripts/ar-notes" init-org-notes --repo "$AR_ORG_NOTES_REPO" >/dev/null; then
+            echo "Warning: Could not initialize org notes checkout."
+        fi
+    fi
+
+    if ! "$SCRIPT_DIR/scripts/ar-notes" ensure-project-state --project-dir "$WORKSPACE_DIR" >/dev/null; then
+        echo "Warning: Could not initialize project agentic/state checkout."
+        return 0
+    fi
+
+    case "${AR_NOTES_AUTO_REFRESH:-true}" in
+        0|false|False|FALSE|no|No|NO|off|Off|OFF)
+            ;;
+        *)
+            if ! "$SCRIPT_DIR/scripts/ar-notes" refresh --project-dir "$WORKSPACE_DIR" >/dev/null; then
+                echo "Warning: Could not refresh Agentic Notes checkouts."
+            fi
+            ;;
+    esac
+}
+
+setup_agentic_notes_instruction() {
+    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
+    [[ -n "${INSTRUCTION_TARGET:-}" ]] || return 0
+
+    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_ROLE_ID AR_USER_ID AR_PROJECT_ID
+    export AR_AGENTIC_STATE_BRANCH AR_NOTES_AUTO_REFRESH AR_CONTAINER_RUNTIME
+
+    if ! "$SCRIPT_DIR/scripts/ar-notes" generate-instructions \
+        --project-dir "$WORKSPACE_DIR" \
+        --role "${AR_ROLE_ID:-researcher}" \
+        --tool "$AR_CLI_TOOL" >/dev/null; then
+        echo "Warning: Could not update Agentic Notes instruction section."
+    fi
+}
+
+merge_managed_hook_json() {
+    local target_path="$1"
+    local marker="$2"
+    local patch_json="$3"
+
+    mkdir -p "$(dirname "$target_path")"
+
+    AR_HOOK_PATCH_JSON="$patch_json" python3 - "$target_path" "$marker" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+target = Path(sys.argv[1])
+marker = sys.argv[2]
+patch = json.loads(os.environ["AR_HOOK_PATCH_JSON"])
+
+if target.exists():
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"{target}: invalid JSON ({exc})", file=sys.stderr)
+        sys.exit(1)
+else:
+    data = {}
+
+if not isinstance(data, dict):
+    print(f"{target}: top-level JSON value must be an object", file=sys.stderr)
+    sys.exit(1)
+
+data_hooks = data.setdefault("hooks", {})
+if not isinstance(data_hooks, dict):
+    print(f"{target}: hooks must be an object", file=sys.stderr)
+    sys.exit(1)
+
+def is_managed_group(group):
+    if not isinstance(group, dict):
+        return False
+    for hook in group.get("hooks", []):
+        if not isinstance(hook, dict):
+            continue
+        fields = [
+            hook.get("command", ""),
+            hook.get("name", ""),
+            hook.get("statusMessage", ""),
+            hook.get("description", ""),
+        ]
+        if any(marker in str(field) for field in fields):
+            return True
+    return False
+
+for event_name, groups in patch.get("hooks", {}).items():
+    if not isinstance(groups, list):
+        print(f"patch hooks.{event_name}: value must be an array", file=sys.stderr)
+        sys.exit(1)
+    existing = data_hooks.get(event_name, [])
+    if not isinstance(existing, list):
+        existing = []
+    data_hooks[event_name] = [
+        group for group in existing
+        if not is_managed_group(group)
+    ] + groups
+
+target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+render_compaction_context_hook_script() {
+    local target_path="$1"
+    local managed_marker="Generated by agentic-researcher"
+
+    if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
+        echo "Warning: Skipping existing compaction hook script at $target_path (not managed by agentic-researcher)"
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$target_path")"
+    cat > "$target_path" <<'PY'
+#!/usr/bin/env python3
+# Generated by agentic-researcher. Edit the launcher to change this file.
+import json
+import sys
+
+
+def main() -> None:
+    instruction_path = sys.argv[1] if len(sys.argv) > 1 else "AGENTS.md"
+    try:
+        hook_input = json.load(sys.stdin)
+    except Exception:
+        hook_input = {}
+    event_name = hook_input.get("hook_event_name") or "SessionStart"
+    message = (
+        "You have just experienced context compaction. Treat this moment as "
+        "the new `since the last compaction` boundary for Agentic Notes. "
+        "Before continuing, read "
+        f"`{instruction_path}`, the instruction file rendered for this "
+        "specific Agentic Researcher invocation, then continue with whatever "
+        "task was in progress before compaction. Do not restart from scratch."
+    )
+    print(json.dumps({
+        "systemMessage": "Agentic Researcher refreshed post-compaction instructions.",
+        "hookSpecificOutput": {
+            "hookEventName": event_name,
+            "additionalContext": message,
+        },
+    }))
+
+
+if __name__ == "__main__":
+    main()
+PY
+    chmod +x "$target_path"
+}
+
+render_gemini_compaction_hook_script() {
+    local target_path="$1"
+    local managed_marker="Generated by agentic-researcher"
+
+    if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
+        echo "Warning: Skipping existing Gemini compaction hook script at $target_path (not managed by agentic-researcher)"
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$target_path")"
+    cat > "$target_path" <<'PY'
+#!/usr/bin/env python3
+# Generated by agentic-researcher. Edit the launcher to change this file.
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+
+def refresh_message(instruction_path: str) -> str:
+    return (
+        "You have just experienced context compaction. Treat this moment as "
+        "the new `since the last compaction` boundary for Agentic Notes. "
+        "Before continuing, read "
+        f"`{instruction_path}`, the instruction file rendered for this "
+        "specific Agentic Researcher invocation, then continue with whatever "
+        "task was in progress before compaction. Do not restart from scratch."
+    )
+
+
+def marker_path() -> Path:
+    return Path(__file__).with_name(".agentic-researcher-compaction.pending")
+
+
+def mark_pending(instruction_path: str) -> None:
+    try:
+        json.load(sys.stdin)
+    except Exception:
+        pass
+    marker_path().write_text(
+        json.dumps({"instruction_path": instruction_path, "time": time.time()}) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps({
+        "systemMessage": "Agentic Researcher will refresh instructions on the next model call.",
+        "suppressOutput": True,
+    }))
+
+
+def inject_pending(default_instruction_path: str) -> None:
+    try:
+        hook_input = json.load(sys.stdin)
+    except Exception:
+        hook_input = {}
+
+    marker = marker_path()
+    if not marker.exists():
+        print("{}")
+        return
+
+    try:
+        marker_data = json.loads(marker.read_text(encoding="utf-8"))
+    except Exception:
+        marker_data = {}
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        pass
+
+    instruction_path = marker_data.get("instruction_path") or default_instruction_path
+    llm_request = hook_input.get("llm_request")
+    if not isinstance(llm_request, dict):
+        print("{}")
+        return
+
+    messages = llm_request.get("messages")
+    if not isinstance(messages, list):
+        messages = []
+
+    updated_request = dict(llm_request)
+    updated_request["messages"] = messages + [{
+        "role": "system",
+        "content": refresh_message(str(instruction_path)),
+    }]
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "BeforeModel",
+            "llm_request": updated_request,
+        },
+        "suppressOutput": True,
+    }))
+
+
+def main() -> None:
+    mode = sys.argv[1] if len(sys.argv) > 1 else "mark"
+    instruction_path = sys.argv[2] if len(sys.argv) > 2 else "GEMINI.md"
+    if mode == "inject":
+        inject_pending(instruction_path)
+    else:
+        mark_pending(instruction_path)
+
+
+if __name__ == "__main__":
+    main()
+PY
+    chmod +x "$target_path"
+}
+
+setup_claude_compaction_hooks() {
+    local script_path="$WORKSPACE_DIR/.claude/hooks/agentic-researcher-compaction.py"
+    render_compaction_context_hook_script "$script_path" || return 0
+
+    local script_runtime instruction_runtime command patch_json
+    script_runtime="$(workspace_runtime_path ".claude/hooks/agentic-researcher-compaction.py")"
+    instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
+    command="python3 $(shell_quote "$script_runtime") $(shell_quote "$instruction_runtime")"
+    patch_json=$(cat <<EOF
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": $(json_string "$command"),
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+)
+    if ! merge_managed_hook_json "$WORKSPACE_DIR/.claude/settings.local.json" "agentic-researcher-compaction" "$patch_json"; then
+        echo "Warning: Could not update Claude compaction hook settings."
+    fi
+}
+
+setup_codex_compaction_hooks() {
+    local script_path="$WORKSPACE_DIR/.codex/hooks/agentic-researcher-compaction.py"
+    render_compaction_context_hook_script "$script_path" || return 0
+
+    local script_runtime instruction_runtime command patch_json
+    script_runtime="$(workspace_runtime_path ".codex/hooks/agentic-researcher-compaction.py")"
+    instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
+    command="python3 $(shell_quote "$script_runtime") $(shell_quote "$instruction_runtime")"
+    patch_json=$(cat <<EOF
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": $(json_string "$command"),
+            "timeout": 10,
+            "statusMessage": "Agentic Researcher compaction refresh"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+)
+    if ! merge_managed_hook_json "$WORKSPACE_DIR/.codex/hooks.json" "agentic-researcher-compaction" "$patch_json"; then
+        echo "Warning: Could not update Codex compaction hook settings."
+    fi
+}
+
+setup_gemini_compaction_hooks() {
+    local script_path="$WORKSPACE_DIR/.gemini/hooks/agentic-researcher-compaction.py"
+    render_gemini_compaction_hook_script "$script_path" || return 0
+
+    local script_runtime instruction_runtime mark_command inject_command patch_json
+    script_runtime="$(workspace_runtime_path ".gemini/hooks/agentic-researcher-compaction.py")"
+    instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
+    mark_command="python3 $(shell_quote "$script_runtime") mark $(shell_quote "$instruction_runtime")"
+    inject_command="python3 $(shell_quote "$script_runtime") inject $(shell_quote "$instruction_runtime")"
+    patch_json=$(cat <<EOF
+{
+  "hooks": {
+    "PreCompress": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": $(json_string "$mark_command"),
+            "name": "Agentic Researcher compaction marker",
+            "description": "Marks a compression so the next model request refreshes the rendered instruction file.",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "BeforeModel": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": $(json_string "$inject_command"),
+            "name": "Agentic Researcher compaction refresh",
+            "description": "After compression, asks the model to read the invocation-specific instruction file and resume work.",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+)
+    if ! merge_managed_hook_json "$WORKSPACE_DIR/.gemini/settings.json" "agentic-researcher-compaction" "$patch_json"; then
+        echo "Warning: Could not update Gemini compaction hook settings."
+    fi
+}
+
+setup_opencode_compaction_hooks() {
+    local plugin_path="$WORKSPACE_DIR/.opencode/plugins/agentic-researcher-compaction.ts"
+    local managed_marker="Generated by agentic-researcher"
+    local instruction_runtime refresh_context
+
+    if [[ -f "$plugin_path" ]] && ! grep -q "$managed_marker" "$plugin_path"; then
+        echo "Warning: Skipping existing OpenCode compaction plugin at $plugin_path (not managed by agentic-researcher)"
+        return 0
+    fi
+
+    instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
+    refresh_context="## Agentic Researcher Post-Compaction Refresh
+
+The continuing model must be told: You have just experienced context compaction. Treat this moment as the new \`since the last compaction\` boundary for Agentic Notes. Before continuing, read \`$instruction_runtime\`, the instruction file rendered for this specific Agentic Researcher invocation, then continue with whatever task was in progress before compaction. Do not restart from scratch."
+    mkdir -p "$(dirname "$plugin_path")"
+    cat > "$plugin_path" <<EOF
+// Generated by agentic-researcher. Edit the launcher to change this file.
+import type { Plugin } from "@opencode-ai/plugin"
+
+const refreshContext = $(json_string "$refresh_context")
+
+export const AgenticResearcherCompactionPlugin: Plugin = async () => {
+  return {
+    "experimental.session.compacting": async (_input, output) => {
+      output.context.push(refreshContext)
+    },
+  }
+}
+EOF
+}
+
+setup_pi_compaction_hooks() {
+    local extension_path="$WORKSPACE_DIR/.pi/extensions/agentic-researcher-compaction.ts"
+    local managed_marker="Generated by agentic-researcher"
+    local instruction_runtime extension_runtime refresh_message
+
+    if [[ -f "$extension_path" ]] && ! grep -q "$managed_marker" "$extension_path"; then
+        echo "Warning: Skipping existing pi compaction extension at $extension_path (not managed by agentic-researcher)"
+        return 0
+    fi
+
+    instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
+    extension_runtime="$(workspace_runtime_path ".pi/extensions/agentic-researcher-compaction.ts")"
+    refresh_message="You have just experienced context compaction. Treat this moment as the new \`since the last compaction\` boundary for Agentic Notes. Before continuing, read \`$instruction_runtime\`, the instruction file rendered for this specific Agentic Researcher invocation, then continue with whatever task was in progress before compaction. Do not restart from scratch."
+    mkdir -p "$(dirname "$extension_path")"
+    cat > "$extension_path" <<EOF
+// Generated by agentic-researcher. Edit the launcher to change this file.
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+
+const refreshMessage = $(json_string "$refresh_message")
+
+export default function (pi: ExtensionAPI): void {
+  let pendingRefresh = false
+
+  pi.on("session_compact", async () => {
+    pendingRefresh = true
+  })
+
+  pi.on("context", async (event) => {
+    if (!pendingRefresh) return
+    pendingRefresh = false
+    return {
+      messages: [
+        ...event.messages,
+        {
+          role: "custom",
+          customType: "agentic-researcher-compaction-refresh",
+          content: refreshMessage,
+          display: false,
+          timestamp: Date.now(),
+        },
+      ],
+    }
+  })
+
+  pi.on("before_agent_start", async () => {
+    if (!pendingRefresh) return
+    pendingRefresh = false
+    return {
+      message: {
+        customType: "agentic-researcher-compaction-refresh",
+        content: refreshMessage,
+        display: false,
+      },
+    }
+  })
+}
+EOF
+
+    PI_AGENTIC_COMPACTION_EXTENSION="$extension_runtime"
+}
+
+setup_compaction_hooks() {
+    [[ -n "${INSTRUCTION_TARGET:-}" ]] || return 0
+
+    PI_AGENTIC_COMPACTION_EXTENSION=""
+    case "$AR_CLI_TOOL" in
+        claude)
+            setup_claude_compaction_hooks
+            ;;
+        codex)
+            setup_codex_compaction_hooks
+            ;;
+        gemini)
+            setup_gemini_compaction_hooks
+            ;;
+        opencode)
+            setup_opencode_compaction_hooks
+            ;;
+        pi)
+            setup_pi_compaction_hooks
+            ;;
+    esac
 }
 translate_tool_args() {
     local tool="$AR_CLI_TOOL"
@@ -1207,6 +1791,9 @@ translate_tool_args() {
             if [[ "$DEBUG_LAUNCH" == "true" ]]; then
                 TOOL_ARGS+=("--verbose")
             fi
+            if [[ -n "${PI_AGENTIC_COMPACTION_EXTENSION:-}" ]]; then
+                TOOL_ARGS+=("-e" "$PI_AGENTIC_COMPACTION_EXTENSION")
+            fi
             if [[ "$YOLO_MODE" == "true" ]]; then
                 echo "Warning: --yolo has no effect in pi mode (no permission system)"
             fi
@@ -1244,6 +1831,20 @@ setup_research_binds() {
     if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
         RESEARCH_BINDS+=(--bind "$SCRIPT_DIR/INSTRUCTIONS.md:/claude-home/.claude/INSTRUCTIONS.md.template:ro")
     fi
+}
+
+instructions_template_env_path() {
+    case "$AR_CONTAINER_RUNTIME" in
+        native)
+            printf '%s\n' "$SCRIPT_DIR/INSTRUCTIONS.md"
+            ;;
+        docker|podman)
+            printf '%s\n' "/claude-home/INSTRUCTIONS.md.template"
+            ;;
+        *)
+            printf '%s\n' "/claude-home/.claude/INSTRUCTIONS.md.template"
+            ;;
+    esac
 }
 sanitize_mount_name() {
     local raw_name="$1"
@@ -1515,6 +2116,18 @@ build_env_args() {
         --env "USER=$USER"
         --env "GIT_SSH_COMMAND=$GIT_SSH_COMMAND"
         --env "AR_GPU_BACKEND=${GPU_BACKEND:-none}"
+        --env "AR_STATE_ROOT=$STATE_ROOT"
+        --env "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
+        --env "AR_ROLE_ID=${AR_ROLE_ID:-researcher}"
+        --env "AR_USER_ID=${AR_USER_ID:-$USER}"
+        --env "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
+        --env "AR_AGENTIC_STATE_BRANCH=${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
+        --env "AR_NOTES_AUTO_REFRESH=${AR_NOTES_AUTO_REFRESH:-true}"
+        --env "AR_INSTRUCTIONS_TEMPLATE=$(instructions_template_env_path)"
+        --env "AR_RESOLVER_GIT_NAME=${AR_RESOLVER_GIT_NAME:-}"
+        --env "AR_RESOLVER_GIT_EMAIL=${AR_RESOLVER_GIT_EMAIL:-}"
+        --env "AR_NOTES_GIT_NAME=${AR_NOTES_GIT_NAME:-}"
+        --env "AR_NOTES_GIT_EMAIL=${AR_NOTES_GIT_EMAIL:-}"
     )
 
     # Standard API key pass-through so CLIs can handle auth inside the container.
@@ -1713,6 +2326,10 @@ launch_oci_runtime() {
     host_user="$(id -un)"
     host_group="$(id -gn)"
 
+    if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
+        render_instruction_template "$AR_CONFIG_STORE/INSTRUCTIONS.md.template"
+    fi
+
     local OCI_ARGS=(
         "$oci_runtime" run --rm
         --init
@@ -1775,6 +2392,18 @@ launch_oci_runtime() {
         -e "HOST_GROUP=$host_group"
         -e "SANDBOX_TOOL=$AR_CLI_TOOL"
         -e "AR_GPU_BACKEND=${GPU_BACKEND:-none}"
+        -e "AR_STATE_ROOT=$STATE_ROOT"
+        -e "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
+        -e "AR_ROLE_ID=${AR_ROLE_ID:-researcher}"
+        -e "AR_USER_ID=${AR_USER_ID:-$USER}"
+        -e "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
+        -e "AR_AGENTIC_STATE_BRANCH=${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
+        -e "AR_NOTES_AUTO_REFRESH=${AR_NOTES_AUTO_REFRESH:-true}"
+        -e "AR_INSTRUCTIONS_TEMPLATE=$(instructions_template_env_path)"
+        -e "AR_RESOLVER_GIT_NAME=${AR_RESOLVER_GIT_NAME:-}"
+        -e "AR_RESOLVER_GIT_EMAIL=${AR_RESOLVER_GIT_EMAIL:-}"
+        -e "AR_NOTES_GIT_NAME=${AR_NOTES_GIT_NAME:-}"
+        -e "AR_NOTES_GIT_EMAIL=${AR_NOTES_GIT_EMAIL:-}"
     )
 
     for env_name in ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY GEMINI_API_KEY; do
@@ -1883,6 +2512,19 @@ native_tool_command() {
 setup_native_environment() {
     export AR_GPU_BACKEND="${GPU_BACKEND:-none}"
     export AR_CLI_TOOL="$AR_CLI_TOOL"
+    export AR_STATE_ROOT="$STATE_ROOT"
+    export AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
+    export AR_ROLE_ID="${AR_ROLE_ID:-researcher}"
+    export AR_USER_ID="${AR_USER_ID:-$USER}"
+    export AR_PROJECT_ID="${AR_PROJECT_ID:-}"
+    export AR_AGENTIC_STATE_BRANCH="${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
+    export AR_NOTES_AUTO_REFRESH="${AR_NOTES_AUTO_REFRESH:-true}"
+    export AR_INSTRUCTIONS_TEMPLATE
+    AR_INSTRUCTIONS_TEMPLATE="$(instructions_template_env_path)"
+    export AR_RESOLVER_GIT_NAME="${AR_RESOLVER_GIT_NAME:-}"
+    export AR_RESOLVER_GIT_EMAIL="${AR_RESOLVER_GIT_EMAIL:-}"
+    export AR_NOTES_GIT_NAME="${AR_NOTES_GIT_NAME:-}"
+    export AR_NOTES_GIT_EMAIL="${AR_NOTES_GIT_EMAIL:-}"
 
     if [[ -n "${AR_HTTPS_PROXY:-}" ]]; then
         export https_proxy="$AR_HTTPS_PROXY"
@@ -2033,6 +2675,7 @@ main() {
     apply_defaults
     validate_runtime
     validate_workspace
+    validate_project_id
     validate_api_key
     resolve_gpu_backend
     resolve_optional_skills
@@ -2041,8 +2684,11 @@ main() {
     validate_container
     validate_multi_node
     setup_storage
+    setup_agentic_notes_state
     setup_instruction_file
     setup_skill_instruction_blocks
+    setup_agentic_notes_instruction
+    setup_compaction_hooks
     translate_tool_args
     setup_auth_binds
     setup_research_binds

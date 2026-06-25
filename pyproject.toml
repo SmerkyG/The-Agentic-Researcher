@@ -1,0 +1,12 @@
+[project]
+name = "agentic-researcher"
+version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]

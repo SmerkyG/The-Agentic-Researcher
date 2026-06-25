@@ -16,11 +16,13 @@ Detect which instruction file exists in the workspace:
 Read the following files (skip any that don't exist):
 
 1. `/workspace/REVISION.md` -- previous retrospective entries (if any)
-2. `/workspace/report.tex` -- experiment log, results, analysis quality
-3. `/workspace/TODO.md` -- open items, deferred work
-4. `/workspace/$INSTRUCTION_FILE` -- the instructions governing this session (especially Section 8: Project Instructions)
-5. Run `git log --oneline -30` -- see the commit history (style, frequency, quality)
-6. Run `git diff --stat HEAD~5..HEAD 2>/dev/null || true` -- recent change patterns
+2. The shared Agentic Researcher experiment `SUMMARY.md` if available, plus individual experiment YAML files only when needed
+3. `/workspace/report.tex` -- branch-local narrative analysis and report quality
+4. `/workspace/TODO.md` -- branch-local open items and deferred work
+5. `/workspace/$INSTRUCTION_FILE` -- the instructions governing this session (especially Section 8: Project Instructions)
+6. The injected Agentic Notes section in `$INSTRUCTION_FILE`; read specific note files only when they are needed to evaluate a concrete note-related issue
+7. Run `git log --oneline -30` -- see the commit history (style, frequency, quality)
+8. Run `git diff --stat HEAD~5..HEAD 2>/dev/null || true` -- recent change patterns
 
 **Backward compatibility:** If `/workspace/research_instructions.md` exists (older format), read it as supplementary context for the original research goal.
 
@@ -38,10 +40,10 @@ Review compliance with each of the 10 Commandments (Section 1 of the instruction
 | VI | One variable per experiment | ? | Were experiments properly isolated? |
 | VII | Evaluate in tiers | ? | Was the three-tier strategy followed? |
 | VIII | Bound your expectations | ? | Were theoretical bounds established before heuristics? |
-| IX | Record everything | ? | Are results tables present? Are failures documented? |
+| IX | Record everything | ? | Are completed experiments logged? Are report details and failures documented? |
 | X | Verify before claiming | ? | Were verification scripts created for non-trivial math? |
 
-Also check module compliance if applicable: C1/C2 for compute and M1/M2 for math.
+Also check module compliance if applicable: M1-M2 for math, C1-C4 for compute-intensive research, and N1-N4 for External GPU Job Backend use.
 
 This table goes into the REVISION.md entry.
 
@@ -53,9 +55,13 @@ Reflect on these additional dimensions:
 - Did the experiment loop work well? Were there unnecessary steps or missing steps?
 - Was iteration speed good, or did the agent waste time on unproductive paths?
 
-### B. Report Quality (report.tex)
-- Is the report clear, well-structured, and useful as a persistent record?
-- Are experiment entries detailed enough to reproduce results?
+### B. Experiment Log and Report Quality
+- Is the shared experiment log complete enough to reconstruct what was run?
+- Were completed meaningful experiments logged through `scripts/ar-notes log-experiment` when available?
+- Were corrections recorded through correction logging instead of editing old experiment YAML files?
+- Was `SUMMARY.md` append-maintained rather than regenerated or hand-edited?
+- Is the report clear, well-structured, and useful as a branch-local narrative record?
+- Are report entries detailed enough to understand methods, analysis, and verification?
 - Are analyses insightful or superficial?
 - Are results tables properly formatted with clear columns?
 
@@ -74,16 +80,23 @@ Reflect on these additional dimensions:
 - Were results reported honestly, including negative results?
 
 ### F. Resource Management
-- Was GPU/compute used efficiently? (Relates to module C1)
+- Was local GPU capacity discovered correctly with `nvidia-smi` or `rocm-smi`? (C1-C3)
+- If an External GPU Job Backend was active, was backend capacity discovered and used according to N1-N4?
 - Were long runs estimated and confirmed before starting?
 
-### G. User-Specific Feedback
+### G. Agentic Notes Hygiene
+- Were injected `general.md` notes treated as active guidance without opening source `general.md` note files?
+- Were relevant specific notes read before work that depended on those packages, libraries, architectures, benchmarks, or conventions?
+- Were reusable lessons routed through the `note-updater` subagent instead of direct note edits by the main agent?
+- Were notes kept distinct from local `TODO.md` items and experiment history?
+
+### H. User-Specific Feedback
 - Address the user's $ARGUMENTS feedback directly. This is the most important input.
 - If the user pointed out something specific, propose a concrete instruction file change for it.
 
 ## Step 4: Write to REVISION.md
 
-Update `/workspace/REVISION.md` following these rules:
+Update `/workspace/REVISION.md` following these rules. `REVISION.md` is a normal branch-local project file unless the user merges it through ordinary Git workflow.
 
 ### If REVISION.md does NOT exist:
 Create it with this structure:
@@ -111,7 +124,7 @@ Each retrospective adds entries; later entries may refine or supersede earlier o
 
 ### Proposed Changes
 
-#### [Section of instruction file, e.g. "Section 3: Experiment recording"]
+#### [Section of instruction file, e.g. "Section 3: Experiment Logging and Research Record"]
 - **Issue:** [What was suboptimal]
 - **Suggestion:** [Concrete change to instruction file wording/rules]
 - **Rationale:** [Why this would help]

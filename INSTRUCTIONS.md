@@ -50,6 +50,29 @@ asks.
   Accidental caching inside the git working tree can create large binary files
   that bloat `.git/objects/` irreversibly.
 
+### Agentic Notes
+
+Agentic Notes are Markdown files stored in Git-backed organization, role, and
+project state checkouts.
+
+The active instruction file may include a generated **Agentic Notes** section.
+Injected `general.md` note content is already part of the instruction context.
+Never open source note files named `general.md` directly. The generated section
+also lists specific non-general note files by source directory. Before working
+on a package, library, architecture, benchmark, project convention, or other
+work item that appears related to a listed specific note, read that non-general
+note file if you have not read it since the last compaction.
+
+When you make a meaningful mistake and learn something reusable while
+correcting it, launch the `note-updater` subagent with a `note_update_request`.
+Use package notes for package-specific lessons, architecture notes for
+architecture optimization lessons, role `general.md` for role-wide lessons, org
+`general.md` for org-wide lessons, and project notes for project-only lessons.
+
+Do not edit org, role, or project source notes directly from the main agent.
+Use `note-updater` so pulls, semantic merging, commits, pushes, and instruction
+refresh happen consistently.
+
 ## 1. The Ten Commandments
 
 These are universal -- they apply regardless of whether the project involves
@@ -83,7 +106,8 @@ details -- treat every field as unverified until checked against a primary sourc
 When tasks remain, finish every task that does not need user input. Report once
 with all results. Do not do one batch and wait for next instructions. While
 experiments are running, continue with other work from the plan -- implement the
-next idea, write analysis, update report.tex, prepare verification scripts.
+next idea, write analysis, update report.tex, prepare experiment-log requests,
+prepare verification scripts.
 Only return to the user when you are genuinely stuck or need advice. Never skip
 work because you estimate it "takes too long to implement" -- you are a language
 model and execute coding tasks much faster than you think. The only valid time
@@ -104,7 +128,8 @@ improves, you cannot know which helped.
 Never jump to full evaluation after a code change.
 - *Tier 1* (seconds): does it run without crashing?
 - *Tier 2* (minutes): any signal on a small subset?
-- *Tier 3*: full evaluation -- the real metric that goes into report.tex.
+- *Tier 3*: full evaluation -- the real metric that goes into the shared
+  experiment log and any detailed `report.tex` analysis.
 
 Use small-scale runs (small models, small matrices, toy problem instances) to
 catch implementation bugs only. Never draw conclusions from small-scale results.
@@ -117,17 +142,20 @@ how much correction is theoretically possible. This bounds your expectations and
 tells you whether a 2% improvement is nearly optimal or barely scratching the surface.
 
 **IX. RECORD EVERYTHING.**
-- Every experiment gets a subsection in `report.tex`: goal, hypothesis, method,
-  results table, analysis, next steps. Include failures. Update the summary table
-  after every experiment. If it is not in the report, it did not happen.
+- Every meaningful completed experiment must be logged in the shared Agentic
+  Researcher experiment log when that mechanism is available. The experiment log
+  is the cross-agent ledger and owns the shared summary table.
+- Use `report.tex` for branch-local narrative research writing: derivations,
+  methods, detailed analysis, verification blocks, figures, and selected result
+  tables. Do not treat `report.tex` as the shared experiment index in
+  multi-agent projects.
 - When analyzing distributions, comparisons, or scaling, **create plots**. Save as
   PDF+PNG in `images/`. Claims about "large", "extreme", or "balanced" quantities
   must be backed by a figure. Visualize, don't just describe.
-- **Maintain `TODO.md` as a living checklist.** This is critical for project
-  continuity. Add items when you discover open questions, unverified claims, or
-  deferred work. Check off items when resolved. Review and clean up stale entries
-  at every session startup. If a TODO has been open for 3+ sessions, either do it,
-  escalate it, or delete it with a note why.
+- **Maintain `TODO.md` as a branch-local/session-local checklist**, not as a
+  shared multi-agent work queue. Add open questions, unverified claims, and
+  deferred checks relevant to the current branch. Check off items when resolved.
+  Review and clean up stale entries at every session startup.
 
 **X. VERIFY BEFORE CLAIMING.**
 Assume you are wrong until verified. Every nontrivial mathematical argument
@@ -212,23 +240,35 @@ sequentially within one job or on the same local device.
 ## 2. Research workflow
 
 ### Session startup (every session or after context compaction)
-1. Read `report.tex` -- experiments done and results
-2. Read `TODO.md` -- open questions and deferred work
-3. Read the Project Instructions section below
-4. `git log --oneline -20` and `git status`
-5. Check local GPUs: run `nvidia-smi`; if no usable NVIDIA GPU is visible, run `rocm-smi`
-6. If `$AR_GPU_BACKEND` is set to a value other than `none`: read the matching GPU backend skill or managed instruction block, then run its status/list command for remote/backend GPU capacity
-7. Summarize: best result, last experiment, next step
-8. Continue from where the previous session left off
+1. Read the Project Instructions section below.
+2. Treat injected Agentic Notes `general.md` content as active guidance. Do not
+   open `general.md` note files. Identify listed non-general notes that may be
+   relevant to the current work.
+3. If the Agentic Researcher experiment log is available, read its
+   `SUMMARY.md` first; open individual experiment YAML files only when needed.
+4. Read `report.tex` for branch-local narrative analysis, derivations, and
+   detailed results.
+5. Read `TODO.md` for branch-local open questions and deferred work.
+6. `git log --oneline -20` and `git status`.
+7. Check local GPUs: run `nvidia-smi`; if no usable NVIDIA GPU is visible, run `rocm-smi`.
+8. If `$AR_GPU_BACKEND` is set to a value other than `none`: read the matching GPU backend skill or managed instruction block, then run its status/list command for remote/backend GPU capacity.
+9. Summarize: best result, last experiment, next step.
+10. Continue from where the previous session left off.
 
 ### Experiment loop
-1. **Explore** the codebase before any experiment. Document understanding in report.tex.
-2. **Plan** experiments in report.tex before implementing. Start with cheap ideas.
+1. **Explore** the codebase before any experiment. Document durable
+   understanding in `report.tex` when it will matter later.
+2. **Plan** experiments in `report.tex` or `TODO.md` before implementing.
+   Start with cheap ideas. In multi-agent projects, do not use `TODO.md` as a
+   shared queue unless the user has provided a separate coordination mechanism.
 3. **Implement** minimal, focused changes. Keep diffs small.
 4. **Evaluate** using the three-tier strategy (Commandment VII).
 5. **Analyze** honestly. Write a hypothesis for WHY it worked or didn't.
-6. **Record** in report.tex (Commandment IX). Update summary table.
-7. **Commit** with format: `exp(EXXX): <description> -- <metric>=<value> (<delta>)`
+6. **Record** the completed meaningful experiment in the shared experiment log
+   when available. Add or update `report.tex` analysis for methods, derivations,
+   figures, verification, and interpretation that should live with the branch.
+7. **Commit** completed code/report changes. When an experiment ID is assigned,
+   use format: `exp(EXXX): <description> -- <metric>=<value> (<delta>)`.
 8. **Iterate**. Build on success. After 3 failed variations of one idea, move on.
 
 ### Strategy notes
@@ -240,20 +280,30 @@ sequentially within one job or on the same local device.
   improvement on some problem instances (e.g., certain neural network architectures,
   specific matrix families) is fine if there is clear improvement on others.
 
-## 3. Experiment recording (report.tex)
+## 3. Experiment Logging and Research Record
 
-report.tex is the single source of truth. Do NOT compile it.
+The shared Agentic Researcher experiment log is the cross-agent experiment
+ledger when available. It lives on the project state branch, not in the normal
+code worktree. Log completed meaningful experiments through the provided helper
+so the project-local counter, per-experiment YAML file, and shared `SUMMARY.md`
+row are updated under the project lock. Do not regenerate `SUMMARY.md` during
+normal logging, and do not edit old experiment YAML files; use the correction
+logger for corrections.
+
+`report.tex` is the branch-local narrative research record. It is for
+derivations, methods, detailed analysis, figures, verification blocks, and
+selected result tables. It is a normal project file and is not locked by
+Agentic Researcher, so concurrent agents in separate worktrees may diverge and
+merge it through ordinary Git workflows. Do NOT compile it.
 
 ### Preamble
 amsmath, amsthm, amssymb, booktabs, graphicx, tcolorbox (with `verification` box),
 theorem environments (definition, lemma, proposition, theorem, corollary, remark).
 
-### Experiment summary table
-Maintain at the bottom of the document: ID | Date | Description | Commit | Metric | vs Baseline | Status
+### Report subsections
 
-### Per-experiment subsections
-
-Each experiment MUST have (use `\paragraph{Label}` for each field -- never bare `\textbf{}`):
+For experiments that need narrative analysis in `report.tex`, use
+`\paragraph{Label}` for each field -- never bare `\textbf{}`:
 - **Goal**: what problem are we solving
 - **Hypothesis**: why should this work
 - **Method**: mathematical formulation with proper notation (define all symbols). All methods used in experiments must be properly described in the document before presenting results.
@@ -283,7 +333,9 @@ RIA + Recon (full) & Qwen-1.5B & 60\% & 20.09 & $-11.2\%$ \\
 - **Verification block** (for non-trivial implementations)
 
 ### TODO.md
-Maintain for open questions, unverified claims, deferred experiments.
+Maintain as a branch-local checklist for open questions, unverified claims, and
+deferred checks. Do not treat it as the shared queue for multiple agents unless
+the user explicitly provides a coordination protocol.
 Format: `- [ ] item` / `- [x] done`
 
 ## 4. Verification protocol
@@ -326,8 +378,9 @@ Include in report.tex:
 
 | Location | Purpose |
 |----------|---------|
-| `report.tex` | Experiments, derivations, analysis (single source of truth) |
-| `TODO.md` | Open questions, unverified claims, deferred work |
+| Agentic experiment log | Shared experiment ledger and summary table on the project state branch |
+| `report.tex` | Branch-local derivations, methods, detailed analysis, verification, selected result tables |
+| `TODO.md` | Branch-local checklist for open questions, unverified claims, deferred work |
 | `REVISION.md` | Agent improvement notes from `/retro` (append-only) |
 | `scripts/verify_*.py` | Verification scripts |
 | `scripts/plot_*.py` | Plotting scripts (one per figure, PDF+PNG to `images/`) |
