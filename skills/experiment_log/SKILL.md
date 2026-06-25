@@ -9,6 +9,6 @@ Use `${AR_NOTES_CLI:-scripts/ar-notes} log-experiment --request REQUEST.yaml --p
 
 Use `report.tex` for branch-local narrative analysis and `TODO.md` for branch-local checklists. They are normal project files, not the shared experiment index or multi-agent queue.
 
-Do not regenerate `SUMMARY.md` during normal logging. Do not edit old experiment YAML files. If a result needs correction, use `${AR_NOTES_CLI:-scripts/ar-notes} log-correction --request REQUEST.yaml --project-dir PATH`; it writes a correction YAML file under `corrections/` and appends a correction row.
+Do not regenerate `SUMMARY.md` during normal logging. If a result needs correction, use `${AR_NOTES_CLI:-scripts/ar-notes} log-correction --request REQUEST.yaml --project-dir PATH`; it appends a correction entry to the original experiment YAML file and appends a correction row to `SUMMARY.md`. Do not manually alter existing experiment fields.
 
-If a push conflict occurs, let the helper pull latest, discard the failed generated ID if needed, reread `COUNTER.yaml`, assign the next ID, and retry. Never force-push.
+If a push conflict occurs, let the helper pull latest, discard the failed generated ID if needed, recompute the next experiment or correction ID from the refreshed state, and retry. Never force-push.

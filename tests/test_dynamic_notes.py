@@ -361,7 +361,7 @@ def test_project_state_initialization_creates_required_layout(tmp_path: Path) ->
     assert (state / ".agentic" / "experiment-log" / "COUNTER.yaml").exists()
     assert (state / ".agentic" / "experiment-log" / "SUMMARY.md").exists()
     assert (state / ".agentic" / "experiment-log" / "experiments").is_dir()
-    assert (state / ".agentic" / "experiment-log" / "corrections").is_dir()
+    assert not (state / ".agentic" / "experiment-log" / "corrections").exists()
     assert not (state / "README.md").exists()
     head_with_parents = git(state, "rev-list", "--parents", "-n", "1", "HEAD").stdout.split()
     assert len(head_with_parents) == 1
@@ -487,6 +487,7 @@ def test_experiment_logger_creates_counter_ids_and_appends_summary(tmp_path: Pat
     assert (state / ".agentic" / "experiment-log" / "experiments" / f"{second}.yaml").exists()
     counter = yaml.safe_load((state / ".agentic" / "experiment-log" / "COUNTER.yaml").read_text())
     assert counter["next_experiment_number"] == 3
+    assert "next_correction_number" not in counter
     summary = (state / ".agentic" / "experiment-log" / "SUMMARY.md").read_text()
     assert len(summary_rows(summary)) == 2
     assert first in summary
@@ -665,7 +666,7 @@ def test_same_installation_multiple_actor_worktrees_serialize_project_log_update
     assert len(summary_rows(summary)) == 2
 
 
-def test_correction_logging_creates_file_and_appends_summary_row(tmp_path: Path) -> None:
+def test_correction_logging_appends_to_experiment_file_and_summary_row(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
     env = base_env(tmp_path)
@@ -702,12 +703,43 @@ def test_correction_logging_creates_file_and_appends_summary_row(tmp_path: Path)
         ],
         env=env,
     ).stdout.strip()
+    second_request = make_request(
+        tmp_path,
+        {
+            "kind": "experiment_correction_request",
+            "experiment_id": experiment_id,
+            "user_id": "alice",
+            "summary": "Artifact path was stale.",
+            "correction": "Use the artifact path from the rerun.",
+        },
+    )
+    second_correction_id = run(
+        [
+            str(AR_NOTES),
+            "log-correction",
+            "--request",
+            str(second_request),
+            "--project-dir",
+            str(project),
+        ],
+        env=env,
+    ).stdout.strip()
 
     state = state_checkout(env)
-    assert correction_id == f"C0001_{experiment_id}"
-    assert (state / ".agentic" / "experiment-log" / "corrections" / f"{correction_id}.yaml").exists()
+    experiment_path = state / ".agentic" / "experiment-log" / "experiments" / f"{experiment_id}.yaml"
+    experiment_doc = yaml.safe_load(experiment_path.read_text())
+    assert correction_id == "E0001_R001"
+    assert second_correction_id == "E0001_R002"
+    assert [entry["correction_id"] for entry in experiment_doc["corrections"]] == [
+        correction_id,
+        second_correction_id,
+    ]
+    assert experiment_doc["corrections"][0]["correction"] == "Use the fixed validation split."
+    assert not (state / ".agentic" / "experiment-log" / "corrections").exists()
     summary = (state / ".agentic" / "experiment-log" / "SUMMARY.md").read_text()
     assert correction_id in summary
+    assert second_correction_id in summary
+    assert f"experiments/{experiment_id}.yaml" in summary
 
 
 def make_executable(path: Path, content: str) -> None:

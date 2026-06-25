@@ -287,8 +287,9 @@ ledger when available. It lives on the project state branch, not in the normal
 code worktree. Log completed meaningful experiments through the provided helper
 so the project-local counter, per-experiment YAML file, and shared `SUMMARY.md`
 row are updated under the project lock. Do not regenerate `SUMMARY.md` during
-normal logging, and do not edit old experiment YAML files; use the correction
-logger for corrections.
+normal logging. For corrections, use the correction logger so it appends an
+entry to the original experiment YAML file and a row to `SUMMARY.md`; do not
+manually alter existing experiment fields.
 
 `report.tex` is the branch-local narrative research record. It is for
 derivations, methods, detailed analysis, figures, verification blocks, and

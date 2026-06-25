@@ -58,7 +58,7 @@ Reflect on these additional dimensions:
 ### B. Experiment Log and Report Quality
 - Is the shared experiment log complete enough to reconstruct what was run?
 - Were completed meaningful experiments logged through `${AR_NOTES_CLI:-scripts/ar-notes} log-experiment` when available?
-- Were corrections recorded through correction logging instead of editing old experiment YAML files?
+- Were corrections recorded through correction logging instead of manually altering old experiment fields?
 - Was `SUMMARY.md` append-maintained rather than regenerated or hand-edited?
 - Is the report clear, well-structured, and useful as a branch-local narrative record?
 - Are report entries detailed enough to understand methods, analysis, and verification?

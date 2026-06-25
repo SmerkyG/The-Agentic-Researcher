@@ -122,7 +122,6 @@ On launch, AR creates or updates a cached checkout at `$AR_STATE_ROOT/projects/$
 .agentic/experiment-log/COUNTER.yaml
 .agentic/experiment-log/SUMMARY.md
 .agentic/experiment-log/experiments/
-.agentic/experiment-log/corrections/
 ```
 
 When AR creates `agentic/state` for the first time, it creates an orphan branch with an empty starting fileset and commits only the `.agentic/` state files. It does not copy the current code tree, branch contents, datasets, or generated files into `agentic/state`. If `agentic/state` already exists on the remote, AR checks out and updates that existing state branch instead of recreating it.

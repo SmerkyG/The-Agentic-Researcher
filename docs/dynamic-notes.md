@@ -40,8 +40,6 @@ Project notes and experiment logs live on the project `agentic/state` branch, ca
     SUMMARY.md
     experiments/
       E0001_alice_triton-power2-shape-test.yaml
-    corrections/
-      C0001_E0001_alice_triton-power2-shape-test.yaml
 ```
 
 `AR_PROJECT_ID` is required. Provide it through `agentic-researcher --project-id ID`, an environment variable, or config. AR does not infer project identity from the directory name and does not require a `.agentic/project.yaml` file in the project repo.
@@ -99,17 +97,17 @@ E0002_<user_id>_<short-description-slug>
 
 Agent metadata, including `source.actor_id`, invocation IDs, branch names, commits, commands, metrics, and artifacts, lives inside the YAML file.
 
-`COUNTER.yaml` tracks `next_experiment_number` and `next_correction_number`. When logging an experiment, the updater pulls latest, reads the counter, writes one YAML file, increments the counter, appends one row to `SUMMARY.md`, commits, and pushes.
+`COUNTER.yaml` tracks `next_experiment_number`. When logging an experiment, the updater pulls latest, reads the counter, writes one YAML file, increments the counter, appends one row to `SUMMARY.md`, commits, and pushes.
 
 `SUMMARY.md` is append-maintained during normal logging. It is not regenerated from all experiment files. Agents should read `SUMMARY.md` first and open detailed experiment YAML files only when needed.
 
-Corrections never edit old experiment YAML files. They create correction YAML files under `corrections/` with IDs such as:
+Corrections append entries to the original experiment YAML file under `corrections:` with IDs such as:
 
 ```text
-C0001_E0001_alice_triton-power2-shape-test
+E0001_R001
 ```
 
-The correction logger also appends one row to `SUMMARY.md`.
+The correction logger also appends one row to `SUMMARY.md` that links back to the corrected experiment file. Existing experiment fields are left intact; only the append-only `corrections:` list is extended.
 
 `SUMMARY.md` and the per-experiment YAML files are the shared cross-agent
 experiment history. `report.tex` and `TODO.md` remain ordinary files in the

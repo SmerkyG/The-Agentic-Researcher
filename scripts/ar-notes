@@ -348,10 +348,8 @@ def ensure_project_state_files(repo: Path) -> list[Path]:
     changed_paths: list[Path] = []
     notes_dir = repo / ".agentic" / "notes"
     experiments_dir = repo / ".agentic" / "experiment-log" / "experiments"
-    corrections_dir = repo / ".agentic" / "experiment-log" / "corrections"
     notes_dir.mkdir(parents=True, exist_ok=True)
     experiments_dir.mkdir(parents=True, exist_ok=True)
-    corrections_dir.mkdir(parents=True, exist_ok=True)
 
     general = notes_dir / "general.md"
     if not general.exists():
@@ -365,7 +363,6 @@ def ensure_project_state_files(repo: Path) -> list[Path]:
             {
                 "schema_version": 1,
                 "next_experiment_number": 1,
-                "next_correction_number": 1,
             },
         )
         changed_paths.append(counter)
@@ -375,7 +372,7 @@ def ensure_project_state_files(repo: Path) -> list[Path]:
         summary.write_text(initial_summary(), encoding="utf-8")
         changed_paths.append(summary)
 
-    for directory in (notes_dir, experiments_dir, corrections_dir):
+    for directory in (notes_dir, experiments_dir):
         keep = directory / ".gitkeep"
         if not any(p.name != ".gitkeep" for p in directory.iterdir()):
             keep.touch()
@@ -668,7 +665,6 @@ def load_counter(repo: Path) -> dict[str, Any]:
     data = safe_load_yaml(counter_path)
     data.setdefault("schema_version", 1)
     data.setdefault("next_experiment_number", 1)
-    data.setdefault("next_correction_number", 1)
     return data
 
 
@@ -773,12 +769,34 @@ def log_experiment(args: argparse.Namespace) -> None:
     retry_generated_log("experiment", log_experiment_once, request, Path(args.project_dir).resolve())
 
 
+def experiment_path_for_id(log_dir: Path, experiment_id: str) -> Path:
+    if "/" in experiment_id or "\\" in experiment_id or experiment_id in {"", ".", ".."}:
+        raise ArNotesError(f"invalid experiment_id: {experiment_id}")
+    return log_dir / "experiments" / f"{experiment_id}.yaml"
+
+
+def correction_id_base(experiment_id: str) -> str:
+    match = re.match(r"^(E\d+)(?:_|$)", experiment_id)
+    if match:
+        return match.group(1)
+    return re.sub(r"[^A-Za-z0-9]+", "", experiment_id.split("_", 1)[0]) or "experiment"
+
+
+def next_correction_revision(corrections: list[Any]) -> int:
+    highest = 0
+    for correction in corrections:
+        if not isinstance(correction, dict):
+            continue
+        correction_id = str(correction.get("correction_id") or "")
+        match = re.search(r"_R(\d+)$", correction_id)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
+
+
 def final_correction_doc(request: dict[str, Any], correction_id: str) -> dict[str, Any]:
     return {
-        "schema_version": 1,
-        "kind": "experiment_correction",
         "correction_id": correction_id,
-        "experiment_id": request.get("experiment_id"),
         "created_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "user_id": request.get("user_id") or user_id(),
         "status": request.get("status") or "corrected",
@@ -795,15 +813,25 @@ def log_correction_once(request: dict[str, Any], project_dir: Path) -> tuple[Pat
     repo = ensure_project_state(project_dir)
     pull_ff(repo, state_branch())
     log_dir = experiment_log_dir(repo)
-    counter = load_counter(repo)
-    number = int(counter.get("next_correction_number") or 1)
-    correction_id = f"C{number:04d}_{experiment_id}"
-    correction_path = log_dir / "corrections" / f"{correction_id}.yaml"
-    write_yaml(correction_path, final_correction_doc(request, correction_id))
-    counter["next_correction_number"] = number + 1
-    write_yaml(log_dir / "COUNTER.yaml", counter)
+    experiment_path = experiment_path_for_id(log_dir, experiment_id)
+    if not experiment_path.exists():
+        raise ArNotesError(f"experiment file does not exist: {experiment_path}")
+    experiment_doc = safe_load_yaml(experiment_path)
+    recorded_id = str(experiment_doc.get("experiment_id") or "").strip()
+    if recorded_id and recorded_id != experiment_id:
+        raise ArNotesError(f"experiment_id mismatch in {experiment_path}: {recorded_id}")
+    corrections = experiment_doc.get("corrections")
+    if corrections is None:
+        corrections = []
+    if not isinstance(corrections, list):
+        raise ArNotesError(f"corrections must be a list in {experiment_path}")
+    number = next_correction_revision(corrections)
+    correction_id = f"{correction_id_base(experiment_id)}_R{number:03d}"
+    corrections.append(final_correction_doc(request, correction_id))
+    experiment_doc["corrections"] = corrections
+    write_yaml(experiment_path, experiment_doc)
     row = (
-        f"| [{correction_id}](corrections/{correction_id}.yaml) "
+        f"| [{correction_id}](experiments/{experiment_id}.yaml) "
         f"| {summary_cell(request.get('user_id') or user_id())} "
         f"| correction "
         f"| Correction for {summary_cell(experiment_id)} "
@@ -813,8 +841,8 @@ def log_correction_once(request: dict[str, Any], project_dir: Path) -> tuple[Pat
     append_summary_row(log_dir / "SUMMARY.md", row)
     commit_if_changed(
         repo,
-        f"experiment: log {correction_id}",
-        [correction_path, log_dir / "COUNTER.yaml", log_dir / "SUMMARY.md"],
+        f"experiment: correct {experiment_id} ({correction_id})",
+        [experiment_path, log_dir / "SUMMARY.md"],
     )
     return repo, correction_id
 
