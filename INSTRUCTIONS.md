@@ -143,8 +143,10 @@ tells you whether a 2% improvement is nearly optimal or barely scratching the su
 
 **IX. RECORD EVERYTHING.**
 - Every meaningful completed experiment must be logged in the shared Agentic
-  Researcher experiment log when that mechanism is available. The experiment log
-  is the cross-agent ledger and owns the shared summary table.
+  Researcher experiment log when that mechanism is available. Launch the
+  `experiment-logger` subagent with an `experiment_result_request` so the
+  shared-state write is handled consistently. The experiment log is the
+  cross-agent ledger and owns the shared summary table.
 - Use `report.tex` for branch-local narrative research writing: derivations,
   methods, detailed analysis, verification blocks, figures, and selected result
   tables. Do not treat `report.tex` as the shared experiment index in
@@ -265,8 +267,10 @@ sequentially within one job or on the same local device.
 4. **Evaluate** using the three-tier strategy (Commandment VII).
 5. **Analyze** honestly. Write a hypothesis for WHY it worked or didn't.
 6. **Record** the completed meaningful experiment in the shared experiment log
-   when available. Add or update `report.tex` analysis for methods, derivations,
-   figures, verification, and interpretation that should live with the branch.
+   when available by launching the `experiment-logger` subagent with an
+   `experiment_result_request`. Add or update `report.tex` analysis for methods,
+   derivations, figures, verification, and interpretation that should live with
+   the branch.
 7. **Commit** completed code/report changes. When an experiment ID is assigned,
    use format: `exp(EXXX): <description> -- <metric>=<value> (<delta>)`.
 8. **Iterate**. Build on success. After 3 failed variations of one idea, move on.
@@ -284,12 +288,13 @@ sequentially within one job or on the same local device.
 
 The shared Agentic Researcher experiment log is the cross-agent experiment
 ledger when available. It lives on the project state branch, not in the normal
-code worktree. Log completed meaningful experiments through the provided helper
-so the project-local counter, per-experiment YAML file, and shared `SUMMARY.md`
-row are updated under the project lock. Do not regenerate `SUMMARY.md` during
-normal logging. For corrections, use the correction logger so it appends an
-entry to the original experiment YAML file and a row to `SUMMARY.md`; do not
-manually alter existing experiment fields.
+code worktree. Log completed meaningful experiments by launching the
+`experiment-logger` subagent with an `experiment_result_request`; for
+corrections, launch it with an `experiment_correction_request`. The subagent
+uses the provided helper so the project-local counter, per-experiment YAML file,
+and shared `SUMMARY.md` row are updated under the project lock. Do not
+regenerate `SUMMARY.md`, manually edit the state checkout, or manually alter
+existing experiment fields.
 
 `report.tex` is the branch-local narrative research record. It is for
 derivations, methods, detailed analysis, figures, verification blocks, and

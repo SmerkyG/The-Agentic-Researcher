@@ -134,7 +134,7 @@ Multiple top-level agents can work in separate Git worktrees of the same project
 
 `report.tex` and `TODO.md` remain normal files in the project worktree. AR does not lock them, so they should be treated as branch-local narrative and checklist files rather than a shared multi-agent queue or canonical experiment index. The shared cross-agent experiment history is the locked experiment log on `agentic/state`.
 
-See [docs/dynamic-notes.md](docs/dynamic-notes.md) for the notes repo layout, role notes, note-updater flow, and experiment log format.
+See [docs/dynamic-notes.md](docs/dynamic-notes.md) for the notes repo layout, role notes, note-updater flow, experiment-logger flow, and experiment log format.
 
 ### Multi-Node Dispatch (Slurm + Apptainer)
 

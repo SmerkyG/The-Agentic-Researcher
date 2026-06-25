@@ -303,6 +303,10 @@ def test_launcher_native_runs_host_tool_without_container(
     assert 'name = "gpu-job-runner"' in codex_agent_text
     assert 'model_reasoning_effort = "medium"' in codex_agent_text
     assert "developer_instructions" in codex_agent_text
+    experiment_logger = workspace / ".codex" / "agents" / "experiment-logger.toml"
+    assert experiment_logger.exists()
+    assert 'name = "experiment-logger"' in experiment_logger.read_text()
+    assert not (workspace / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
     codex_hook = workspace / ".codex" / "hooks" / "agentic-researcher-compaction.py"
     assert codex_hook.exists()
     assert not (workspace / ".agents" / "hooks" / "agentic-researcher-compaction-refresh.py").exists()
@@ -492,6 +496,7 @@ def test_native_cluster_run_backend_renders_project_skill(
     experiment_agent = workspace / ".codex" / "agents" / "experiment-runner.toml"
     assert experiment_agent.exists()
     assert 'model_reasoning_effort = "medium"' in experiment_agent.read_text()
+    assert (workspace / ".codex" / "agents" / "experiment-logger.toml").exists()
 
 
 def test_native_optional_skill_renders_skill_and_instruction_overlay(
@@ -738,6 +743,7 @@ def test_launcher_podman_runs_pi_tool(base_env: dict[str, str], tmp_path: Path) 
     # pi uses the shared agent-compatible project skill path.
     for skill in ("setup_research_plan", "retro", "update_base"):
         assert (workspace / ".agents" / "skills" / skill / "SKILL.md").exists()
+    assert not (workspace / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
     pi_extension = workspace / ".pi" / "extensions" / "agentic-researcher-compaction.ts"
     assert pi_extension.exists()
     assert not (workspace / ".agents" / "hooks" / "agentic-researcher-compaction-refresh.py").exists()

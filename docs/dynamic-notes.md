@@ -88,7 +88,7 @@ Use package notes for package-specific lessons, architecture notes for architect
 
 ## Experiment Logs
 
-Project experiments are one YAML file per experiment on the `agentic/state` branch. The integrator assigns counter-based IDs:
+Project experiments are one YAML file per experiment on the `agentic/state` branch. The `experiment-logger` subagent assigns counter-based IDs:
 
 ```text
 E0001_<user_id>_<short-description-slug>
@@ -97,7 +97,9 @@ E0002_<user_id>_<short-description-slug>
 
 Agent metadata, including `source.actor_id`, invocation IDs, branch names, commits, commands, metrics, and artifacts, lives inside the YAML file.
 
-`COUNTER.yaml` tracks `next_experiment_number`. When logging an experiment, the updater pulls latest, reads the counter, writes one YAML file, increments the counter, appends one row to `SUMMARY.md`, commits, and pushes.
+Working agents do not write experiment-log state directly. When a completed meaningful experiment should be recorded, they spawn the `experiment-logger` subagent with an `experiment_result_request`. For corrections, they spawn the same subagent with an `experiment_correction_request`.
+
+`COUNTER.yaml` tracks `next_experiment_number`. When logging an experiment, the experiment logger pulls latest, reads the counter, writes one YAML file, increments the counter, appends one row to `SUMMARY.md`, commits, and pushes.
 
 `SUMMARY.md` is append-maintained during normal logging. It is not regenerated from all experiment files. Agents should read `SUMMARY.md` first and open detailed experiment YAML files only when needed.
 
@@ -107,7 +109,7 @@ Corrections append entries to the original experiment YAML file under `correctio
 E0001_R001
 ```
 
-The correction logger also appends one row to `SUMMARY.md` that links back to the corrected experiment file. Existing experiment fields are left intact; only the append-only `corrections:` list is extended.
+The experiment logger also appends one correction row to `SUMMARY.md` that links back to the corrected experiment file. Existing experiment fields are left intact; only the append-only `corrections:` list is extended.
 
 `SUMMARY.md` and the per-experiment YAML files are the shared cross-agent
 experiment history. `report.tex` and `TODO.md` remain ordinary files in the
@@ -130,5 +132,7 @@ ensure-project-state --project-dir PATH
 log-experiment --request REQUEST.yaml --project-dir PATH
 log-correction --request REQUEST.yaml --project-dir PATH
 ```
+
+These are low-level helper commands used by generated subagents and hooks. Working agents normally route note updates through `note-updater` and experiment log writes through `experiment-logger`.
 
 All networked Git operations are ordinary Git clone, fetch, pull, commit, and push operations. There is no shared inbox, no org resolver process, no live overlay, and no generated learned skill tree.
