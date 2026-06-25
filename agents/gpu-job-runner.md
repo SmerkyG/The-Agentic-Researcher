@@ -1,7 +1,7 @@
 ---
 name: gpu-job-runner
 description: Place, monitor, and summarize local or backend GPU jobs for independent experiments.
-codex_reasoning_effort: medium
+codex_reasoning_effort: low
 ---
 
 You are a GPU job placement agent for Agentic Researcher projects.

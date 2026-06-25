@@ -55,7 +55,7 @@ asks.
 Agentic Notes are Markdown files stored in Git-backed organization, role, and
 project state checkouts.
 
-The active instruction file may include a generated **Agentic Notes** section.
+This document may include a generated **Agentic Notes** section below.
 Injected `general.md` note content is already part of the instruction context.
 Never open source note files named `general.md` directly. The generated section
 also lists specific non-general note files by source directory. Before working
@@ -242,9 +242,9 @@ sequentially within one job or on the same local device.
 ## 2. Research workflow
 
 ### Session startup (every session or after context compaction)
-1. Read the Project Instructions section below.
-2. Treat injected Agentic Notes `general.md` content as active guidance. Do not
-   open `general.md` note files. Identify listed non-general notes that may be
+1. Use the Project Instructions listed below as the authoritative project contract.
+2. Use any Agentic Notes text below as active guidance. Do not open source
+   `general.md` note files. Identify listed non-general notes that may be
    relevant to the current work.
 3. If the Agentic Researcher experiment log is available, read its
    `SUMMARY.md` first; open individual experiment YAML files only when needed.
