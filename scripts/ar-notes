@@ -470,6 +470,7 @@ def build_notes_section(project_dir: Path, role: str, *, markers: bool = True) -
     org_notes = org_repo / "notes"
     role_notes = org_repo / "roles" / role / "notes"
     project_notes = project_repo / ".agentic" / "notes"
+    project_role_notes = project_repo / ".agentic" / "roles" / role / "notes"
 
     lines: list[str] = []
     if markers:
@@ -483,27 +484,32 @@ def build_notes_section(project_dir: Path, role: str, *, markers: bool = True) -
             "",
             "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed on-demand note files, read the relevant note file if you have not read it since the last compaction.",
             "",
-            "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies across a whole role, update that role's `always-injected.md`. If it applies across the whole organization, update org `always-injected.md`. If it applies only to the project, update a project note.",
+            "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies across the whole organization, update org `always-injected.md`. If it applies across a whole role in the organization, update org role `always-injected.md`. If it applies only to this project, update a project note. If it applies only to this role within this project, update project role `always-injected.md`.",
             "",
         ]
     )
 
     append_injected_note(lines, "Organization-Wide Notes", org_notes / ALWAYS_INJECTED_NOTE)
-    append_injected_note(lines, f"Role Notes: {role}", role_notes / ALWAYS_INJECTED_NOTE)
+    append_injected_note(lines, f"Organization Role Notes: {role}", role_notes / ALWAYS_INJECTED_NOTE)
     append_injected_note(lines, "Project Notes", project_notes / ALWAYS_INJECTED_NOTE)
+    append_injected_note(lines, f"Project Role Notes: {role}", project_role_notes / ALWAYS_INJECTED_NOTE)
 
     lines.extend(["### Available On-Demand Notes", ""])
     lines.extend(["Org notes:", f"  Directory: {org_notes}/"])
     org_specific = note_names(org_notes)
     lines.extend([f"  - {name}" for name in org_specific] or ["  (none)"])
     lines.append("")
-    lines.extend([f"Current role notes: {role}", f"  Directory: {role_notes}/"])
+    lines.extend([f"Organization role notes: {role}", f"  Directory: {role_notes}/"])
     role_specific = note_names(role_notes)
     lines.extend([f"  - {name}" for name in role_specific] or ["  (none)"])
     lines.append("")
     lines.extend(["Project notes:", f"  Directory: {project_notes}/"])
     project_specific = note_names(project_notes)
     lines.extend([f"  - {name}" for name in project_specific] or ["  (none)"])
+    lines.append("")
+    lines.extend([f"Project role notes: {role}", f"  Directory: {project_role_notes}/"])
+    project_role_specific = note_names(project_role_notes)
+    lines.extend([f"  - {name}" for name in project_role_specific] or ["  (none)"])
     lines.append("")
 
     if markers:
@@ -523,7 +529,7 @@ def instruction_target(tool: str) -> str:
 def render_instruction_template(target: Path) -> None:
     source = REPO_ROOT / "INSTRUCTIONS.md"
     text = source.read_text(encoding="utf-8")
-    if os.environ.get("AR_CONTAINER_RUNTIME") in {"docker", "podman"}:
+    if os.environ.get("AR_SANDBOX") in {"docker", "podman"}:
         text = re.sub(
             r"<!-- DOCKER-OMIT-START -->.*?<!-- DOCKER-OMIT-END -->\n?",
             "",
@@ -549,8 +555,9 @@ def generate_instructions(args: argparse.Namespace) -> None:
     if not target.exists():
         render_instruction_template(target)
     text = strip_notes_section(target.read_text(encoding="utf-8"))
-    section = build_notes_section(project_dir, role, markers=True)
-    target.write_text(text.rstrip() + "\n\n" + section, encoding="utf-8")
+    ensure_project_state(project_dir)
+    notes_section = build_notes_section(project_dir, role, markers=True)
+    target.write_text(text.rstrip() + "\n\n" + notes_section, encoding="utf-8")
 
 
 def render_section(args: argparse.Namespace) -> None:
@@ -566,8 +573,10 @@ def list_notes(args: argparse.Namespace) -> None:
         directory = org_checkout_path() / "notes"
     elif scope == "role":
         directory = org_checkout_path() / "roles" / role / "notes"
-    else:
+    elif scope == "project":
         directory = project_state_path(project_dir) / ".agentic" / "notes"
+    else:
+        directory = project_state_path(project_dir) / ".agentic" / "roles" / role / "notes"
     print(f"Directory: {directory}/")
     for name in note_names(directory):
         print(f"- {name}")
@@ -580,30 +589,54 @@ def normalize_note_name(raw: str) -> str:
     return slugify(name, default=ALWAYS_INJECTED_NOTE_STEM)
 
 
-def note_path_for_request(request: dict[str, Any], project_dir: Path) -> tuple[Path, Path]:
-    target = request.get("target")
-    if not isinstance(target, dict):
-        raise ArNotesError("note update request requires target")
-    scope = target.get("scope")
-    note_name = normalize_note_name(str(target.get("note_name") or ALWAYS_INJECTED_NOTE_STEM))
+def note_path_for_target(
+    *,
+    scope: str,
+    project_dir: Path,
+    note_name: str,
+    role: str | None = None,
+    project_id_value: str | None = None,
+) -> tuple[Path, Path]:
+    normalized_note_name = normalize_note_name(note_name)
     if scope == "org":
         repo = ensure_org_checkout()
         if repo is None:
             raise ArNotesError("AR_ORG_NOTES_REPO is required for org note updates")
-        note_path = repo / "notes" / f"{note_name}.md"
+        note_path = repo / "notes" / f"{normalized_note_name}.md"
     elif scope == "role":
         repo = ensure_org_checkout()
         if repo is None:
             raise ArNotesError("AR_ORG_NOTES_REPO is required for role note updates")
-        req_role = str(target.get("role_id") or request.get("source", {}).get("role_id") or role_id())
-        note_path = repo / "roles" / req_role / "notes" / f"{note_name}.md"
+        req_role = str(role or role_id())
+        note_path = repo / "roles" / req_role / "notes" / f"{normalized_note_name}.md"
     elif scope == "project":
-        req_project_id = target.get("project_id") or request.get("source", {}).get("project_id")
-        repo = ensure_project_state(project_dir, str(req_project_id) if req_project_id else None)
-        note_path = repo / ".agentic" / "notes" / f"{note_name}.md"
+        repo = ensure_project_state(project_dir, project_id_value)
+        note_path = repo / ".agentic" / "notes" / f"{normalized_note_name}.md"
+    elif scope == "project_role":
+        repo = ensure_project_state(project_dir, project_id_value)
+        req_role = str(role or role_id())
+        note_path = repo / ".agentic" / "roles" / req_role / "notes" / f"{normalized_note_name}.md"
     else:
-        raise ArNotesError("target.scope must be org, role, or project")
+        raise ArNotesError("target.scope must be org, role, project, or project_role")
     return repo, note_path
+
+
+def note_path_for_request(request: dict[str, Any], project_dir: Path) -> tuple[Path, Path]:
+    target = request.get("target")
+    if not isinstance(target, dict):
+        raise ArNotesError("note update request requires target")
+    scope = str(target.get("scope") or "")
+    source = request.get("source") if isinstance(request.get("source"), dict) else {}
+    note_name = str(target.get("note_name") or ALWAYS_INJECTED_NOTE_STEM)
+    req_role = str(target.get("role_id") or source.get("role_id") or role_id())
+    req_project_id = target.get("project_id") or source.get("project_id")
+    return note_path_for_target(
+        scope=scope,
+        project_dir=project_dir,
+        note_name=note_name,
+        role=req_role,
+        project_id_value=str(req_project_id) if req_project_id else None,
+    )
 
 
 def canonical_lesson(request: dict[str, Any]) -> str:
@@ -692,6 +725,40 @@ def update_note(args: argparse.Namespace) -> None:
             git(repo, "fetch", "origin")
             git(repo, "reset", "--hard", f"origin/{branch}")
     raise ArNotesError("push was rejected after retry; semantic merge may need manual help")
+
+
+def replace_note(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    repo, note_path = note_path_for_target(
+        scope=args.scope,
+        project_dir=project_dir,
+        note_name=args.note_name,
+        role=args.role,
+        project_id_value=args.project_id,
+    )
+    text = Path(args.note_file).read_text(encoding="utf-8").rstrip() + "\n"
+    if not text.strip():
+        raise ArNotesError("replacement note cannot be empty")
+    pull_ff(repo)
+    existing = note_path.read_text(encoding="utf-8") if note_path.exists() else ""
+    if existing == text:
+        print("No note changes needed.")
+        return
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    note_path.write_text(text, encoding="utf-8")
+    changed = commit_if_changed(repo, f"notes: replace {note_path.relative_to(repo)}", [note_path])
+    if changed and not push(repo):
+        raise ArNotesError("push was rejected")
+    if args.refresh_parent:
+        refresh(argparse.Namespace(project_dir=str(project_dir)))
+        generate_instructions(
+            argparse.Namespace(
+                project_dir=str(project_dir),
+                role=args.role or role_id(),
+                tool=args.tool or os.environ.get("AR_CLI_TOOL", "codex"),
+            )
+        )
+    print(f"Updated {note_path}")
 
 
 def load_counter(repo: Path) -> dict[str, Any]:
@@ -907,7 +974,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=generate_instructions)
 
     p = sub.add_parser("list-notes")
-    p.add_argument("--scope", required=True, choices=["org", "role", "project"])
+    p.add_argument("--scope", required=True, choices=["org", "role", "project", "project_role"])
     p.add_argument("--project-dir", default=".")
     p.add_argument("--role", default=None)
     p.set_defaults(func=list_notes)
@@ -917,6 +984,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
     p.add_argument("--refresh-parent", action="store_true")
     p.set_defaults(func=update_note)
+
+    p = sub.add_parser("replace-note")
+    p.add_argument("--scope", required=True, choices=["org", "role", "project", "project_role"])
+    p.add_argument("--note-name", required=True)
+    p.add_argument("--note-file", required=True)
+    p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
+    p.add_argument("--role", default=None)
+    p.add_argument("--project-id", default=None)
+    p.add_argument("--refresh-parent", action="store_true")
+    p.add_argument("--tool", default=os.environ.get("AR_CLI_TOOL", "codex"), choices=["claude", "gemini", "opencode", "codex", "pi"])
+    p.set_defaults(func=replace_note)
 
     p = sub.add_parser("ensure-project-state")
     p.add_argument("--project-dir", required=True)
@@ -970,16 +1048,26 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
     elif command == "list-notes":
         if getattr(args, "scope", "") in {"org", "role"}:
             add_org_lock()
-        elif getattr(args, "scope", "") == "project":
+        elif getattr(args, "scope", "") in {"project", "project_role"}:
             add_project_lock(None)
     elif command == "update-note":
         target = request_target(getattr(args, "request", None))
         scope = target.get("scope")
         if scope in {"org", "role"}:
             add_org_lock()
-        elif scope == "project":
+        elif scope in {"project", "project_role"}:
             explicit = target.get("project_id")
             add_project_lock(str(explicit) if explicit else None)
+        if getattr(args, "refresh_parent", False):
+            if os.environ.get("AR_ORG_NOTES_REPO"):
+                add_org_lock()
+            add_project_lock(None)
+    elif command == "replace-note":
+        scope = getattr(args, "scope", "")
+        if scope in {"org", "role"}:
+            add_org_lock()
+        elif scope in {"project", "project_role"}:
+            add_project_lock(getattr(args, "project_id", None))
         if getattr(args, "refresh_parent", False):
             if os.environ.get("AR_ORG_NOTES_REPO"):
                 add_org_lock()

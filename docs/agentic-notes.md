@@ -1,4 +1,4 @@
-# Dynamic Notes
+# Agentic Notes
 
 Agentic Researcher stores learned organization-wide, role-specific, and project knowledge as Git-backed Markdown notes. Notes are not CLI skills. Skills remain for durable procedures and tool affordances; learned facts, package gotchas, role conventions, and project-local lessons live in notes so they can be reviewed, merged, committed, and shared like normal text.
 
@@ -40,12 +40,22 @@ Project notes and experiment logs live on the project `agentic/state` branch, ca
     evaluation.md
     data-loading.md
     cluster.md
+  roles/
+    research-coordinator/
+      notes/
+        always-injected.md
+        evaluation-policy.md
+    research-paper-author/
+      notes/
+        always-injected.md
   experiment-log/
     COUNTER.yaml
     SUMMARY.md
     experiments/
       E0001_alice_triton-power2-shape-test.yaml
 ```
+
+Project-wide notes under `.agentic/notes/` apply to every agent in the project. Project role notes under `.agentic/roles/<role_id>/notes/` mirror the org repo role layout and apply only to that role in this project. The worktree instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) is only a materialized view that combines the shared AR base, the selected main agent, active optional skill instructions, and injected Agentic Notes.
 
 AR derives `<project-id>` from the project Git `origin` repo name by default. Common remote forms such as `git@github.com:org/repo.git`, `https://github.com/org/repo`, and `ssh://git@github.com/org/repo.git` resolve to `repo`. AR does not infer project identity from the directory name and does not require a `.agentic/project.yaml` file in the project repo. Use `agentic-researcher --project-id ID`, `AR_PROJECT_ID`, or config when the project has no remote, when two unrelated repos share the same repo name, or when multiple differently named repos should share one state checkout.
 
@@ -63,11 +73,15 @@ agentic-researcher .
 
 Multiple projects are supported in one AR installation. They are separated by resolved project id under `$AR_STATE_ROOT/projects/`. Projects without a Git remote must pass `--project-id` or set `AR_PROJECT_ID`; this prevents directory-name differences from silently defining project identity.
 
-Multiple top-level agents may work in separate Git worktrees of the same project as long as they share the same resolved project id. Code changes stay isolated in each agent worktree. Note updates and experiment logging go through the shared cached project state checkout and are serialized with local state locks before pulling, committing, and pushing.
+Multiple top-level agents may work in separate Git worktrees of the same project as long as they share the same resolved project id. Code changes and rendered instruction files stay isolated in each agent worktree. Project note updates, project role note updates, and experiment logging go through the shared cached project state checkout and are serialized with local state locks before pulling, committing, and pushing.
+
+Run the relevant setup flow to create or revise the project role note for that main agent. For the default coordinator, `setup_research_plan` writes `.agentic/roles/research-coordinator/notes/always-injected.md`. Additional top-level agents can join by launching AR from their own Git worktrees with the desired `--main-agent`; their worktree instruction file is regenerated for that invocation from the selected main agent plus the matching project role notes.
+
+The project `agentic/state` branch does not store `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`. Those files are per-worktree materialized views.
 
 Subagents inherit the parent launch's project id and rendered note list. They do not need separate project-state configuration unless they are launched as independent top-level agents.
 
-In container mode, the launcher mounts the AR runtime read-only at `/opt/agentic-researcher` and mounts `$AR_STATE_ROOT` read-write. The org notes checkout and each project's cached `agentic/state` checkout live under that writable state root, not inside the read-only runtime mount.
+In container mode, the launcher mounts the AR install read-only at `/opt/agentic-researcher` and mounts `$AR_STATE_ROOT` read-write. The org notes checkout and each project's cached `agentic/state` checkout live under that writable state root, not inside the read-only install mount.
 
 ## Instruction Generation
 
@@ -76,6 +90,7 @@ The launcher starts from the shared `INSTRUCTIONS.md` base, inserts the selected
 - organization-wide `notes/always-injected.md`, when `AR_ORG_NOTES_REPO` is configured
 - selected main-agent role `roles/$AR_MAIN_AGENT/notes/always-injected.md`, when `AR_ORG_NOTES_REPO` is configured
 - project `.agentic/notes/always-injected.md`
+- project role `.agentic/roles/$AR_MAIN_AGENT/notes/always-injected.md`
 
 Other notes are not injected. They are listed by source directory and filename, excluding `always-injected.md`, so the working agent can read only the notes relevant to the current task. Agents should not open source `always-injected.md` note files directly; their contents are already injected when available.
 
@@ -83,13 +98,15 @@ The launcher also renders a managed compaction hook for the selected CLI. The ho
 
 Subagent configs are rendered through the same agent registry. When a subagent is rendered, its note section uses that subagent's role name, plus org and project notes. Main-agent definitions are not rendered as subagents.
 
+Use `${AR_NOTES_CLI:-scripts/ar-notes} replace-note --scope project_role --role ROLE --note-name always-injected --note-file NOTE.md --project-dir PATH --refresh-parent` to replace role-specific project instructions. Working agents should not edit injected note text in `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` directly.
+
 ## Note Updates
 
 Working agents do not edit note files directly. When a reusable lesson is learned, they spawn the `note-updater` subagent with a `note_update_request`. The subagent updates exactly one note, pulls latest, semantically merges concise text, commits, pushes, and refreshes the parent worktree instructions. It never force-pushes.
 
 If a push is rejected, the updater fetches latest, re-reads the target note, reapplies the semantic merge, recommits, and pushes again. If a semantic conflict remains, it stops and reports the conflict.
 
-Use package notes for package-specific lessons, architecture notes for architecture optimization lessons, role `always-injected.md` for role-wide lessons, org `always-injected.md` for organization-wide lessons, and project notes for project-only lessons. Org and role note updates require `AR_ORG_NOTES_REPO`; project note updates do not.
+Use package notes for package-specific lessons, architecture notes for architecture optimization lessons, org role `always-injected.md` for organization-wide role lessons, org `always-injected.md` for organization-wide lessons, project notes for project-only lessons, and project role notes for role-specific guidance that applies only within one project. Org and org role note updates require `AR_ORG_NOTES_REPO`; project and project role note updates do not.
 
 ## Experiment Logs
 
@@ -125,14 +142,15 @@ experiment index.
 
 ## Commands
 
-Inside launched agents, `$AR_NOTES_CLI` points at the invocation's Agentic Notes helper (`scripts/ar-notes` in native mode, `/opt/agentic-researcher/scripts/ar-notes` in container mode). From an AR source checkout you can also run `scripts/ar-notes` directly. It provides these commands:
+Inside launched agents, `$AR_NOTES_CLI` points at the invocation's Agentic Notes helper (`scripts/ar-notes` in none mode, `/opt/agentic-researcher/scripts/ar-notes` in container mode). From an AR source checkout you can also run `scripts/ar-notes` directly. It provides these commands:
 
 ```text
 init-org-notes --repo PATH_OR_URL
 refresh --project-dir PATH
 generate-instructions --project-dir PATH --role ROLE --tool TOOL
-list-notes --scope org|role|project
+list-notes --scope org|role|project|project_role
 update-note --request REQUEST.yaml
+replace-note --scope org|role|project|project_role --note-name NAME --note-file FILE
 ensure-project-state --project-dir PATH
 log-experiment --request REQUEST.yaml --project-dir PATH
 log-correction --request REQUEST.yaml --project-dir PATH

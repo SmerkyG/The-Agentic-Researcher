@@ -51,7 +51,7 @@ remain. Never spread one experiment across multiple GPUs unless instructed.
 
 **C3. REMOTE GPUS ARE SEPARATE FROM LOCAL GPUS.**
 If no local GPU is visible, you may still have GPU access through the External
-GPU Job Backend. Use the backend's status/list command to discover remote
+Job Backend. Use the backend's status/list command to discover remote
 capacity and submit GPU jobs there. Do not conclude "no GPUs are available"
 from local `nvidia-smi`/`rocm-smi` alone when a backend is configured.
 
@@ -61,9 +61,9 @@ files and monitoring with `tail -5`, local GPU tools, or backend status/log
 commands rather than streaming full output into context. Only investigate logs
 in detail if something looks wrong.
 
-### Module: External GPU Job Backend
+### Module: External Job Backend
 
-These apply when `$AR_GPU_BACKEND` is set to a value other than `none` and a
+These apply when `$AR_JOB_BACKEND` is set to a value other than `none` and a
 matching project skill or managed instruction block is available.
 
 **N1. DISCOVER CAPACITY FIRST.**
@@ -90,8 +90,8 @@ run sequentially within one job or on the same local device.
 
 Do this every session or after context compaction:
 
-1. Use the Project Instructions listed below as the authoritative project
-   contract.
+1. Use any injected `Project Role Notes: research-coordinator` text below as
+   the authoritative project-specific research guidance.
 2. Use any Agentic Notes text below as active guidance. Do not open source
    `always-injected.md` note files. Identify listed on-demand notes that may be
    relevant to the current work.
@@ -103,8 +103,8 @@ Do this every session or after context compaction:
 6. Run `git log --oneline -20` and `git status`.
 7. Check local GPUs: run `nvidia-smi`; if no usable NVIDIA GPU is visible, run
    `rocm-smi`.
-8. If `$AR_GPU_BACKEND` is set to a value other than `none`: read the matching
-   GPU backend skill or managed instruction block, then run its status/list
+8. If `$AR_JOB_BACKEND` is set to a value other than `none`: read the matching
+   job backend skill or managed instruction block, then run its status/list
    command for remote/backend GPU capacity.
 9. Summarize: best result, last experiment, next step.
 10. Continue from where the previous session left off.
@@ -275,38 +275,3 @@ When something breaks, **fix it**:
 Do not give up. Implement workarounds. Try memory-efficient alternatives. If
 you have tried a lot and the code still does not run correctly or the method
 still underperforms, you can move on or ask the user for help.
-
----
-
-## 8. Project Instructions
-
-<!-- Filled by the setup_research_plan skill. Replace placeholders with actual values. -->
-
-**Goal:** [Research objective]
-
-**Primary Metric:**
-- Name: [e.g., perplexity]
-- Direction: [lower/higher is better]
-- Eval command: `[exact command]`
-- Baseline: [value or "TBD"]
-
-**Fixed Constraints (protected by Commandment II):**
-- [List what must NOT change]
-
-**Minimum Decision Scale (Commandment VII):**
-- [e.g., ">=1.5B parameters", "n>=1000 dimensions" -- below this is debugging-only]
-
-**Approach Guidelines:**
-- [Suggested methods, priority order]
-
-**References:**
-- [Papers, arxiv links]
-
-**Compute Budget:**
-- [GPUs available, max wall time]
-
-**Off-Limits Files:**
-- [Files the agent must not modify]
-
-**Notes:**
-- [Additional context, tips]

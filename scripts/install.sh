@@ -17,13 +17,13 @@ BIN_DIR="$DEFAULT_BIN_DIR"
 CONFIG_DIR="$DEFAULT_CONFIG_DIR"
 REPO_URL="$DEFAULT_REPO_URL"
 REPO_REF="$DEFAULT_REPO_REF"
-RUNTIME=""
+SANDBOX=""
 TOOL="claude"
 STATE_ROOT="$HOME/.cache/agentic-researcher"
 WRITE_CONFIG=false
 FORCE=false
 
-detect_default_oci_runtime() {
+detect_default_sandbox() {
     if command -v docker >/dev/null 2>&1; then
         printf '%s\n' "docker"
     elif command -v podman >/dev/null 2>&1; then
@@ -43,19 +43,20 @@ Options:
   --bin-dir DIR       Create launcher symlink in DIR
   --repo-url URL      Git repository to clone for bootstrap installs
   --ref NAME          Git branch or tag to clone for bootstrap installs
-  --runtime NAME      Default runtime in generated config (docker|podman|apptainer|native)
+  --sandbox NAME      Default sandbox in generated config (docker|podman|apptainer|none)
   --tool NAME         Default tool in generated config (claude|opencode|gemini|codex|pi)
   --state-root DIR    State/cache root in generated config
-  --write-config      Write ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh
+  --write-config      Write initial config at ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh
+                      without running the setup wizard
   --force             Overwrite existing install and symlink
   --help              Show this help
 
 Examples:
   ./scripts/install.sh
   ./scripts/install.sh --write-config
-  ./scripts/install.sh --runtime apptainer --tool codex --write-config
-  ./scripts/install.sh --runtime podman --write-config
-  ./scripts/install.sh --runtime native --tool codex --write-config
+  ./scripts/install.sh --sandbox apptainer --tool codex --write-config
+  ./scripts/install.sh --sandbox podman --write-config
+  ./scripts/install.sh --sandbox none --tool codex --write-config
 EOF
 }
 
@@ -77,8 +78,8 @@ while [[ $# -gt 0 ]]; do
             REPO_REF="$2"
             shift 2
             ;;
-        --runtime)
-            RUNTIME="$2"
+        --sandbox)
+            SANDBOX="$2"
             shift 2
             ;;
         --tool)
@@ -110,17 +111,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$RUNTIME" ]]; then
-    RUNTIME="$(detect_default_oci_runtime)"
-    if [[ "$RUNTIME" == "podman" ]] && ! command -v docker >/dev/null 2>&1; then
+if [[ -z "$SANDBOX" ]]; then
+    SANDBOX="$(detect_default_sandbox)"
+    if [[ "$SANDBOX" == "podman" ]] && ! command -v docker >/dev/null 2>&1; then
         echo "Docker not found, falling back to Podman."
     fi
 fi
 
-case "$RUNTIME" in
-    docker|podman|apptainer|native) ;;
+case "$SANDBOX" in
+    docker|podman|apptainer|none) ;;
     *)
-        echo "Error: Unsupported runtime: $RUNTIME" >&2
+        echo "Error: Unsupported sandbox: $SANDBOX" >&2
         exit 1
         ;;
 esac
@@ -226,7 +227,7 @@ write_config() {
     mkdir -p "$CONFIG_DIR"
     cat > "$CONFIG_DIR/config.sh" <<EOF
 # Agentic Researcher configuration
-AR_CONTAINER_RUNTIME="$RUNTIME"
+AR_SANDBOX="$SANDBOX"
 AR_AUTH_MODE="$auth_mode"
 AR_API_PROVIDER="$api_provider"
 AR_API_KEY_ENV="$api_key_env"
@@ -238,7 +239,6 @@ AR_HTTPS_PROXY=""
 AR_HTTP_PROXY=""
 AR_STATE_ROOT="$STATE_ROOT"
 AR_EXTRA_BIND_DIRS=""
-AR_GPU_BACKEND="auto"
 AR_ORG_NOTES_REPO=""
 AR_MAIN_AGENT="research-coordinator"
 AR_USER_ID="\$USER"
@@ -303,10 +303,12 @@ print_path_hint
 
 echo ""
 echo "Next steps:"
-if [[ "$RUNTIME" == "native" ]]; then
-    echo "  1. Make sure your selected CLI tool is installed on PATH"
-    echo "  2. Start the agent:     agentic-researcher ~/your-project"
+if [[ "$SANDBOX" == "none" ]]; then
+    echo "  1. Configure defaults:  agentic-researcher --setup"
+    echo "  2. Make sure your selected CLI tool is installed on PATH"
+    echo "  3. Start the agent:     agentic-researcher ~/your-project"
 else
-    echo "  1. Start the agent:     agentic-researcher ~/your-project"
+    echo "  1. Configure defaults:  agentic-researcher --setup"
+    echo "  2. Start the agent:     agentic-researcher ~/your-project"
     echo "     The container image builds automatically on first launch."
 fi

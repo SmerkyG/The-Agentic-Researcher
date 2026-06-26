@@ -3,8 +3,8 @@
 # dispatcher.sh: Host-side daemon that watches for job requests from the
 # containerized agent and dispatches them to remote nodes via srun + apptainer.
 #
-# Started by the agentic-researcher launcher (--multi-node) before launching
-# the container. Killed automatically when the container exits.
+# Started by the remote-run optional skill before launching the container.
+# Killed automatically when the container exits.
 #
 # Usage: dispatcher.sh <dispatch-config-file>
 #
@@ -42,7 +42,7 @@ build_apptainer_args() {
         --no-mount home
         --home /claude-home
         --bind "$WORKSPACE_HOST:/workspace"
-        --bind "$AR_RUNTIME_HOST:$AR_RUNTIME_CONTAINER:ro"
+        --bind "$AR_INSTALL_HOST:$AR_INSTALL_CONTAINER:ro"
         --bind "$UV_CACHE_DIR:/uv-cache"
         --bind "$UV_PYTHON_INSTALL_DIR:/uv-python"
         --bind "$UV_TOOL_DIR:/uv-tools"
@@ -56,10 +56,10 @@ build_apptainer_args() {
         --env "TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
         --env "WANDB_DIR=$WANDB_DIR"
         --env "TERM=${TERM:-xterm-256color}"
-        --env AR_CONTAINER_RUNTIME=apptainer
-        --env "AR_RUNTIME_DIR=$AR_RUNTIME_CONTAINER"
-        --env "AR_NOTES_CLI=$AR_RUNTIME_CONTAINER/scripts/ar-notes"
-        --env "AR_GPU_BACKEND=remote-run"
+        --env AR_SANDBOX=apptainer
+        --env "AR_INSTALL_DIR=$AR_INSTALL_CONTAINER"
+        --env "AR_NOTES_CLI=$AR_INSTALL_CONTAINER/scripts/ar-notes"
+        --env "AR_JOB_BACKEND=remote-run"
         --env "AR_STATE_ROOT=$STATE_ROOT"
         --env "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
         --env "AR_MAIN_AGENT=${AR_MAIN_AGENT:-research-coordinator}"

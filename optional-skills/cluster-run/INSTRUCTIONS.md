@@ -1,4 +1,4 @@
-### GPU Job Backend: cluster-run
+### Job Backend: cluster-run
 
 The `cluster-run` optional skill is active. Use the `cluster-run` project skill and the `cluster-run` command for remote/backend GPU placement.
 

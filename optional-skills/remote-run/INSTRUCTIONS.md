@@ -1,4 +1,4 @@
-### GPU Job Backend: remote-run
+### Job Backend: remote-run
 
 The `remote-run` optional skill is active. Use `remote-run` for independent GPU jobs on remote nodes in the current Slurm allocation.
 

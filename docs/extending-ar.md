@@ -5,11 +5,11 @@ Agentic Researcher can be extended without changing the core launcher by adding 
 Use:
 
 - `skills/` for always-on project skills that should be rendered for every launch.
-- `optional-skills/` for selectable capabilities such as GPU job backends, cluster tools, site-specific data systems, or lab-specific workflows.
+- `optional-skills/` for selectable capabilities such as job backends, cluster tools, site-specific data systems, or lab-specific workflows.
 - AR install `agents/` for built-in main agents and subagents.
 - Org repo `agents/` for organization-provided main agents and subagents shared across AR installations.
 
-This page covers optional skills and agents. Optional skills are the usual extension point for custom GPU job backends; agents are the extension point for top-level workflows and reusable delegation roles.
+This page covers optional skills and agents. Optional skills are the usual extension point for custom job backends; agents are the extension point for top-level workflows and reusable delegation roles.
 
 ## Agents and Roles
 
@@ -101,11 +101,11 @@ roles/
 
 Precedence is intentional: AR loads built-in agents first and org repo agents second. If an org repo agent has the same `name` as a built-in AR agent, the org repo version wins. This applies across kinds: an org `kind: main` definition with the same name as a built-in `kind: subagent` prevents the built-in subagent from being rendered.
 
-Unmanaged project-local CLI-native agent files are still protected; AR skips them instead of overwriting them.
+Unmanaged project-local CLI-specific agent files are still protected; AR skips them instead of overwriting them.
 
 Keep subagents narrow. If a capability is mostly a tool, command, or backend workflow, prefer an optional skill. If it is a recurring delegation role with its own responsibilities and output shape, make it a subagent. Use main agents for top-level operating modes, such as `research-coordinator` or an org-provided `research-paper-author`.
 
-Current limitation: AR renders all final `kind: subagent` definitions for every launch. There is not yet an `optional-agents/` selector. Project-local CLI-native subagent files may still work for a specific CLI, and AR will not overwrite unmanaged files at the same rendered path, but those files are not portable across CLIs and do not get AR's neutral rendering behavior.
+Current limitation: AR renders all final `kind: subagent` definitions for every launch. There is not yet an `optional-agents/` selector. Project-local CLI-specific subagent files may still work for a specific CLI, and AR will not overwrite unmanaged files at the same rendered path, but those files are not portable across CLIs and do not get AR's neutral rendering behavior.
 
 ## Optional Skill Layout
 
@@ -113,7 +113,7 @@ Create one directory per optional skill:
 
 ```text
 optional-skills/
-  my-gpu-backend/
+  my-job-backend/
     SKILL.md
     INSTRUCTIONS.md
 ```
@@ -122,13 +122,13 @@ optional-skills/
 
 ```markdown
 ---
-name: "my-gpu-backend"
-description: "Place and manage GPU jobs with the my-gpu-backend command."
+name: "my-job-backend"
+description: "Place and manage jobs with the my-job-backend command."
 ---
 
-# My GPU Backend
+# My Job Backend
 
-Use `my-gpu-backend` for independent GPU experiments when this optional skill is active.
+Use `my-job-backend` for independent experiments when this optional skill is active.
 ```
 
 `INSTRUCTIONS.md` is optional. If present, AR appends it to the workspace instruction file inside a managed block. Use it for short launch-wide guidance that should be visible even before the model opens the skill.
@@ -140,13 +140,13 @@ An optional skill directory must contain at least one of `SKILL.md` or `INSTRUCT
 Enable an optional skill for one launch:
 
 ```bash
-agentic-researcher --optional-skill my-gpu-backend .
+agentic-researcher --optional-skill my-job-backend .
 ```
 
 Enable one or more optional skills through config:
 
 ```bash
-agentic-researcher --setup AR_OPTIONAL_SKILLS=my-gpu-backend,site-data
+agentic-researcher --setup AR_OPTIONAL_SKILLS=my-job-backend,site-data
 ```
 
 Optional skill names may contain only letters, numbers, dots, underscores, and hyphens.
@@ -163,11 +163,11 @@ When selected, AR renders `SKILL.md` into the selected CLI's project skill direc
 
 If `INSTRUCTIONS.md` exists, AR also appends it to the generated workspace instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`).
 
-Generated skill and instruction files are runtime artifacts and should remain ignored in project code branches.
+Generated skill and instruction files are launch artifacts and should remain ignored in project code branches.
 
-## Custom GPU Job Backends
+## Custom Job Backends
 
-An optional skill can support a custom GPU backend by teaching the agent:
+An optional skill can support a custom job backend by teaching the agent:
 
 - how to discover capacity
 - how to submit one independent experiment per GPU
@@ -177,27 +177,27 @@ An optional skill can support a custom GPU backend by teaching the agent:
 - which environment variables or mount paths the backend exports
 - when not to dispatch work, especially dependent multi-step jobs
 
-A useful GPU backend optional skill usually includes exact command examples.
+A useful job backend optional skill usually includes exact command examples.
 
 Start each work batch by checking backend capacity:
 
 ```bash
-my-gpu-backend status
-my-gpu-backend status --verbose
+my-job-backend status
+my-job-backend status --verbose
 ```
 
 Submit long experiments detached:
 
 ```bash
-my-gpu-backend submit --gpus 1 --name exp-e005 -- uv run python train.py --exp E005
+my-job-backend submit --gpus 1 --name exp-e005 -- uv run python train.py --exp E005
 ```
 
 Monitor and cancel:
 
 ```bash
-my-gpu-backend logs JOB_ID
-my-gpu-backend logs --follow JOB_ID
-my-gpu-backend cancel JOB_ID
+my-job-backend logs JOB_ID
+my-job-backend logs --follow JOB_ID
+my-job-backend cancel JOB_ID
 ```
 
 Keep the skill operational and concrete. Prefer exact commands over high-level descriptions.
@@ -206,7 +206,7 @@ Keep the skill operational and concrete. Prefer exact commands over high-level d
 
 Optional skills provide instructions to the model. They do not install backend commands, credentials, Python packages, SSH configuration, cluster CLIs, or cloud tools.
 
-For native mode, the backend command must be available on the host `PATH` before launch.
+For `--sandbox none`, the backend command must be available on the host `PATH` before launch.
 
 For container mode, the backend command must be available inside the container or reachable through configured mounts and environment variables. Common options are:
 
@@ -217,24 +217,29 @@ For container mode, the backend command must be available inside the container o
 
 Document those requirements in the optional skill and in any site-local README.
 
-## Built-In GPU Backend Integration
+## Managed Job Backend Hooks
 
-AR currently has first-class launcher handling for:
+Some optional skills need launcher support beyond model-facing instructions.
+For example, `cluster-run` validates the host command before launch, and
+`remote-run` starts a Slurm dispatcher before the agent starts.
 
-- `cluster-run`
-- `remote-run`
+Managed optional skills can also provide launcher hook scripts under `optional-skills/<name>/launcher/`:
 
-Those can be selected through `--gpu-backend` or automatically by launcher logic. Custom backends do not need first-class launcher support if `--optional-skill my-gpu-backend` is enough.
+```text
+launcher/
+  preflight.sh  # sourced before container image setup; validate requirements
+  setup.sh      # sourced after launcher storage/mount setup; add binds/env
+  test.sh       # sourced for --test when this skill is selected
+  start.sh      # sourced before launching the agent; start host daemons
+  cleanup.sh    # sourced on launcher exit after start.sh ran
+```
 
-If you want a custom backend to be selected through `--gpu-backend my-backend`, update the launcher in addition to adding the optional skill:
+The `remote-run` Slurm backend uses this pattern. Its optional skill validates Apptainer and Slurm requirements, starts the dispatcher, binds the `remote-run` command into the sandbox, and implements `--test`.
 
-- accept the backend name in `parse_arguments`
-- allow it in `resolve_gpu_backend`
-- add validation in `validate_gpu_backend`
-- append the matching optional skill in `resolve_optional_skills`
-- pass any required environment variables or binds
+Launcher hook scripts are sourced by the launcher, so they can share state across phases. `setup.sh` may append Apptainer bind arguments to `OPTIONAL_SKILL_BINDS` and environment arguments to `OPTIONAL_SKILL_ENV`; `cleanup.sh` can use variables set by `start.sh`.
 
-Keep first-class launcher integration small. Most backend-specific behavior belongs in the backend command and the optional skill docs.
+Keep launcher hooks small. Most backend-specific behavior belongs in the
+backend command and the optional skill docs.
 
 ## Optional Skill Authoring Checklist
 
@@ -249,7 +254,7 @@ Keep first-class launcher integration small. Most backend-specific behavior belo
 - Test with:
 
 ```bash
-agentic-researcher --optional-skill my-gpu-backend --runtime native --tool codex /path/to/project
+agentic-researcher --optional-skill my-job-backend --sandbox none --tool codex /path/to/project
 ```
 
 Then confirm the rendered skill appears under the selected CLI's project skill directory and the instruction overlay appears in the workspace instruction file.

@@ -166,11 +166,15 @@ def test_setup_writes_config_to_xdg_config_home(base_env: dict[str, str], tmp_pa
     result = run(
         [str(FIRST_SETUP_SCRIPT)],
         {**base_env, "XDG_CONFIG_HOME": str(xdg_config_home)},
-        input="1\n1\n\n\n\n\n\n",
+        input="1\n1\n\n\n\n\n\n\n\n",
     )
 
     assert result.returncode == 0
-    assert (xdg_config_home / "agentic-researcher" / "config.sh").exists()
+    config_path = xdg_config_home / "agentic-researcher" / "config.sh"
+    assert config_path.exists()
+    config_text = config_path.read_text()
+    assert 'AR_ORG_NOTES_REPO=""' in config_text
+    assert 'AR_MAIN_AGENT="research-coordinator"' in config_text
     assert not (Path(base_env["HOME"]) / ".config" / "agentic-researcher" / "config.sh").exists()
 
 
@@ -205,7 +209,7 @@ def test_install_script_accepts_podman_runtime(base_env: dict[str, str], tmp_pat
             str(install_dir),
             "--bin-dir",
             str(bin_dir),
-            "--runtime",
+            "--sandbox",
             "podman",
             "--write-config",
             "--force",
@@ -216,7 +220,7 @@ def test_install_script_accepts_podman_runtime(base_env: dict[str, str], tmp_pat
     assert result.returncode == 0
     assert (bin_dir / "agentic-researcher").is_symlink()
     config_text = (config_dir / "agentic-researcher" / "config.sh").read_text()
-    assert 'AR_CONTAINER_RUNTIME="podman"' in config_text
+    assert 'AR_SANDBOX="podman"' in config_text
     assert 'AR_AUTO_BUILD="true"' in config_text
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
@@ -246,7 +250,7 @@ def test_build_command_auto_detects_podman_when_docker_is_absent(
 
 
 def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str]) -> None:
-    result = run([str(AGENTIC_RESEARCHER), "--runtime", "podman", "--tool", "codex", "--test"], base_env)
+    result = run([str(AGENTIC_RESEARCHER), "--sandbox", "podman", "--tool", "codex", "--test"], base_env)
 
     assert result.returncode == 0
     podman_log = read_log(base_env["FAKE_PODMAN_LOG"])
@@ -255,8 +259,8 @@ def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str]
     assert "--userns keep-id" in podman_log
     assert ":/claude-home" in podman_log
     assert f"{REPO_ROOT}:/opt/agentic-researcher:ro" in podman_log
-    assert "AR_CONTAINER_RUNTIME=podman" in podman_log
-    assert "AR_RUNTIME_DIR=/opt/agentic-researcher" in podman_log
+    assert "AR_SANDBOX=podman" in podman_log
+    assert "AR_INSTALL_DIR=/opt/agentic-researcher" in podman_log
     assert "AR_NOTES_CLI=/opt/agentic-researcher/scripts/ar-notes" in podman_log
     assert "--entrypoint /bin/bash" in podman_log
     assert "/test_sandbox.sh" in podman_log
@@ -278,7 +282,7 @@ def test_launcher_auto_builds_missing_podman_image(
     )
 
     result = run(
-        [str(AGENTIC_RESEARCHER), "--runtime", "podman", "--tool", "pi", str(workspace)],
+        [str(AGENTIC_RESEARCHER), "--sandbox", "podman", "--tool", "pi", str(workspace)],
         base_env,
     )
 
@@ -294,9 +298,9 @@ def test_launcher_auto_builds_missing_podman_image(
 def test_launcher_native_runs_host_tool_without_container(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
-    workspace = tmp_path / "ws-native"
+    workspace = tmp_path / "ws-none"
     workspace.mkdir()
-    tool_log = tmp_path / "codex-native.log"
+    tool_log = tmp_path / "codex-none.log"
     make_executable(
         fake_bin / "codex",
         "#!/bin/sh\n"
@@ -307,20 +311,20 @@ def test_launcher_native_runs_host_tool_without_container(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "codex",
             "--model",
             "gpt-test",
             str(workspace),
         ],
-        {**base_env, "FAKE_CODEX_LOG": str(tool_log), "AR_GPU_BACKEND": "none"},
+        {**base_env, "FAKE_CODEX_LOG": str(tool_log)},
     )
 
     assert result.returncode == 0
-    assert "Agentic Researcher - Codex CLI (Native)" in result.stdout
-    assert "Sandboxed:      No (host-native; full host filesystem access)" in result.stdout
-    assert "GPU backend:    none" in result.stdout
+    assert "Agentic Researcher - Codex CLI (No Sandbox)" in result.stdout
+    assert "Sandboxed:      No (sandbox none; full host filesystem access)" in result.stdout
+    assert "Job backend:    none" in result.stdout
     assert f"cwd:{workspace}" in tool_log.read_text()
     assert "args:--model gpt-test" in tool_log.read_text()
     setup_skill = workspace / ".agents" / "skills" / "setup_research_plan" / "SKILL.md"
@@ -365,7 +369,7 @@ def test_launcher_requires_project_id_for_launch(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "codex",
             str(workspace),
@@ -387,13 +391,13 @@ def test_launcher_infers_project_id_from_git_remote(
     run(["git", "init", str(workspace)], base_env)
     run(["git", "-C", str(workspace), "remote", "add", "origin", str(remote)], base_env)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
-    env = {**base_env, "AR_GPU_BACKEND": "none"}
+    env = {**base_env}
     env.pop("AR_PROJECT_ID", None)
 
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "codex",
             str(workspace),
@@ -421,7 +425,7 @@ def test_launcher_project_id_flag_overrides_missing_env(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "codex",
             "--project-id",
@@ -461,12 +465,12 @@ def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
 
     command = [
         str(AGENTIC_RESEARCHER),
-        "--runtime", "native",
+        "--sandbox", "none",
         "--tool",
         "codex",
         str(workspace),
     ]
-    env = {**base_env, "AR_GPU_BACKEND": "none"}
+    env = {**base_env}
     result = run(command, env)
     result_again = run(command, env)
 
@@ -480,11 +484,11 @@ def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
     assert len(managed_commands) == 1
 
 
-def test_build_command_native_runtime_is_noop(base_env: dict[str, str]) -> None:
-    result = run([str(BUILD_SCRIPT), "--runtime", "native"], base_env)
+def test_build_command_rejects_none_sandbox(base_env: dict[str, str]) -> None:
+    result = run([str(BUILD_SCRIPT), "--runtime", "none"], base_env)
 
-    assert result.returncode == 0
-    assert "Native runtime selected; no container image to build." in result.stdout
+    assert result.returncode == 1
+    assert "Unsupported runtime: none" in result.stderr
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
@@ -501,13 +505,13 @@ def test_launcher_native_test_checks_rocm_when_nvidia_unavailable(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "codex",
             "--test",
             str(workspace),
         ],
-        {**base_env, "AR_GPU_BACKEND": "none"},
+        {**base_env},
     )
 
     assert result.returncode == 0
@@ -533,10 +537,10 @@ def test_native_cluster_run_backend_renders_project_skill(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "codex",
-            "--gpu-backend",
+            "--optional-skill",
             "cluster-run",
             str(workspace),
         ],
@@ -551,12 +555,53 @@ def test_native_cluster_run_backend_renders_project_skill(
     assert "cluster-run status" in skill_text
     instruction_text = (workspace / "AGENTS.md").read_text()
     assert "AGENTIC-RESEARCHER-SKILL-INSTRUCTIONS-START cluster-run" in instruction_text
-    assert "GPU Job Backend: cluster-run" in instruction_text
+    assert "Job Backend: cluster-run" in instruction_text
     assert (workspace / ".agents" / "skills" / "retro" / "SKILL.md").exists()
     experiment_agent = workspace / ".codex" / "agents" / "experiment-runner.toml"
     assert experiment_agent.exists()
     assert 'model_reasoning_effort = "medium"' in experiment_agent.read_text()
     assert (workspace / ".codex" / "agents" / "experiment-logger.toml").exists()
+
+
+def test_gpu_backend_flag_is_removed(base_env: dict[str, str], tmp_path: Path) -> None:
+    workspace = tmp_path / "ws-removed-gpu-backend"
+    workspace.mkdir()
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--gpu-backend",
+            "cluster-run",
+            str(workspace),
+        ],
+        base_env,
+    )
+
+    assert result.returncode == 1
+    assert "--gpu-backend has been removed" in result.stdout
+    assert "--optional-skill cluster-run" in result.stdout
+
+
+def test_remote_run_optional_skill_checks_its_own_sandbox_requirement(
+    base_env: dict[str, str], tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-remote-run-preflight"
+    workspace.mkdir()
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--optional-skill",
+            "remote-run",
+            str(workspace),
+        ],
+        {**base_env},
+    )
+
+    assert result.returncode == 1
+    assert "remote-run optional skill requires --sandbox apptainer" in result.stderr
 
 
 def test_native_optional_skill_renders_skill_and_instruction_overlay(
@@ -565,18 +610,19 @@ def test_native_optional_skill_renders_skill_and_instruction_overlay(
     workspace = tmp_path / "ws-optional-skill"
     workspace.mkdir()
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    make_executable(fake_bin / "cluster-run", "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nexit 0\n")
 
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "codex",
             "--optional-skill",
             "cluster-run",
             str(workspace),
         ],
-        {**base_env, "AR_GPU_BACKEND": "none"},
+        {**base_env},
     )
 
     assert result.returncode == 0
@@ -597,10 +643,10 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "claude",
-            "--gpu-backend",
+            "--optional-skill",
             "cluster-run",
             str(workspace),
         ],
@@ -640,10 +686,10 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "gemini",
-            "--gpu-backend",
+            "--optional-skill",
             "cluster-run",
             str(workspace),
         ],
@@ -686,10 +732,10 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "opencode",
-            "--gpu-backend",
+            "--optional-skill",
             "cluster-run",
             str(workspace),
         ],
@@ -739,7 +785,7 @@ def test_install_script_auto_detects_podman_when_docker_is_absent(
 
     assert result.returncode == 0
     config_text = (config_dir / "agentic-researcher" / "config.sh").read_text()
-    assert 'AR_CONTAINER_RUNTIME="podman"' in config_text
+    assert 'AR_SANDBOX="podman"' in config_text
     assert 'AR_AUTO_BUILD="true"' in config_text
     assert "Docker not found, falling back to Podman." in result.stdout
     assert "Building Podman container" not in result.stdout
@@ -748,9 +794,9 @@ def test_install_script_auto_detects_podman_when_docker_is_absent(
 
 
 def test_install_script_accepts_native_runtime(base_env: dict[str, str], tmp_path: Path) -> None:
-    install_dir = tmp_path / "install-native"
-    bin_dir = tmp_path / "launcher-bin-native"
-    config_dir = tmp_path / "config-native"
+    install_dir = tmp_path / "install-none"
+    bin_dir = tmp_path / "launcher-bin-none"
+    config_dir = tmp_path / "config-none"
 
     result = run(
         [
@@ -759,8 +805,8 @@ def test_install_script_accepts_native_runtime(base_env: dict[str, str], tmp_pat
             str(install_dir),
             "--bin-dir",
             str(bin_dir),
-            "--runtime",
-            "native",
+            "--sandbox",
+            "none",
             "--tool",
             "codex",
             "--write-config",
@@ -771,8 +817,7 @@ def test_install_script_accepts_native_runtime(base_env: dict[str, str], tmp_pat
 
     assert result.returncode == 0
     config_text = (config_dir / "agentic-researcher" / "config.sh").read_text()
-    assert 'AR_CONTAINER_RUNTIME="native"' in config_text
-    assert 'AR_GPU_BACKEND="auto"' in config_text
+    assert 'AR_SANDBOX="none"' in config_text
     assert 'AR_OPTIONAL_SKILLS=""' in config_text
     assert 'AR_AUTO_BUILD="true"' in config_text
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
@@ -786,7 +831,7 @@ def test_launcher_podman_runs_pi_tool(base_env: dict[str, str], tmp_path: Path) 
     workspace.mkdir()
 
     result = run(
-        [str(AGENTIC_RESEARCHER), "--runtime", "podman", "--tool", "pi", str(workspace)],
+        [str(AGENTIC_RESEARCHER), "--sandbox", "podman", "--tool", "pi", str(workspace)],
         base_env,
     )
 
@@ -800,7 +845,7 @@ def test_launcher_podman_runs_pi_tool(base_env: dict[str, str], tmp_path: Path) 
     # pi reads AGENTS.md; the launcher must seed it into the workspace.
     assert (workspace / "AGENTS.md").exists()
     # pi uses the shared agent-compatible project skill path.
-    for skill in ("setup_research_plan", "retro", "update_base"):
+    for skill in ("setup_research_plan", "retro"):
         assert (workspace / ".agents" / "skills" / skill / "SKILL.md").exists()
     assert not (workspace / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
     pi_extension = workspace / ".pi" / "extensions" / "agentic-researcher-compaction.ts"
@@ -825,7 +870,7 @@ def test_pi_translates_resume_to_session_and_warns_on_yolo(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "podman",
+            "--sandbox", "podman",
             "--tool",
             "pi",
             "--debug-launch",

@@ -1,42 +1,37 @@
 # Agentic Team
 
-### FORKED from The Agentic Researcher, with added features: notes-system for coordinated learning across projects and teams, native (non-sandboxed) mode, AMD GPU detection, gpu backend plugins, skills (instead of commands), and subagent role support.
+**Sandboxed AI-Assisted Research Agents That Learn From Their Mistakes Across Agents, Projects, and Teams**
 
-**A Practical Guide to AI-Assisted Research in Mathematics and Machine Learning**
-
-<p align="center">
-  <img src="assets/main_figure.png" alt="The Agentic Researcher running parallel GPU training jobs inside a sandboxed container" width="700">
-</p>
+<center>(Forked and rewritten from original repo: The Agentic Researcher)</center>
 
 <p align="center">
-  <a href="https://arxiv.org/abs/2603.15914"><strong>Paper</strong></a> &middot;
-  <a href="https://maxzimmer.org/the-agentic-researcher/"><strong>Project Page</strong></a> &middot;
+  <a href="#problem-statement">Problem Statement</a> &middot;
   <a href="#installation">Installation</a> &middot;
   <a href="#workflow">Workflow</a> &middot;
   <a href="#org-notes">Org Notes</a> &middot;
-  <a href="#runtimes">Runtimes</a> &middot;
-  <a href="#architecture">Architecture</a> &middot;
-  <a href="#citation">Citation</a>
-</p>
-
-<p align="center">
-  <a href="https://maxzimmer.org">Max Zimmer</a> &middot;
-  <a href="https://pelleriti.org">Nico Pelleriti</a> &middot;
-  <a href="https://christopheroux.de">Christophe Roux</a> &middot;
-  <a href="https://pokutta.com">Sebastian Pokutta</a>
-  <br>
-  <a href="https://iol.zib.de">IOL Lab</a> &middot; Zuse Institute Berlin & TU Berlin
+  <a href="#sandbox">Sandbox</a> &middot;
+  <a href="#architecture">Architecture</a>
 </p>
 
 ---
 
-The Agentic Researcher launches AI coding agents with structured research instructions, GPU workflow guidance, and optional filesystem isolation. The default path uses **sandboxed containers**; an opt-in native runtime runs the selected CLI directly on the host without containers or bind mounts.
+Agentic Team launches AI coding agents that learn from their mistakes and share those learnings with one another, with structured research instructions, workflow guidance, and optional filesystem isolation. The default path uses **sandboxed containers**; `--sandbox none` runs the selected CLI directly on the host without containers or bind mounts. It comes with task workflows for performing Math/ML Research and writing research papers, and supports adding your own new task workflows.
 
-Supports [Claude Code](https://github.com/anthropics/claude-code), [OpenCode](https://opencode.ai), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Codex CLI](https://github.com/openai/codex), and [pi](https://github.com/badlogic/pi-mono).
+LLM CLIs supported: [Claude Code](https://github.com/anthropics/claude-code), [OpenCode](https://opencode.ai), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Codex CLI](https://github.com/openai/codex), and [pi](https://github.com/badlogic/pi-mono). Sandboxing optionally supported via Docker, Podman, or Apptainer. Cluster job-queue optionally supported via plugin system, with SLURM plugin provided.
+
+## Problem Statement
+
+Long-running agent teams have a memory problem: agents make mistakes, discover missing knowledge, learn local conventions, and uncover tool or infrastructure gotchas, but those lessons usually disappear with the session or context compaction. The next agent, project, or team repeats the same failure because the learning was not captured in a place other agents can use.
+
+Agentic Team's solution is simple: agents take notes. Organization-wide and role-specific notes live in an org-level Git repo. Project-wide and project role notes live on an orphan `agentic/state` branch in the project repo, separate from the normal code branches. Those Git-backed notes are shared across agents, projects, installations, and teams through ordinary Git review and merge workflows.
+
+There are two note modes. `always-injected.md` notes are short, high-value guidance injected into the agent's startup context. On-demand notes are listed in the generated instructions but read only when relevant, so detailed package, benchmark, backend, or project knowledge is available without bloating every context.
+
+The entire notes system is simple enough that you can edit the files directly if you wish.
 
 ## Prerequisites
 
-- **Docker** (default), **Podman**, or **Apptainer** (Linux only) for sandboxed mode, or a host-installed CLI tool for native mode
+- **Docker** (default), **Podman**, or **Apptainer** (Linux only) for sandboxed mode, or a host-installed CLI tool for `--sandbox none`
 - An API key or OAuth login for your chosen CLI tool (see [supported tools](#supported-cli-tools))
 - GPU drivers installed on the host if you want GPU passthrough
 - Project dependencies managed with [uv](https://docs.astral.sh/uv/) (recommended) — the agent runs `uv sync` inside the sandbox
@@ -44,60 +39,49 @@ Supports [Claude Code](https://github.com/anthropics/claude-code), [OpenCode](ht
 ## Installation
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/ZIB-IOL/The-Agentic-Researcher.git
-cd The-Agentic-Researcher
-
-# 2. Install
+# 1. Install the launcher
 ./scripts/install.sh
-```
 
-The installer adds the `agentic-researcher` launcher and creates optional local configuration when requested.
-
-Optional: configure a shared org notes repo if you want organization-wide notes, role-specific notes, or org-provided agents to follow this AR installation across projects. Create the local config first if it does not already exist:
-
-```bash
+# 2. Configure local defaults
 agentic-researcher --setup
-agentic-researcher --setup AR_ORG_NOTES_REPO=git@github.com:ORG/org-agentic-notes.git
-agentic-researcher --setup AR_MAIN_AGENT=research-paper-author
 ```
 
-`AR_MAIN_AGENT` defaults to `research-coordinator`. Only change it when the AR install or org notes repo provides another `kind: main` agent. Org notes are optional. Without them, AR still maintains project notes and the shared experiment log on the project's `agentic/state` branch. See [Org Notes](#org-notes) for the repo layout and when to use it.
+The installer adds the `agentic-researcher` launcher. The setup wizard creates local configuration, asks whether to use an org notes repo, and asks which main agent to use. Keep the default `research-coordinator` unless the AR install or org notes repo provides another `kind: main` agent. Org notes are optional. Without them, AR still maintains project notes and the shared experiment log on the project's `agentic/state` branch. See [Org Notes](#org-notes) for the repo layout and when to use it.
 
 ## Workflow
 
 ### Starting a New Project
 
 1. **Start from a normal project Git checkout.** The checkout should usually have an `origin` remote so AR can derive the project identity from the repo name automatically.
-2. **Run AR from that checkout:** `cd ~/my-project && agentic-researcher .`. For auto-approved Claude permissions, add `--yolo`.
+2. **Run AR from that checkout:** `cd ~/my-project && agentic-researcher .`. For auto-approved agent permissions, add `--yolo`.
 3. **For a new research effort, ask the default `research-coordinator` main agent to use the `setup_research_plan` skill.** This starts an interactive dialogue about your research goal, evaluation metrics, constraints, and compute budget.
-4. The agent fills in the **Project Instructions** section of the instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) and creates branch-local research files such as `report.tex` and `TODO.md`.
+4. The agent writes role-specific project instructions to project role notes on the project `agentic/state` branch. AR injects those notes into the worktree instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) and creates branch-local research files such as `report.tex` and `TODO.md`.
 
 If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID` so repeated launches use the same notes and experiment-log state.
 
 ### Resuming a Session
 
-Relaunch AR from the same project Git checkout or another worktree with the same resolved project identity. The rendered instructions tell the agent to read the project instructions, shared experiment summary, branch-local `report.tex`, and `TODO.md` before continuing. Use `setup_research_plan` on resume only when you want a structured recap or to revise the project plan.
+Relaunch AR from the same project Git checkout or another worktree with the same resolved project identity. The rendered instructions tell the agent to use the injected project role notes, shared experiment summary, branch-local `report.tex`, and `TODO.md` before continuing. Use `setup_research_plan` on resume only when you want a structured recap or to revise the coordinator project role note.
 
-## Runtimes
+## Sandbox
 
-The default runtime is Docker when available. If Docker is not installed or not on `PATH`, but Podman is, the launcher and install script automatically fall back to Podman for OCI launches and builds.
+The default sandbox is Docker when available. If Docker is not installed or not on `PATH`, but Podman is, the launcher and install script automatically fall back to Podman for OCI launches and builds.
 
 In container mode, AR builds the missing container image automatically on first launch. Use `container/build.sh --runtime docker|podman|apptainer` only when you want to prebuild or rebuild manually. Podman uses the same OCI image and launch flow as Docker, but runs through the `podman` CLI instead. When building with Podman, the build script requests Docker image format (`podman build --format docker`) so Dockerfile `SHELL` directives keep working and Podman avoids noisy OCI-format warnings.
 
-Apptainer is supported on Linux and is the runtime used for the multi-node Slurm flow. Native mode skips containers entirely and runs the selected CLI directly in your host environment:
+Apptainer is supported on Linux and is the sandbox used for Slurm `remote-run` dispatch. `--sandbox none` skips containers entirely and runs the selected CLI directly in your host environment:
 
 ```bash
-agentic-researcher --runtime native --tool codex ~/my-project
+agentic-researcher --sandbox none --tool codex ~/my-project
 ```
 
-Native mode does not provide Agentic Researcher filesystem isolation. Install the selected CLI tool on `PATH` before launching native mode.
+`--sandbox none` does not provide Agentic Researcher filesystem isolation. Install the selected CLI tool on `PATH` before using it.
 
 ## Configuration
 
 Run `agentic-researcher --setup` to create a configuration file at `${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh`. The setup wizard lets you configure:
 
-- **Runtime** — Docker, Podman, Apptainer, or native host execution
+- **Sandbox** — Docker, Podman, Apptainer, or none host execution
 - **CLI tool** — Claude Code, OpenCode, Gemini CLI, Codex CLI, or pi
 - **Authentication** — OAuth login or API key (with configurable env var name)
 - **Custom API endpoint** — point Claude at an Anthropic-compatible proxy or gateway
@@ -107,7 +91,6 @@ Run `agentic-researcher --setup` to create a configuration file at `${XDG_CONFIG
 - **Extra environment variables** (`AR_EXTRA_ENV`) — pipe-separated `KEY=VALUE` pairs forwarded into the container (e.g. `HF_TOKEN=hf_...|WANDB_API_KEY=...`)
 - **Network proxy** — HTTP/HTTPS proxy settings for use inside the container
 - **Extra bind directories** — additional host paths to mount into the sandbox
-- **GPU backend** — auto, none, cluster-run, or remote-run
 - **Auto-build** (`AR_AUTO_BUILD`) — whether missing container images should be built automatically on first launch
 - **Optional skills** (`AR_OPTIONAL_SKILLS`) — comma-separated selectable skills from `optional-skills/`
 - **Project identity override** (`AR_PROJECT_ID` or `--project-id`) — optional stable id for projects without a Git remote, forks that should share state, or other custom grouping
@@ -127,13 +110,16 @@ agentic-researcher ~/my-project
 agentic-researcher --tool gemini
 
 # Run without containers or bind mounts
-agentic-researcher --runtime native --tool codex
+agentic-researcher --sandbox none --tool codex
 
 # Auto-approve all tool calls
 agentic-researcher --yolo
 
 # Override the inferred project identity when needed
 agentic-researcher --project-id my-project-2026 ~/my-project
+
+# Use a different top-level agent for this launch
+agentic-researcher --main-agent research-paper-author ~/my-project
 ```
 
 ### Project Git and Agentic Notes State
@@ -152,6 +138,7 @@ On launch, AR creates or updates a cached checkout at `$AR_STATE_ROOT/projects/<
 
 ```text
 .agentic/notes/always-injected.md
+.agentic/roles/<role-id>/notes/always-injected.md
 .agentic/experiment-log/COUNTER.yaml
 .agentic/experiment-log/SUMMARY.md
 .agentic/experiment-log/experiments/
@@ -163,42 +150,53 @@ If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID`. Th
 
 Multiple projects are supported within one AR installation. Each project gets a separate cache directory keyed by the resolved project id. AR does not infer project identity from the directory name. For multi-worktree or multi-agent projects, use worktrees whose `origin` remotes have the same repo name, or pass the same `--project-id` or set the same `AR_PROJECT_ID` in every launch so all agents share the same notes and experiment log.
 
-Multiple top-level agents can work in separate Git worktrees of the same project repo. Their code branches stay independent, while note and experiment-log operations are serialized through the shared cached `agentic/state` checkout. Subagents rendered by a top-level launch use the same project id and state checkout as their parent agent.
+Multiple top-level agents should work in separate Git worktrees of the same project repo. Their code branches and materialized instruction files stay independent, while project notes, project role notes, and experiment-log operations are serialized through the shared cached `agentic/state` checkout. Subagents rendered by a top-level launch use the same project id and state checkout as their parent agent.
+
+Example with a coordinator and a paper author sharing one project:
+
+```bash
+git worktree add ../my-project-coordinator main
+git worktree add ../my-project-paper paper-draft
+
+agentic-researcher --main-agent research-coordinator ../my-project-coordinator
+agentic-researcher --main-agent research-paper-author ../my-project-paper
+```
+
+Run the `research-coordinator` project setup flow once to create or revise `.agentic/roles/research-coordinator/notes/always-injected.md`. Other main agents can have their own project role notes; run their setup flow only when that role needs role-specific project instructions.
+
+Each worktree gets its own generated `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` based on the selected main agent. Those files are materialized views and should not be treated as canonical shared state. Shared project guidance lives in `.agentic/notes/always-injected.md`; role-specific project guidance lives in `.agentic/roles/<role-id>/notes/always-injected.md`.
+
+The `agentic/state` branch does not store `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`. It stores Agentic Notes and the experiment log; each worktree rematerializes its own instruction file on launch or refresh.
 
 `report.tex` and `TODO.md` remain normal files in the project worktree. AR does not lock them, so they should be treated as branch-local narrative and checklist files rather than a shared multi-agent queue or canonical experiment index. The shared cross-agent experiment history is the locked experiment log on `agentic/state`.
 
-See [docs/dynamic-notes.md](docs/dynamic-notes.md) for the notes repo layout, role notes, note-updater flow, experiment-logger flow, and experiment log format.
+See [docs/agentic-notes.md](docs/agentic-notes.md) for the notes repo layout, role notes, note-updater flow, experiment-logger flow, and experiment log format.
 
-### Multi-Node Dispatch (Slurm + Apptainer)
+### Job Backend Skills
 
-For multi-node Slurm allocations, the `--multi-node` flag starts a dispatcher that lets the agent run experiments on remote nodes via the `remote-run` command inside the container:
-
-```bash
-get_gpu 2 2                          # Allocate 2 nodes × 2 GPUs
-agentic-researcher --runtime apptainer --multi-node
-agentic-researcher --runtime apptainer --multi-node --test
-```
-
-Off by default. Requires Apptainer runtime and an active multi-node Slurm allocation. Single-node workflows are unaffected.
-
-### GPU Backend Skills
-
-Agentic Researcher can render project skills for GPU placement backends. In native mode, `AR_GPU_BACKEND=auto` uses `cluster-run` when it is available on `PATH`; otherwise no external GPU backend is configured.
+Agentic Researcher can render project skills for job placement and execution backends. Backends are selected explicitly as optional skills.
 
 Skill definitions start from neutral Agentic Researcher sources. Always-on skills live in `skills/`; selectable skills live in `optional-skills/`. Both are rendered into the selected CLI's project discovery path: `.claude/skills` for Claude, `.gemini/skills` for Gemini, `.opencode/skills` for OpenCode, and `.agents/skills` for Codex/pi. If a selected skill has `INSTRUCTIONS.md`, that file is also injected into the workspace instruction file.
 
 Agent definitions start from neutral Markdown files in AR's built-in `agents/` directory and optional org repo `agents/` directory. A definition with `kind: main` can be selected with `AR_MAIN_AGENT` and is inserted into the top-level instruction file. A definition with `kind: subagent` is rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Org repo agents render after built-ins, so org agents win on name conflict. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that agent where supported. To add agents and roles, see [docs/extending-ar.md](docs/extending-ar.md#agents-and-roles).
 
 ```bash
-agentic-researcher --runtime native --gpu-backend cluster-run
 agentic-researcher --optional-skill cluster-run
 cluster-run status
 cluster-run --detach --num-gpus 1 --name exp-e005 -- uv run python train.py --exp E005
 ```
 
-The existing `--multi-node` flow selects the `remote-run` backend for Apptainer plus Slurm allocations.
+For multi-node Slurm allocations, enable the managed `remote-run` optional skill. It checks its own requirements, starts the host-side dispatcher, binds the `remote-run` command into the Apptainer sandbox, and exposes the backend to the agent:
 
-To add lab- or site-specific backends, create an optional skill under `optional-skills/` and enable it with `--optional-skill`. See [docs/extending-ar.md](docs/extending-ar.md) for the optional skill layout, custom GPU backend checklist, and when launcher changes are needed.
+```bash
+get_gpu 2 2                          # Allocate 2 nodes x 2 GPUs
+agentic-researcher --sandbox apptainer --optional-skill remote-run --test
+agentic-researcher --sandbox apptainer --optional-skill remote-run
+remote-run --nodes
+remote-run htc-gpuXXX --bg -- uv run python train.py --exp E005
+```
+
+To add lab- or site-specific backends, create an optional skill under `optional-skills/` and enable it with `--optional-skill`. See [docs/extending-ar.md](docs/extending-ar.md) for the optional skill layout, custom job backend checklist, and when launcher changes are needed.
 
 ## Org Notes
 
@@ -226,7 +224,7 @@ Put only short, high-value guidance in `always-injected.md`. Put longer or situa
 
 Org-provided agents in `agents/*.md` use the same neutral Markdown format as AR's built-in agents. They are rendered after built-ins, so an org agent with the same `name` as a built-in agent wins. `AR_MAIN_AGENT` selects both the top-level main-agent definition and the role-specific notes for that top-level agent. Subagents use their own `name` as the role id for role notes.
 
-See [docs/dynamic-notes.md](docs/dynamic-notes.md) for the full notes layout and [docs/extending-ar.md](docs/extending-ar.md#agents-and-roles) for the agent format.
+See [docs/agentic-notes.md](docs/agentic-notes.md) for the full notes layout and [docs/extending-ar.md](docs/extending-ar.md#agents-and-roles) for the agent format.
 
 ## Supported CLI Tools
 
@@ -238,7 +236,7 @@ See [docs/dynamic-notes.md](docs/dynamic-notes.md) for the full notes layout and
 | [Codex CLI](https://github.com/openai/codex) | `AGENTS.md` | OpenAI | `--tool codex` |
 | [pi](https://github.com/badlogic/pi-mono) | `AGENTS.md` | Any | `--tool pi` |
 
-At launch, AR also renders a project-local compaction hook for the selected CLI. After context compaction, the hook uses `$AR_NOTES_CLI` to pull the org notes and project `agentic/state` checkouts under local locks, rematerializes the instruction file rendered for that exact invocation (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`), tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary, asks it to read the refreshed instruction file, and then resumes the task it was already doing. In container mode the AR runtime is mounted read-only at `/opt/agentic-researcher`, while `AR_STATE_ROOT` is mounted read-write so the org checkout and project state branch can be updated. Claude and Codex use compact-session hooks, Gemini uses `PreCompress` plus a one-shot `BeforeModel` refresh, OpenCode uses a compaction plugin, and pi uses a launch-specific extension.
+At launch, AR also renders a project-local compaction hook for the selected CLI. After context compaction, the hook uses `$AR_NOTES_CLI` to pull the org notes and project `agentic/state` checkouts under local locks, rematerializes the instruction file rendered for that exact invocation (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`), tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary, asks it to read the refreshed instruction file, and then resumes the task it was already doing. In container mode the AR install is mounted read-only at `/opt/agentic-researcher`, while `AR_STATE_ROOT` is mounted read-write so the org checkout and project state branch can be updated. Claude and Codex use compact-session hooks, Gemini uses `PreCompress` plus a one-shot `BeforeModel` refresh, OpenCode uses a compaction plugin, and pi uses a launch-specific extension.
 
 ## Architecture
 
@@ -246,21 +244,21 @@ At launch, AR also renders a project-local compaction hook for the selected CLI.
 
 | Layer | Details |
 |-------|---------|
-| **Filesystem isolation** | The agent can write `/workspace` and the mounted `AR_STATE_ROOT`; the AR runtime is mounted read-only at `/opt/agentic-researcher`; extra directories from `AR_EXTRA_BIND_DIRS` are mounted under `/workspace/.mount/<basename>` |
+| **Filesystem isolation** | The agent can write `/workspace` and the mounted `AR_STATE_ROOT`; the AR install is mounted read-only at `/opt/agentic-researcher`; extra directories from `AR_EXTRA_BIND_DIRS` are mounted under `/workspace/.mount/<basename>` |
 | **Namespace isolation** | Apptainer `--compat` enables user/mount namespaces |
 | **Path traversal protection** | Symlinks resolved; system directories blocked |
 
 `--yolo` auto-approves tool calls but does **not** weaken filesystem isolation.
 
-Native mode intentionally disables Agentic Researcher filesystem isolation: the selected CLI runs directly in the project directory with your host `HOME`, `PATH`, and credentials.
+`--sandbox none` intentionally disables Agentic Researcher filesystem isolation: the selected CLI runs directly in the project directory with your host `HOME`, `PATH`, and credentials.
 
 ### Research Agent Instructions
 
-The framework ships `INSTRUCTIONS.md` as a canonical template containing universal research commandments (e.g., never manipulate evaluation, one variable per experiment, record everything) and domain-specific modules for mathematical and compute-intensive research. At launch it is copied into the workspace under the filename required by the selected tool. The `setup_research_plan` skill then fills in the project-specific section through an interactive dialogue.
+The framework ships `INSTRUCTIONS.md` as a shared base template and `agents/*.md` as neutral main-agent and subagent definitions. At launch, AR renders the selected main agent and injects matching org/project notes into the workspace under the filename required by the selected tool. The `setup_research_plan` skill updates the `research-coordinator` project role note on `agentic/state`; it does not make the materialized instruction file canonical.
 
 ## Citation
 
-If you use this framework, please cite our paper:
+Citation for the original Agentic Researcher paper:
 
 ```bibtex
 @misc{zimmer2026agenticresearcherpracticalguide,

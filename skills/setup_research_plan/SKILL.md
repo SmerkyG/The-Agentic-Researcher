@@ -6,27 +6,36 @@ description: "Set up or resume a research project in this workspace."
 You are a research agent. This skill sets up and executes a research project.
 If the user supplied extra text alongside the skill invocation, use it to bootstrap the setup questions and skip questions already answered by that text.
 
+Set `$PROJECT_DIR` to `/workspace` if that directory exists; otherwise set it to the current working directory.
+
 Detect which instruction file exists in the workspace and use it throughout:
 - Check for: `CLAUDE.md`, `GEMINI.md`, `AGENTS.md` (in that order)
 - Use the first one found as `$INSTRUCTION_FILE`
 - If none exists, choose the target from `$AR_CLI_TOOL`: `GEMINI.md` for Gemini; `AGENTS.md` for OpenCode, Codex, or pi; otherwise `CLAUDE.md`.
-- If no instruction file exists, locate a base template from `$AR_INSTRUCTIONS_TEMPLATE`, `/workspace/INSTRUCTIONS.md`, `./INSTRUCTIONS.md`, or legacy mounted paths `/claude-home/INSTRUCTIONS.md.template` and `/claude-home/.claude/INSTRUCTIONS.md.template`, then copy it to the chosen target.
-- If no instruction file or template is available, stop and ask the user to relaunch Agentic Researcher or set `AR_INSTRUCTIONS_TEMPLATE`.
+- If no instruction file exists, stop and ask the user to relaunch Agentic Researcher so the launcher can render it.
 
-Check the state of `/workspace/$INSTRUCTION_FILE` to determine what to do.
+Find the Agentic Notes helper:
+- Prefer `$AR_NOTES_CLI`.
+- Otherwise, if available, use `scripts/ar-notes` from the current repo.
+- If no helper is available, stop and ask the user to relaunch Agentic Researcher so project role notes can be updated in shared state.
+
+Set `$MAIN_AGENT` to `${AR_MAIN_AGENT:-research-coordinator}`.
+
+Check the project role notes for `$MAIN_AGENT` to determine what to do:
+- Read `$PROJECT_DIR/$INSTRUCTION_FILE` and inspect the generated Agentic Notes section.
+- If a `Project Role Notes: $MAIN_AGENT` injected section is present, treat that text as the role-specific project instructions for this main agent.
+- The injected project role note is a materialized view of `.agentic/roles/$MAIN_AGENT/notes/always-injected.md` on the project `agentic/state` branch. Do not edit the rendered section directly.
 
 **Detection logic:**
-- If `/workspace/$INSTRUCTION_FILE` exists AND its "## 8. Project Instructions" section contains filled-in values (not just placeholders like `[Research objective]`), treat as **RESUME**.
-- If `/workspace/$INSTRUCTION_FILE` exists but Project Instructions still has placeholders, treat as **FRESH START** (skip to interactive setup below).
-- If no instruction file exists after the template discovery/copy step above, stop and ask the user to relaunch Agentic Researcher or provide `AR_INSTRUCTIONS_TEMPLATE`.
+- If the project role note for `$MAIN_AGENT` contains filled-in values (not just placeholders like `[Research objective]`), treat as **RESUME**.
+- If the project role note is missing or still has placeholders, treat as **FRESH START** (skip to interactive setup below).
+- If no instruction file exists, stop and ask the user to relaunch Agentic Researcher.
 
-**Backward compatibility:** If `/workspace/research_instructions.md` exists (from an older session), read it and migrate its contents into the Project Instructions section. Then proceed as RESUME.
-
-## RESUME (Project Instructions filled):
+## RESUME (project role note filled):
 
 This is a resuming session. The project is already in progress.
 
-1. **Read** `/workspace/$INSTRUCTION_FILE` (especially Section 8).
+1. **Read** `$PROJECT_DIR/$INSTRUCTION_FILE`, especially the injected `Project Role Notes: $MAIN_AGENT` section.
 2. If the Agentic Researcher experiment log is available, read its `SUMMARY.md` first and open individual experiment YAML files only when needed.
 3. Read `report.tex` if present for branch-local narrative analysis, derivations, and detailed results.
 4. Read `TODO.md` if present for branch-local open questions and deferred checks. Do not treat it as a shared multi-agent work queue unless the user has provided a separate coordination mechanism.
@@ -39,15 +48,15 @@ This is a resuming session. The project is already in progress.
 8. **Ask** the user if they want to continue the planned direction or pivot
 9. **Continue** the autonomous experiment loop
 
-## FRESH START (Project Instructions has placeholders):
+## FRESH START (project role note missing or placeholder-only):
 
-1. **Read** `/workspace/$INSTRUCTION_FILE` Section 8 to confirm it needs filling
-2. If report.tex exists but Section 8 is empty, read report.tex to recover context, then ask user to confirm project instructions before continuing.
+1. **Read** `$PROJECT_DIR/$INSTRUCTION_FILE` to confirm project role notes for `$MAIN_AGENT` are missing or placeholder-only.
+2. If report.tex exists but the project role note is missing or placeholder-only, read report.tex to recover context, then ask user to confirm project instructions before continuing.
 3. Otherwise, proceed with interactive setup below.
 
 ### Interactive Setup
 
-Guide the user through filling in the Project Instructions section. Use any extra user text that accompanied the skill invocation to bootstrap Round 1 -- skip questions already answered by that text.
+Guide the user through filling in project instructions for the selected main agent. Use any extra user text that accompanied the skill invocation to bootstrap Round 1 -- skip questions already answered by that text.
 
 #### Round 1 -- Goal & Context
 Ask (2-3 questions max):
@@ -77,10 +86,10 @@ Ask (2-3 questions max):
 Wait for the user to respond before continuing.
 
 #### Round 4 -- Generate & Confirm
-1. Fill in the Project Instructions section of `/workspace/$INSTRUCTION_FILE` by replacing the placeholder content in Section 8 with the gathered information:
+1. Draft the project role note for `$MAIN_AGENT` as Markdown from the gathered information:
 
 ```markdown
-## 8. Project Instructions
+# Research Coordinator Project Instructions
 
 **Goal:** [filled from Round 1]
 
@@ -112,11 +121,24 @@ Wait for the user to respond before continuing.
 - [any additional context]
 ```
 
-2. **Show** the filled-in Section 8 to the user for review
+2. **Show** the filled-in project role note to the user for review
 3. **Ask** if they want to modify anything
-4. **Save** the updated `/workspace/$INSTRUCTION_FILE`
+4. **Save** the approved note to a temporary Markdown file outside the project source tree, then update shared state:
+
+```bash
+${AR_NOTES_CLI:-scripts/ar-notes} replace-note \
+  --project-dir "$PROJECT_DIR" \
+  --scope project_role \
+  --role "$MAIN_AGENT" \
+  --note-name always-injected \
+  --note-file /tmp/project-role-instructions.md \
+  --refresh-parent \
+  --tool "${AR_CLI_TOOL:-codex}"
+```
+
+This commits the role-specific project instructions to `.agentic/roles/$MAIN_AGENT/notes/always-injected.md` on the project `agentic/state` branch and rematerializes `$PROJECT_DIR/$INSTRUCTION_FILE`. Do not commit the temporary file.
 5. **Proceed** with initial setup:
-   - **Explore** the codebase structure (`ls -la /workspace/`, read key files, understand the architecture)
+   - **Explore** the codebase structure (`ls -la "$PROJECT_DIR"`, read key files, understand the architecture)
    - **Check GPU** with `nvidia-smi` (note GPU model and VRAM)
    - **Install dependencies** with `uv sync`
    - **Run baseline evaluation**: Execute the evaluation command from the instructions and record results

@@ -32,20 +32,19 @@ detect_default_oci_runtime() {
 show_help() {
     cat <<'EOF'
 Usage:
-  container/build.sh [--runtime docker|podman|apptainer|native]
+  container/build.sh [--runtime docker|podman|apptainer]
 
-Build the Agentic Researcher container image for the selected runtime.
-Native mode does not use a container image.
+Build the Agentic Researcher container image for the selected container runtime.
 EOF
 }
 
-RUNTIME="${AR_CONTAINER_RUNTIME:-}"
+RUNTIME="${AR_BUILD_RUNTIME:-}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --runtime)
             if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                echo "Error: --runtime requires a value (docker|podman|apptainer|native)." >&2
+                echo "Error: --runtime requires a value (docker|podman|apptainer)." >&2
                 exit 1
             fi
             RUNTIME="$2"
@@ -72,19 +71,14 @@ if [[ -z "$RUNTIME" ]]; then
 fi
 
 case "$RUNTIME" in
-    docker|podman|apptainer|native)
+    docker|podman|apptainer)
         ;;
     *)
         echo "Error: Unsupported runtime: $RUNTIME" >&2
-        echo "Supported runtimes: docker, podman, apptainer, native" >&2
+        echo "Supported runtimes: docker, podman, apptainer" >&2
         exit 1
         ;;
 esac
-
-if [[ "$RUNTIME" == "native" ]]; then
-    echo "Native runtime selected; no container image to build."
-    exit 0
-fi
 
 if [[ "$RUNTIME" == "docker" || "$RUNTIME" == "podman" ]]; then
     if ! command -v "$RUNTIME" >/dev/null 2>&1; then

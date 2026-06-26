@@ -145,9 +145,25 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     (state / ".agentic" / "notes" / "evaluation.md").write_text(
         "# Evaluation\n\n", encoding="utf-8"
     )
-    git(state, "add", ".agentic/notes/always-injected.md", ".agentic/notes/evaluation.md")
+    project_role = state / ".agentic" / "roles" / "gpu-kernel-engineer" / "notes"
+    project_role.mkdir(parents=True, exist_ok=True)
+    (project_role / "always-injected.md").write_text(
+        "# Project GPU Role Notes\n\nProject role body.\n",
+        encoding="utf-8",
+    )
+    (project_role / "benchmarking.md").write_text("# Project Benchmarking\n\n", encoding="utf-8")
+    git(
+        state,
+        "add",
+        ".agentic/notes/always-injected.md",
+        ".agentic/notes/evaluation.md",
+        ".agentic/roles/gpu-kernel-engineer/notes/always-injected.md",
+        ".agentic/roles/gpu-kernel-engineer/notes/benchmarking.md",
+    )
     git(state, "commit", "-m", "seed project notes")
     git(state, "push")
+
+    (project / "AGENTS.md").write_text("# Existing Materialized File\n\n# Main Agent Body\n", encoding="utf-8")
 
     run(
         [
@@ -164,17 +180,84 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     )
 
     text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "# Main Agent Body" in text
     assert "Org body." in text
     assert "Role body." in text
     assert "Project body." in text
+    assert "Project role body." in text
     assert "Org notes:" in text
-    assert "Current role notes: gpu-kernel-engineer" in text
+    assert "Organization role notes: gpu-kernel-engineer" in text
     assert "Project notes:" in text
+    assert "Project role notes: gpu-kernel-engineer" in text
     assert "  - triton.md" in text
     assert "  - pytorch.md" in text
     assert "  - kernel-optimization.md" in text
     assert "  - evaluation.md" in text
+    assert "  - benchmarking.md" in text
     assert "  - always-injected.md" not in text
+
+
+def test_replace_project_role_note_updates_shared_state_and_rendered_instructions(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path)
+    note_file = tmp_path / "research-coordinator-note.md"
+    note_file.write_text(
+        "# Research Coordinator Project Instructions\n\n"
+        "**Goal:** Draft a sparse transformer paper.\n\n"
+        "**Primary Metric:**\n"
+        "- Name: validation loss\n"
+        "- Direction: lower is better\n"
+        "- Eval command: `uv run python eval.py`\n"
+        "- Baseline: 1.23\n",
+        encoding="utf-8",
+    )
+
+    run(
+        [
+            str(AR_NOTES),
+            "replace-note",
+            "--project-dir",
+            str(project),
+            "--scope",
+            "project_role",
+            "--role",
+            "research-coordinator",
+            "--note-name",
+            "always-injected",
+            "--note-file",
+            str(note_file),
+            "--refresh-parent",
+            "--tool",
+            "codex",
+        ],
+        env=env,
+    )
+
+    state = state_checkout(env)
+    stored = (
+        state / ".agentic" / "roles" / "research-coordinator" / "notes" / "always-injected.md"
+    ).read_text(encoding="utf-8")
+    rendered = (project / "AGENTS.md").read_text(encoding="utf-8")
+    listed = run(
+        [
+            str(AR_NOTES),
+            "list-notes",
+            "--scope",
+            "project_role",
+            "--role",
+            "research-coordinator",
+            "--project-dir",
+            str(project),
+        ],
+        env=env,
+    )
+    assert stored.startswith("# Research Coordinator Project Instructions")
+    assert not (state / "AGENTS.md").exists()
+    assert "**Goal:** Draft a sparse transformer paper." in rendered
+    assert "validation loss" in stored
+    assert "Project Role Notes: research-coordinator" in rendered
+    assert "Directory:" in listed.stdout
 
 
 def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path: Path) -> None:
@@ -210,11 +293,10 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     fake_bin.mkdir()
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
-    env["AR_GPU_BACKEND"] = "none"
     launch = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "codex",
             str(project),
@@ -787,7 +869,6 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = base_env(tmp_path, org_remote)
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
-    env["AR_GPU_BACKEND"] = "none"
     stale_skill = project / ".agents" / "skills" / "experiment_log" / "SKILL.md"
     stale_skill.parent.mkdir(parents=True)
     stale_skill.write_text(
@@ -798,7 +879,7 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime", "native",
+            "--sandbox", "none",
             "--tool",
             "codex",
             str(project),
@@ -857,13 +938,12 @@ def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = base_env(tmp_path, org_remote)
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
-    env["AR_GPU_BACKEND"] = "none"
 
     run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime",
-            "native",
+            "--sandbox",
+            "none",
             "--tool",
             "codex",
             str(project),
@@ -912,13 +992,12 @@ def test_launcher_renders_org_main_agent_override_without_subagent(tmp_path: Pat
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = base_env(tmp_path, org_remote)
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
-    env["AR_GPU_BACKEND"] = "none"
 
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime",
-            "native",
+            "--sandbox",
+            "none",
             "--tool",
             "codex",
             str(project),
@@ -933,6 +1012,114 @@ def test_launcher_renders_org_main_agent_override_without_subagent(tmp_path: Pat
     assert "# Research Coordinator Instructions" not in instruction_text
     assert "Use the org coordinator note." in instruction_text
     assert not (project / ".codex" / "agents" / "research-coordinator.toml").exists()
+
+
+def test_multiple_main_agents_use_separate_worktrees_and_project_role_notes(tmp_path: Path) -> None:
+    org_remote = init_bare_remote(
+        tmp_path,
+        "org-paper-agent",
+        {
+            "agents/research-paper-author.md": (
+                "---\n"
+                "name: research-paper-author\n"
+                "kind: main\n"
+                "description: Draft papers from verified evidence.\n"
+                "codex_reasoning_effort: high\n"
+                "---\n\n"
+                "# Research Paper Author Instructions\n\n"
+                "Write from verified experiment logs and project role notes.\n"
+            ),
+        },
+    )
+    project_remote = seed_project_remote(tmp_path)
+    coordinator = clone_project(tmp_path, project_remote, name="project-coordinator")
+    paper = tmp_path / "project-paper"
+    run(["git", "-C", str(coordinator), "worktree", "add", "-b", "paper-draft", str(paper), "HEAD"])
+    configure_git(paper)
+
+    env = base_env(tmp_path, org_remote)
+    coordinator_note = tmp_path / "coordinator-note.md"
+    coordinator_note.write_text(
+        "# Research Coordinator Project Instructions\n\n"
+        "Coordinator goal: run verified experiments.\n",
+        encoding="utf-8",
+    )
+    paper_note = tmp_path / "paper-note.md"
+    paper_note.write_text(
+        "# Research Paper Author Project Instructions\n\n"
+        "Paper goal: write the manuscript from verified evidence.\n",
+        encoding="utf-8",
+    )
+    for role, note in (
+        ("research-coordinator", coordinator_note),
+        ("research-paper-author", paper_note),
+    ):
+        run(
+            [
+                str(AR_NOTES),
+                "replace-note",
+                "--project-dir",
+                str(coordinator),
+                "--scope",
+                "project_role",
+                "--role",
+                role,
+                "--note-name",
+                "always-injected",
+                "--note-file",
+                str(note),
+            ],
+            env=env,
+        )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    coordinator_launch = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
+            "--main-agent",
+            "research-coordinator",
+            str(coordinator),
+        ],
+        env=env,
+    )
+    paper_launch = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
+            "--main-agent",
+            "research-paper-author",
+            str(paper),
+        ],
+        env=env,
+    )
+
+    assert coordinator_launch.returncode == 0, coordinator_launch.stderr
+    assert paper_launch.returncode == 0, paper_launch.stderr
+    coordinator_text = (coordinator / "AGENTS.md").read_text(encoding="utf-8")
+    paper_text = (paper / "AGENTS.md").read_text(encoding="utf-8")
+    assert "# Research Coordinator Instructions" in coordinator_text
+    assert "# Research Paper Author Instructions" not in coordinator_text
+    assert "# Research Paper Author Instructions" in paper_text
+    assert "# Research Coordinator Instructions" not in paper_text
+    assert "Coordinator goal: run verified experiments." in coordinator_text
+    assert "Paper goal: write the manuscript" not in coordinator_text
+    assert "Paper goal: write the manuscript from verified evidence." in paper_text
+    assert "Coordinator goal: run verified experiments." not in paper_text
+    state = state_checkout(env)
+    assert (state / ".agentic" / "roles" / "research-coordinator" / "notes" / "always-injected.md").exists()
+    assert (state / ".agentic" / "roles" / "research-paper-author" / "notes" / "always-injected.md").exists()
+    assert not (state / "AGENTS.md").exists()
 
 
 def test_org_main_agent_name_conflict_removes_builtin_subagent(tmp_path: Path) -> None:
@@ -963,13 +1150,12 @@ def test_org_main_agent_name_conflict_removes_builtin_subagent(tmp_path: Path) -
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = base_env(tmp_path, org_remote)
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
-    env["AR_GPU_BACKEND"] = "none"
 
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--runtime",
-            "native",
+            "--sandbox",
+            "none",
             "--tool",
             "codex",
             str(project),

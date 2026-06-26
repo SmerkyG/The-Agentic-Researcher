@@ -6,7 +6,7 @@ description: "Dispatch GPU jobs to remote nodes in an Apptainer plus Slurm alloc
 # Remote Run GPU Jobs
 
 Use `remote-run` only when this optional skill is active and `AR_DISPATCH_DIR` is set.
-This backend is created by `agentic-researcher --multi-node` inside an active multi-node Slurm allocation.
+This backend is created by `agentic-researcher --sandbox apptainer --optional-skill remote-run` inside an active multi-node Slurm allocation.
 
 Start each work batch by checking local GPUs with `nvidia-smi`, then `rocm-smi` if needed. Discover remote/backend nodes separately:
 

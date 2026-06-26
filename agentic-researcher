@@ -38,19 +38,18 @@ if [[ -L "$SCRIPT_PATH" ]]; then
 fi
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 USER=${USER:-$(whoami)}
-AR_RUNTIME_CONTAINER_DIR="/opt/agentic-researcher"
+AR_INSTALL_CONTAINER_DIR="/opt/agentic-researcher"
 
 capture_env_overrides() {
     local var override_var unset_marker="__AR_UNSET__"
     local override_vars=(
-        AR_CONTAINER_RUNTIME
+        AR_SANDBOX
         AR_CLI_TOOL
         AR_DEFAULT_MODEL
         AR_STATE_ROOT
         AR_EXTRA_BIND_DIRS
         AR_EXTRA_ENV
         AR_DOCKER_GPUS
-        AR_GPU_BACKEND
         AR_OPTIONAL_SKILLS
         AR_ORG_NOTES_REPO
         AR_MAIN_AGENT
@@ -98,14 +97,13 @@ load_config() {
 apply_env_overrides() {
     local var override_var
     local override_vars=(
-        AR_CONTAINER_RUNTIME
+        AR_SANDBOX
         AR_CLI_TOOL
         AR_DEFAULT_MODEL
         AR_STATE_ROOT
         AR_EXTRA_BIND_DIRS
         AR_EXTRA_ENV
         AR_DOCKER_GPUS
-        AR_GPU_BACKEND
         AR_OPTIONAL_SKILLS
         AR_ORG_NOTES_REPO
         AR_MAIN_AGENT
@@ -134,11 +132,8 @@ apply_env_overrides() {
         fi
     done
 
-    if [[ -n "${AR_CONTAINER_RUNTIME_OVERRIDE:-}" ]]; then
-        AR_CONTAINER_RUNTIME="$AR_CONTAINER_RUNTIME_OVERRIDE"
-    fi
-    if [[ -n "${AR_GPU_BACKEND_OVERRIDE:-}" ]]; then
-        AR_GPU_BACKEND="$AR_GPU_BACKEND_OVERRIDE"
+    if [[ -n "${AR_SANDBOX_OVERRIDE:-}" ]]; then
+        AR_SANDBOX="$AR_SANDBOX_OVERRIDE"
     fi
     if [[ -n "${AR_OPTIONAL_SKILLS_OVERRIDE:-}" ]]; then
         if [[ -n "${AR_OPTIONAL_SKILLS:-}" ]]; then
@@ -150,6 +145,9 @@ apply_env_overrides() {
     if [[ -n "${AR_PROJECT_ID_OVERRIDE:-}" ]]; then
         AR_PROJECT_ID="$AR_PROJECT_ID_OVERRIDE"
     fi
+    if [[ -n "${AR_MAIN_AGENT_OVERRIDE:-}" ]]; then
+        AR_MAIN_AGENT="$AR_MAIN_AGENT_OVERRIDE"
+    fi
     if [[ -n "${AR_CLI_TOOL_OVERRIDE:-}" ]]; then
         AR_CLI_TOOL="$AR_CLI_TOOL_OVERRIDE"
     fi
@@ -158,31 +156,7 @@ apply_env_overrides() {
     fi
 }
 
-check_install_staleness() {
-    local marker="$SCRIPT_DIR/.agentic-researcher-install"
-    [[ -f "$marker" ]] || return 0
-
-    local source_path="" install_commit=""
-    while IFS='=' read -r key value; do
-        case "$key" in
-            source_path) source_path="$value" ;;
-            install_commit) install_commit="$value" ;;
-        esac
-    done < "$marker"
-
-    [[ -n "$source_path" && -n "$install_commit" && -d "$source_path/.git" ]] || return 0
-
-    local current_commit
-    current_commit="$(git -C "$source_path" rev-parse HEAD 2>/dev/null)" || return 0
-
-    if [[ "$install_commit" != "$current_commit" ]]; then
-        echo "Warning: installed version is outdated (source repo has newer commits)."
-        echo "  Run: $source_path/scripts/install.sh --force"
-        echo ""
-    fi
-}
-
-detect_default_oci_runtime() {
+detect_default_sandbox() {
     if command -v docker >/dev/null 2>&1; then
         printf '%s\n' "docker"
     elif command -v podman >/dev/null 2>&1; then
@@ -193,9 +167,9 @@ detect_default_oci_runtime() {
 }
 
 apply_defaults() {
-    if [[ -z "${AR_CONTAINER_RUNTIME:-}" ]]; then
-        AR_CONTAINER_RUNTIME="$(detect_default_oci_runtime)"
-        if [[ "$AR_CONTAINER_RUNTIME" == "podman" ]] && ! command -v docker >/dev/null 2>&1; then
+    if [[ -z "${AR_SANDBOX:-}" ]]; then
+        AR_SANDBOX="$(detect_default_sandbox)"
+        if [[ "$AR_SANDBOX" == "podman" ]] && ! command -v docker >/dev/null 2>&1; then
             echo "Docker not found, falling back to Podman."
         fi
     fi
@@ -204,7 +178,6 @@ apply_defaults() {
     AR_EXTRA_BIND_DIRS="${AR_EXTRA_BIND_DIRS:-}"
     AR_EXTRA_ENV="${AR_EXTRA_ENV:-}"
     AR_DOCKER_GPUS="${AR_DOCKER_GPUS:-auto}"
-    AR_GPU_BACKEND="${AR_GPU_BACKEND:-auto}"
     AR_OPTIONAL_SKILLS="${AR_OPTIONAL_SKILLS:-}"
     AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
     AR_MAIN_AGENT="${AR_MAIN_AGENT:-research-coordinator}"
@@ -241,12 +214,13 @@ apply_defaults() {
 }
 YOLO_MODE=false
 TEST_MODE=false
-MULTI_NODE=false
 MODEL_SPECIFIED=false
 DEBUG_LAUNCH=false
 WORKSPACE_DIR=""
 TOOL_ARGS=()
 SELECTED_OPTIONAL_SKILLS=()
+OPTIONAL_SKILL_BINDS=()
+OPTIONAL_SKILL_ENV=()
 
 append_optional_skill_override() {
     local skill_name="$1"
@@ -276,20 +250,16 @@ parse_arguments() {
                 TEST_MODE=true
                 shift
                 ;;
-            --multi-node)
-                MULTI_NODE=true
-                shift
-                ;;
             --debug-launch)
                 DEBUG_LAUNCH=true
                 shift
                 ;;
-            --runtime)
+            --sandbox)
                 if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --runtime requires a value (docker|podman|apptainer|native)"
+                    echo "Error: --sandbox requires a value (docker|podman|apptainer|none)"
                     exit 1
                 fi
-                AR_CONTAINER_RUNTIME_OVERRIDE="$2"
+                AR_SANDBOX_OVERRIDE="$2"
                 shift 2
                 ;;
             --tool)
@@ -301,12 +271,8 @@ parse_arguments() {
                 shift 2
                 ;;
             --gpu-backend)
-                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --gpu-backend requires a value (auto|none|cluster-run|remote-run)"
-                    exit 1
-                fi
-                AR_GPU_BACKEND_OVERRIDE="$2"
-                shift 2
+                echo "Error: --gpu-backend has been removed. Use --optional-skill cluster-run or another backend skill."
+                exit 1
                 ;;
             --optional-skill)
                 if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
@@ -322,6 +288,14 @@ parse_arguments() {
                     exit 1
                 fi
                 AR_PROJECT_ID_OVERRIDE="$2"
+                shift 2
+                ;;
+            --main-agent)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --main-agent requires a value"
+                    exit 1
+                fi
+                AR_MAIN_AGENT_OVERRIDE="$2"
                 shift 2
                 ;;
             --yolo)
@@ -386,16 +360,15 @@ Usage:
   agentic-researcher [OPTIONS] [DIRECTORY] [TOOL_OPTIONS...]
 
 Options:
-  --setup             Run the optional interactive setup wizard
+  --setup             Run the interactive setup wizard
   --clean             Remove launcher-managed local state
   --uninstall         Remove the installed launcher and optional local state
-  --runtime NAME      Runtime for this invocation (docker|podman|apptainer|native)
+  --sandbox NAME      Sandbox for this invocation (docker|podman|apptainer|none)
   --test              Quick validation of sandbox environment
-  --multi-node        Enable multi-node dispatch (Apptainer + Slurm only)
-  --gpu-backend NAME  GPU job backend (auto|none|cluster-run|remote-run)
   --optional-skill NAME
                       Install an optional skill from optional-skills/ (repeatable)
   --project-id ID     Override inferred project id for notes and experiment state
+  --main-agent NAME   Override top-level main agent for this invocation
   --debug-launch      Print extra launcher details and enable tool startup logs where supported
   --tool TOOL         Select CLI tool (claude|opencode|gemini|codex|pi)
   --yolo              Auto-approve all permissions (Claude Code only)
@@ -406,11 +379,12 @@ Options:
   TOOL_OPTIONS        Additional options passed to the CLI tool
 
 Examples:
-  agentic-researcher --runtime native
-  agentic-researcher --runtime native --gpu-backend cluster-run
-  agentic-researcher --runtime apptainer --multi-node
+  agentic-researcher --sandbox none
   agentic-researcher --optional-skill cluster-run
-  agentic-researcher --setup                      # Optional setup wizard
+  agentic-researcher --sandbox apptainer --optional-skill remote-run
+  agentic-researcher --sandbox apptainer --optional-skill remote-run --test
+  agentic-researcher --main-agent research-paper-author
+  agentic-researcher --setup                      # Setup wizard
   agentic-researcher --clean                      # Interactive cleanup of local state
   agentic-researcher --uninstall                  # Remove installed launcher
   agentic-researcher --clean --yes --include-config
@@ -422,18 +396,16 @@ Examples:
   agentic-researcher --tool gemini
   agentic-researcher --tool codex ~/project
   agentic-researcher --yolo --model opus
-  agentic-researcher --runtime apptainer --multi-node
-  agentic-researcher --runtime apptainer --multi-node --test
 
 What's Sandboxed:
   The agent can write your project directory and AR_STATE_ROOT.
-  The AR runtime is mounted read-only at /opt/agentic-researcher.
+  The AR install is mounted read-only at /opt/agentic-researcher.
   Cannot access the rest of your home directory, except selected auth/config mounts.
   Even with --yolo, the agent stays sandboxed.
 
 Security:
   --yolo auto-approves tool calls but maintains filesystem isolation.
-  --runtime native disables Agentic Researcher filesystem isolation.
+  --sandbox none disables Agentic Researcher filesystem isolation.
   OpenCode/Gemini/Codex have no built-in permission system.
   Review changes before committing to git.
 EOF
@@ -568,14 +540,14 @@ validate_apptainer_host() {
         echo "Error: Apptainer is only supported on Linux hosts. Current host: $host_os"
         echo ""
         echo "Use Docker on this machine instead:"
-        echo "  agentic-researcher --runtime docker ..."
+        echo "  agentic-researcher --sandbox docker ..."
         echo ""
         echo "To test Apptainer, run the launcher on a Linux workstation, WSL2 instance, or cluster node."
         exit 1
     fi
 
     if ! command -v apptainer >/dev/null 2>&1; then
-        echo "Error: Apptainer runtime selected, but 'apptainer' is not installed or not on PATH."
+        echo "Error: Apptainer sandbox selected, but 'apptainer' is not installed or not on PATH."
         echo ""
         echo "Install Apptainer on the Linux host, then rerun:"
         echo "  $SCRIPT_DIR/container/build.sh --runtime apptainer"
@@ -583,29 +555,29 @@ validate_apptainer_host() {
     fi
 }
 
-validate_runtime() {
-    case "$AR_CONTAINER_RUNTIME" in
-        docker|podman|apptainer|native)
+validate_sandbox() {
+    case "$AR_SANDBOX" in
+        docker|podman|apptainer|none)
             ;;
         *)
-            echo "Error: Unsupported runtime: $AR_CONTAINER_RUNTIME"
-            echo "Supported runtimes: docker, podman, apptainer, native"
+            echo "Error: Unsupported sandbox: $AR_SANDBOX"
+            echo "Supported sandboxes: docker, podman, apptainer, none"
             exit 1
             ;;
     esac
 }
 
 container_image_exists() {
-    case "$AR_CONTAINER_RUNTIME" in
-        native)
+    case "$AR_SANDBOX" in
+        none)
             return 0
             ;;
         apptainer)
             [[ -f "$SCRIPT_DIR/container/agentic_researcher.sif" ]]
             ;;
         docker|podman)
-            command -v "$AR_CONTAINER_RUNTIME" >/dev/null 2>&1 || return 1
-            "$AR_CONTAINER_RUNTIME" image inspect agentic-researcher:latest >/dev/null 2>&1
+            command -v "$AR_SANDBOX" >/dev/null 2>&1 || return 1
+            "$AR_SANDBOX" image inspect agentic-researcher:latest >/dev/null 2>&1
             ;;
         *)
             return 1
@@ -625,14 +597,14 @@ auto_build_enabled() {
 }
 
 build_container_image() {
-    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+    if [[ "$AR_SANDBOX" == "none" ]]; then
         return 0
     fi
-    "$SCRIPT_DIR/container/build.sh" --runtime "$AR_CONTAINER_RUNTIME"
+    "$SCRIPT_DIR/container/build.sh" --runtime "$AR_SANDBOX"
 }
 
 ensure_container_image() {
-    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+    if [[ "$AR_SANDBOX" == "none" ]]; then
         return 0
     fi
 
@@ -641,24 +613,24 @@ ensure_container_image() {
     fi
 
     if ! auto_build_enabled; then
-        echo "Error: Container image for $AR_CONTAINER_RUNTIME was not found."
+        echo "Error: Container image for $AR_SANDBOX was not found."
         echo ""
         echo "Build it with:"
-        echo "  $SCRIPT_DIR/container/build.sh --runtime $AR_CONTAINER_RUNTIME"
+        echo "  $SCRIPT_DIR/container/build.sh --runtime $AR_SANDBOX"
         echo ""
-        echo "Or use native mode:"
-        echo "  agentic-researcher --runtime native ..."
+        echo "Or use none mode:"
+        echo "  agentic-researcher --sandbox none ..."
         exit 1
     fi
 
-    echo "Container image for $AR_CONTAINER_RUNTIME was not found."
+    echo "Container image for $AR_SANDBOX was not found."
     echo "Building it now. This may take several minutes."
     echo ""
     build_container_image
 }
 
 validate_container() {
-    if [[ "$AR_CONTAINER_RUNTIME" == "apptainer" ]]; then
+    if [[ "$AR_SANDBOX" == "apptainer" ]]; then
         validate_apptainer_host
         CONTAINER_IMAGE="$SCRIPT_DIR/container/agentic_researcher.sif"
         if [[ ! -f "$CONTAINER_IMAGE" ]]; then
@@ -686,76 +658,6 @@ validate_container() {
     # Docker/Podman validation happens at launch time
 }
 
-resolve_gpu_backend() {
-    local requested="${AR_GPU_BACKEND:-auto}"
-
-    case "$requested" in
-        auto|none|cluster-run|remote-run)
-            ;;
-        *)
-            echo "Error: Unsupported GPU backend: $requested"
-            echo "Supported GPU backends: auto, none, cluster-run, remote-run"
-            exit 1
-            ;;
-    esac
-
-    if [[ "$MULTI_NODE" == "true" ]]; then
-        if [[ "$requested" != "auto" && "$requested" != "remote-run" ]]; then
-            echo "Error: --multi-node uses the remote-run GPU backend, but AR_GPU_BACKEND=$requested."
-            exit 1
-        fi
-        GPU_BACKEND="remote-run"
-        return
-    fi
-
-    if [[ "$requested" == "remote-run" ]]; then
-        GPU_BACKEND="remote-run"
-        MULTI_NODE=true
-        return
-    fi
-
-    if [[ "$requested" == "cluster-run" ]]; then
-        GPU_BACKEND="cluster-run"
-        return
-    fi
-
-    if [[ "$requested" == "none" ]]; then
-        GPU_BACKEND="none"
-        return
-    fi
-
-    # auto
-    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]] && command -v cluster-run >/dev/null 2>&1; then
-        GPU_BACKEND="cluster-run"
-    else
-        GPU_BACKEND="none"
-    fi
-}
-
-validate_gpu_backend() {
-    case "${GPU_BACKEND:-none}" in
-        none)
-            return
-            ;;
-        cluster-run)
-            if [[ "$AR_CONTAINER_RUNTIME" != "native" ]]; then
-                echo "Error: cluster-run GPU backend requires --runtime native."
-                exit 1
-            fi
-            if ! command -v cluster-run >/dev/null 2>&1; then
-                echo "Error: cluster-run GPU backend selected, but 'cluster-run' is not on PATH."
-                exit 1
-            fi
-            if ! cluster-run --help >/dev/null 2>&1; then
-                echo "Error: cluster-run is on PATH but did not run successfully."
-                exit 1
-            fi
-            ;;
-        remote-run)
-            ;;
-    esac
-}
-
 append_selected_optional_skill() {
     local skill_name="$1"
     local existing
@@ -771,6 +673,16 @@ append_selected_optional_skill() {
     SELECTED_OPTIONAL_SKILLS+=("$skill_name")
 }
 
+optional_skill_selected() {
+    local needle="$1"
+    local existing
+
+    for existing in "${SELECTED_OPTIONAL_SKILLS[@]}"; do
+        [[ "$existing" == "$needle" ]] && return 0
+    done
+    return 1
+}
+
 append_optional_skills_from_list() {
     local skill_list="$1"
     local normalized skill_name
@@ -783,10 +695,19 @@ append_optional_skills_from_list() {
 
 resolve_optional_skills() {
     SELECTED_OPTIONAL_SKILLS=()
+    JOB_BACKEND="none"
     append_optional_skills_from_list "${AR_OPTIONAL_SKILLS:-}"
 
-    if [[ "${GPU_BACKEND:-none}" != "none" ]]; then
-        append_selected_optional_skill "$GPU_BACKEND"
+    if optional_skill_selected "cluster-run"; then
+        JOB_BACKEND="cluster-run"
+    fi
+
+    if optional_skill_selected "remote-run"; then
+        if [[ "${JOB_BACKEND:-none}" != "none" ]]; then
+            echo "Error: Select only one managed job backend optional skill."
+            exit 1
+        fi
+        JOB_BACKEND="remote-run"
     fi
 }
 
@@ -812,6 +733,33 @@ validate_optional_skills() {
     done
 }
 
+optional_skill_hook_path() {
+    local skill_name="$1"
+    local hook_name="$2"
+
+    printf '%s\n' "$SCRIPT_DIR/optional-skills/$skill_name/launcher/$hook_name.sh"
+}
+
+run_optional_skill_hooks() {
+    local hook_name="$1"
+    local require_hook="${2:-false}"
+    local skill_name hook_path ran_hook=false
+
+    for skill_name in "${SELECTED_OPTIONAL_SKILLS[@]}"; do
+        hook_path="$(optional_skill_hook_path "$skill_name" "$hook_name")"
+        [[ -f "$hook_path" ]] || continue
+        # Optional skill launcher hooks are trusted local scripts and are sourced
+        # so they can add binds/env vars or retain cleanup state.
+        source "$hook_path"
+        ran_hook=true
+    done
+
+    if [[ "$ran_hook" == "true" || "$require_hook" != "true" ]]; then
+        return 0
+    fi
+    return 1
+}
+
 setup_storage() {
     STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-researcher}"
 
@@ -819,7 +767,7 @@ setup_storage() {
     UV_PYTHON_INSTALL_DIR="$STATE_ROOT/uv/python"
     UV_TOOL_DIR="$STATE_ROOT/uv/tools"
 
-    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+    if [[ "$AR_SANDBOX" == "none" ]]; then
         mkdir -p "$STATE_ROOT"
         CACHE_BASE="$STATE_ROOT"
         HF_HOME="${HF_HOME:-$CACHE_BASE/hf_home}"
@@ -864,7 +812,7 @@ setup_storage() {
     fi
 
     # Apptainer cache
-    if [[ "$AR_CONTAINER_RUNTIME" == "apptainer" ]]; then
+    if [[ "$AR_SANDBOX" == "apptainer" ]]; then
         export APPTAINER_CACHEDIR="$STATE_ROOT/apptainer_cache"
         mkdir -p -m 700 "$APPTAINER_CACHEDIR"
 
@@ -901,7 +849,7 @@ setup_storage() {
 render_instruction_template() {
     local output_path="$1"
 
-    if [[ "$AR_CONTAINER_RUNTIME" == "docker" || "$AR_CONTAINER_RUNTIME" == "podman" ]]; then
+    if [[ "$AR_SANDBOX" == "docker" || "$AR_SANDBOX" == "podman" ]]; then
         awk '
             /<!-- DOCKER-OMIT-START -->/ { skip=1; next }
             /<!-- DOCKER-OMIT-END -->/   { skip=0; next }
@@ -910,24 +858,6 @@ render_instruction_template() {
     else
         cp "$SCRIPT_DIR/INSTRUCTIONS.md" "$output_path"
     fi
-}
-
-main_agent_block_name() {
-    local instruction_path="$1"
-
-    [[ -f "$instruction_path" ]] || return 0
-    awk '
-        /^<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START / {
-            for (i = 1; i <= NF; i++) {
-                if ($i ~ /^name=/) {
-                    sub(/^name=/, "", $i)
-                    sub(/-->$/, "", $i)
-                    print $i
-                    exit
-                }
-            }
-        }
-    ' "$instruction_path"
 }
 
 agent_name_for_source() {
@@ -988,7 +918,7 @@ find_agent_source_by_name() {
 setup_main_agent_instruction_block() {
     local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
     local main_agent="${AR_MAIN_AGENT:-research-coordinator}"
-    local source_path kind current_name temp_path
+    local source_path kind temp_path
 
     [[ -f "$instruction_path" ]] || return 0
 
@@ -1007,11 +937,6 @@ setup_main_agent_instruction_block() {
     if [[ "$kind" != "main" ]]; then
         echo "Error: AR_MAIN_AGENT '$main_agent' resolves to kind '$kind', not kind 'main'."
         exit 1
-    fi
-
-    current_name="$(main_agent_block_name "$instruction_path")"
-    if [[ "$current_name" == "$main_agent" ]]; then
-        return 0
     fi
 
     temp_path="${instruction_path}.tmp"
@@ -1221,7 +1146,7 @@ json_string() {
 workspace_runtime_path() {
     local relative_path="${1#./}"
 
-    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+    if [[ "$AR_SANDBOX" == "none" ]]; then
         printf '%s/%s\n' "$WORKSPACE_DIR" "$relative_path"
     else
         printf '/workspace/%s\n' "$relative_path"
@@ -1229,23 +1154,23 @@ workspace_runtime_path() {
 }
 
 workspace_root_runtime_path() {
-    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+    if [[ "$AR_SANDBOX" == "none" ]]; then
         printf '%s\n' "$WORKSPACE_DIR"
     else
         printf '%s\n' "/workspace"
     fi
 }
 
-ar_runtime_env_path() {
-    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+ar_install_env_path() {
+    if [[ "$AR_SANDBOX" == "none" ]]; then
         printf '%s\n' "$SCRIPT_DIR"
     else
-        printf '%s\n' "$AR_RUNTIME_CONTAINER_DIR"
+        printf '%s\n' "$AR_INSTALL_CONTAINER_DIR"
     fi
 }
 
 ar_notes_cli_env_path() {
-    printf '%s/scripts/ar-notes\n' "$(ar_runtime_env_path)"
+    printf '%s/scripts/ar-notes\n' "$(ar_install_env_path)"
 }
 
 project_agent_root_for_tool() {
@@ -1572,7 +1497,7 @@ setup_agentic_notes_instruction() {
     [[ -n "${INSTRUCTION_TARGET:-}" ]] || return 0
 
     export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_USER_ID AR_PROJECT_ID
-    export AR_AGENTIC_STATE_BRANCH AR_NOTES_AUTO_REFRESH AR_CONTAINER_RUNTIME
+    export AR_AGENTIC_STATE_BRANCH AR_NOTES_AUTO_REFRESH AR_SANDBOX
 
     if ! "$SCRIPT_DIR/scripts/ar-notes" generate-instructions \
         --project-dir "$WORKSPACE_DIR" \
@@ -2355,23 +2280,6 @@ setup_auth_binds() {
 }
 setup_research_binds() {
     RESEARCH_BINDS=()
-    if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
-        RESEARCH_BINDS+=(--bind "$SCRIPT_DIR/INSTRUCTIONS.md:/claude-home/.claude/INSTRUCTIONS.md.template:ro")
-    fi
-}
-
-instructions_template_env_path() {
-    case "$AR_CONTAINER_RUNTIME" in
-        native)
-            printf '%s\n' "$SCRIPT_DIR/INSTRUCTIONS.md"
-            ;;
-        docker|podman)
-            printf '%s\n' "/claude-home/INSTRUCTIONS.md.template"
-            ;;
-        *)
-            printf '%s\n' "/claude-home/.claude/INSTRUCTIONS.md.template"
-            ;;
-    esac
 }
 sanitize_mount_name() {
     local raw_name="$1"
@@ -2398,9 +2306,9 @@ setup_optional_binds() {
     EXTRA_DIR_ROOT_BIND=()
     EXTRA_DIR_BINDS=()
     EXTRA_DIR_DEBUG_MOUNTS=()
-    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+    if [[ "$AR_SANDBOX" == "none" ]]; then
         if [[ -n "${AR_EXTRA_BIND_DIRS:-}" ]]; then
-            echo "Native runtime: AR_EXTRA_BIND_DIRS is ignored because host paths are directly accessible."
+            echo "No-sandbox mode: AR_EXTRA_BIND_DIRS is ignored because host paths are directly accessible."
         fi
         return
     fi
@@ -2440,197 +2348,6 @@ setup_optional_binds() {
         done
     fi
 }
-# ============================================================================
-# Multi-node dispatch (optional, Apptainer + Slurm only)
-# ============================================================================
-
-validate_multi_node() {
-    if [[ "$MULTI_NODE" != "true" ]]; then
-        return
-    fi
-
-    if [[ "$AR_CONTAINER_RUNTIME" != "apptainer" ]]; then
-        echo "Error: --multi-node requires the Apptainer runtime (--runtime apptainer)."
-        exit 1
-    fi
-
-    if [[ -z "${SLURM_JOB_ID:-}" ]]; then
-        echo "Error: --multi-node requires an active multi-node Slurm allocation."
-        echo ""
-        echo "First allocate multiple nodes, e.g.:"
-        echo "  get_gpu 2 2    # 2 nodes × 2 GPUs = 4 GPUs"
-        echo ""
-        echo "For single-node use, omit --multi-node."
-        exit 1
-    fi
-
-    MN_NODELIST="${SLURM_JOB_NODELIST:-}"
-    if [[ -z "$MN_NODELIST" ]]; then
-        echo "Error: SLURM_JOB_NODELIST not set."
-        exit 1
-    fi
-
-    MN_NUM_NODES=$(scontrol show hostnames "$MN_NODELIST" | wc -l)
-    MN_HEAD_NODE=$(hostname -s)
-
-    # Detect GPUs per node from Slurm environment/job info
-    MN_GPUS_PER_NODE="${SLURM_GPUS_ON_NODE:-}"
-    if [[ -z "$MN_GPUS_PER_NODE" ]]; then
-        MN_GPUS_PER_NODE=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null \
-            | grep -oP 'TresPerNode=gres/gpu(:[a-zA-Z0-9]+)?:\K[0-9]+' | tail -1)
-    fi
-    if [[ -z "$MN_GPUS_PER_NODE" ]]; then
-        MN_GPUS_PER_NODE=$(nvidia-smi -L 2>/dev/null | wc -l)
-    fi
-    if [[ -z "$MN_GPUS_PER_NODE" || "$MN_GPUS_PER_NODE" -eq 0 ]]; then
-        echo "Warning: Could not detect GPUs per node, defaulting to 4"
-        MN_GPUS_PER_NODE=4
-    fi
-}
-
-setup_multi_node() {
-    if [[ "$MULTI_NODE" != "true" ]]; then
-        return
-    fi
-
-    DISPATCH_DIR="$STATE_ROOT/dispatch-$SLURM_JOB_ID"
-    mkdir -p "$DISPATCH_DIR/jobs"
-
-    # Write dispatcher config (host paths for the dispatcher to use)
-    cat > "$DISPATCH_DIR/dispatch.conf" << DISPEOF
-DISPATCH_DIR="$DISPATCH_DIR"
-CONTAINER_IMAGE="$CONTAINER_IMAGE"
-WORKSPACE_HOST="$WORKSPACE_DIR"
-AR_RUNTIME_HOST="$SCRIPT_DIR"
-AR_RUNTIME_CONTAINER="$AR_RUNTIME_CONTAINER_DIR"
-STATE_ROOT="$STATE_ROOT"
-UV_CACHE_DIR="$UV_CACHE_DIR"
-UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR"
-UV_TOOL_DIR="$UV_TOOL_DIR"
-HF_HOME="$HF_HOME"
-TRITON_CACHE_DIR="$TRITON_CACHE_DIR"
-WANDB_DIR="$WANDB_DIR"
-HTTPS_PROXY="${AR_HTTPS_PROXY:-${HTTPS_PROXY:-}}"
-HTTP_PROXY="${AR_HTTP_PROXY:-${HTTP_PROXY:-}}"
-HEAD_NODE="$MN_HEAD_NODE"
-SLURM_JOB_ID="$SLURM_JOB_ID"
-SLURM_JOB_NODELIST="$MN_NODELIST"
-AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
-AR_MAIN_AGENT="${AR_MAIN_AGENT:-research-coordinator}"
-AR_USER_ID="${AR_USER_ID:-$USER}"
-AR_PROJECT_ID="${AR_PROJECT_ID:-}"
-AR_AGENTIC_STATE_BRANCH="${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
-AR_NOTES_AUTO_REFRESH="${AR_NOTES_AUTO_REFRESH:-true}"
-AR_RESOLVER_GIT_NAME="${AR_RESOLVER_GIT_NAME:-}"
-AR_RESOLVER_GIT_EMAIL="${AR_RESOLVER_GIT_EMAIL:-}"
-AR_NOTES_GIT_NAME="${AR_NOTES_GIT_NAME:-}"
-AR_NOTES_GIT_EMAIL="${AR_NOTES_GIT_EMAIL:-}"
-DISPEOF
-
-    # Multi-node bind mounts and env vars (appended to existing arrays)
-    MULTI_NODE_BINDS=(
-        --bind "$DISPATCH_DIR:$DISPATCH_DIR"
-        --bind "$SCRIPT_DIR/scripts/remote-run:/usr/local/bin/remote-run:ro"
-    )
-    MULTI_NODE_ENV=(
-        --env "AR_DISPATCH_DIR=$DISPATCH_DIR"
-        --env "AR_GPU_BACKEND=remote-run"
-        --env "AR_GPUS_PER_NODE=$MN_GPUS_PER_NODE"
-        --env "AR_NUM_NODES=$MN_NUM_NODES"
-        --env "AR_HEAD_NODE=$MN_HEAD_NODE"
-        --env "SLURM_JOB_NODELIST=$MN_NODELIST"
-    )
-}
-
-start_dispatcher() {
-    if [[ "$MULTI_NODE" != "true" ]]; then
-        return
-    fi
-
-    echo "Starting dispatcher daemon..."
-    bash "$SCRIPT_DIR/scripts/dispatcher.sh" "$DISPATCH_DIR/dispatch.conf" \
-        >> "$DISPATCH_DIR/dispatcher.log" 2>&1 &
-    DISPATCHER_PID=$!
-    sleep 2
-
-    if ! kill -0 "$DISPATCHER_PID" 2>/dev/null; then
-        echo "Error: Dispatcher failed to start. Check $DISPATCH_DIR/dispatcher.log"
-        exit 1
-    fi
-    echo "Dispatcher running (pid $DISPATCHER_PID)"
-    echo ""
-    echo "Inside the container, use 'remote-run' to dispatch to other nodes:"
-    echo "  remote-run --nodes                              # List nodes"
-    echo "  remote-run htc-gpuXXX -- uv run python train.py # Run on remote node"
-    echo "  remote-run htc-gpuXXX --bg -- command           # Run in background"
-    echo "  remote-run --status                             # Check all jobs"
-    echo ""
-}
-
-cleanup_multi_node() {
-    if [[ "$MULTI_NODE" != "true" ]]; then
-        return
-    fi
-    echo ""
-    echo "Shutting down dispatcher..."
-    if [[ -n "${DISPATCHER_PID:-}" ]]; then
-        kill "$DISPATCHER_PID" 2>/dev/null
-        wait "$DISPATCHER_PID" 2>/dev/null || true
-    fi
-    for pid_file in "$DISPATCH_DIR/jobs"/*.pid; do
-        [[ -f "$pid_file" ]] || continue
-        local pid
-        pid=$(cat "$pid_file")
-        kill "$pid" 2>/dev/null || true
-    done
-    echo "Dispatch directory preserved at: $DISPATCH_DIR"
-    echo "  (delete manually when done reviewing logs)"
-}
-
-test_multi_node() {
-    echo "Testing multi-node setup..."
-    echo ""
-    echo "Nodes in allocation:"
-    scontrol show hostnames "$MN_NODELIST" | while read -r node; do
-        if [[ "$node" == "$MN_HEAD_NODE" ]]; then
-            echo "  $node (head)"
-        else
-            echo "  $node (remote)"
-        fi
-    done
-    echo ""
-    echo "Testing container on head node..."
-    apptainer exec --nv --no-mount home --home /claude-home \
-        --bind "$WORKSPACE_DIR:/workspace" \
-        --bind "$SCRIPT_DIR:$AR_RUNTIME_CONTAINER_DIR:ro" \
-        --bind "$CONTAINER_TMP:/tmp" \
-        --pwd /workspace \
-        "$CONTAINER_IMAGE" \
-        bash -c 'echo "  Container OK: $(python3 --version), GPUs: $(nvidia-smi -L 2>/dev/null | wc -l)"'
-    echo ""
-    echo "Testing dispatch to remote nodes..."
-    scontrol show hostnames "$MN_NODELIST" | while read -r node; do
-        [[ "$node" == "$MN_HEAD_NODE" ]] && continue
-        echo -n "  $node: "
-        srun --overlap --nodes=1 --ntasks=1 --nodelist="$node" \
-            --gres="gpu:$MN_GPUS_PER_NODE" --cpu-bind=none \
-            apptainer exec --nv --no-mount home --home /claude-home \
-                --bind "$WORKSPACE_DIR:/workspace" \
-                --bind "$SCRIPT_DIR:$AR_RUNTIME_CONTAINER_DIR:ro" \
-                --bind "$STATE_ROOT:$STATE_ROOT" \
-                --bind "$CONTAINER_TMP:/tmp" \
-                --pwd /workspace \
-                "$CONTAINER_IMAGE" \
-                bash -c 'echo "OK - $(nvidia-smi -L 2>/dev/null | wc -l) GPUs"' \
-            || echo "FAILED (see error above)"
-    done
-    echo ""
-    echo "Dispatch directory: $DISPATCH_DIR"
-    echo ""
-    echo "Multi-node test complete."
-    exit 0
-}
-
 setup_opencode() {
     mkdir -p "$OPENCODE_DATA_DIR" "$OPENCODE_CONFIG_DIR"
 
@@ -2656,10 +2373,10 @@ build_env_args() {
         --env "TERM=${TERM:-xterm-256color}"
         --env "USER=$USER"
         --env "GIT_SSH_COMMAND=$GIT_SSH_COMMAND"
-        --env "AR_CONTAINER_RUNTIME=$AR_CONTAINER_RUNTIME"
-        --env "AR_RUNTIME_DIR=$(ar_runtime_env_path)"
+        --env "AR_SANDBOX=$AR_SANDBOX"
+        --env "AR_INSTALL_DIR=$(ar_install_env_path)"
         --env "AR_NOTES_CLI=$(ar_notes_cli_env_path)"
-        --env "AR_GPU_BACKEND=${GPU_BACKEND:-none}"
+        --env "AR_JOB_BACKEND=${JOB_BACKEND:-none}"
         --env "AR_STATE_ROOT=$STATE_ROOT"
         --env "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
         --env "AR_MAIN_AGENT=${AR_MAIN_AGENT:-research-coordinator}"
@@ -2667,7 +2384,6 @@ build_env_args() {
         --env "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
         --env "AR_AGENTIC_STATE_BRANCH=${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
         --env "AR_NOTES_AUTO_REFRESH=${AR_NOTES_AUTO_REFRESH:-true}"
-        --env "AR_INSTRUCTIONS_TEMPLATE=$(instructions_template_env_path)"
         --env "AR_RESOLVER_GIT_NAME=${AR_RESOLVER_GIT_NAME:-}"
         --env "AR_RESOLVER_GIT_EMAIL=${AR_RESOLVER_GIT_EMAIL:-}"
         --env "AR_NOTES_GIT_NAME=${AR_NOTES_GIT_NAME:-}"
@@ -2733,15 +2449,15 @@ print_debug_launch() {
     fi
 
     echo "Launch debug:"
-    echo "  Runtime:        $AR_CONTAINER_RUNTIME"
+    echo "  Sandbox:        $AR_SANDBOX"
     echo "  Tool:           $AR_CLI_TOOL"
-    echo "  GPU backend:    ${GPU_BACKEND:-none}"
+    echo "  Job backend:    ${JOB_BACKEND:-none}"
     echo "  Workspace:      $WORKSPACE_DIR"
     echo "  State root:     $STATE_ROOT"
-    if [[ "$AR_CONTAINER_RUNTIME" == "docker" || "$AR_CONTAINER_RUNTIME" == "podman" ]]; then
-        echo "  Runtime image:  agentic-researcher:latest"
-    elif [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
-        echo "  Runtime image:  none (host native)"
+    if [[ "$AR_SANDBOX" == "docker" || "$AR_SANDBOX" == "podman" ]]; then
+        echo "  Container image: agentic-researcher:latest"
+    elif [[ "$AR_SANDBOX" == "none" ]]; then
+        echo "  Container image: none (sandbox none)"
     else
         echo "  Container:      $CONTAINER_IMAGE"
     fi
@@ -2767,7 +2483,7 @@ launch_apptainer() {
         --home /claude-home
         "${SSH_BIND[@]}"
         --bind "$WORKSPACE_DIR:/workspace"
-        --bind "$SCRIPT_DIR:$AR_RUNTIME_CONTAINER_DIR:ro"
+        --bind "$SCRIPT_DIR:$AR_INSTALL_CONTAINER_DIR:ro"
         --bind "$UV_CACHE_DIR:/uv-cache"
         --bind "$UV_PYTHON_INSTALL_DIR:/uv-python"
         --bind "$UV_TOOL_DIR:/uv-tools"
@@ -2776,13 +2492,9 @@ launch_apptainer() {
         "${DATASET_BINDS[@]}"
         "${EXTRA_DIR_ROOT_BIND[@]}"
         "${EXTRA_DIR_BINDS[@]}"
+        "${OPTIONAL_SKILL_BINDS[@]}"
         --pwd /workspace
     )
-
-    # Multi-node dispatch binds (if active)
-    if [[ "$MULTI_NODE" == "true" ]]; then
-        BIND_ARGS+=("${MULTI_NODE_BINDS[@]}")
-    fi
 
     # Claude/OpenCode-specific binds
     case "$AR_CLI_TOOL" in
@@ -2800,9 +2512,6 @@ launch_apptainer() {
             if [[ -d "${OPENCODE_DATA_DIR:-}" ]]; then
                 BIND_ARGS+=(--bind "$OPENCODE_DATA_DIR:/claude-home/.local/share/opencode")
             fi
-            if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
-                BIND_ARGS+=(--bind "$SCRIPT_DIR/INSTRUCTIONS.md:/claude-home/.claude/INSTRUCTIONS.md.template:ro")
-            fi
             ;;
         gemini)
             if [[ -d "${GEMINI_STATE_DIR:-}" ]]; then
@@ -2813,25 +2522,16 @@ launch_apptainer() {
             if [[ -d "${CODEX_STATE_DIR:-}" ]]; then
                 BIND_ARGS+=(--bind "$CODEX_STATE_DIR:/claude-home/.codex")
             fi
-            if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
-                BIND_ARGS+=(--bind "$SCRIPT_DIR/INSTRUCTIONS.md:/claude-home/.claude/INSTRUCTIONS.md.template:ro")
-            fi
             ;;
         pi)
             # pi reads config/auth/sessions from ~/.pi/agent; bind the parent dir.
             if [[ -d "${PI_STATE_DIR:-}" ]]; then
                 BIND_ARGS+=(--bind "$PI_STATE_DIR:/claude-home/.pi")
             fi
-            if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
-                BIND_ARGS+=(--bind "$SCRIPT_DIR/INSTRUCTIONS.md:/claude-home/.claude/INSTRUCTIONS.md.template:ro")
-            fi
             ;;
     esac
 
-    # Multi-node env vars (if active)
-    if [[ "$MULTI_NODE" == "true" ]]; then
-        ENV_ARGS+=("${MULTI_NODE_ENV[@]}")
-    fi
+    ENV_ARGS+=("${OPTIONAL_SKILL_ENV[@]}")
 
     if [[ "$mode" == "test" ]]; then
         BIND_ARGS+=(
@@ -2855,11 +2555,11 @@ launch_apptainer() {
 }
 launch_oci_runtime() {
     local mode="${1:-run}"
-    local oci_runtime="$AR_CONTAINER_RUNTIME"
+    local oci_runtime="$AR_SANDBOX"
     local host_uid host_gid host_user host_group
 
     if ! command -v "$oci_runtime" >/dev/null 2>&1; then
-        echo "Error: $oci_runtime runtime selected, but '$oci_runtime' is not installed or not on PATH."
+        echo "Error: $oci_runtime sandbox selected, but '$oci_runtime' is not installed or not on PATH."
         echo ""
         echo "Install $oci_runtime on the host, then rerun:"
         echo "  $SCRIPT_DIR/container/build.sh --runtime $oci_runtime"
@@ -2871,15 +2571,11 @@ launch_oci_runtime() {
     host_user="$(id -un)"
     host_group="$(id -gn)"
 
-    if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
-        render_instruction_template "$AR_CONFIG_STORE/INSTRUCTIONS.md.template"
-    fi
-
     local OCI_ARGS=(
         "$oci_runtime" run --rm
         --init
         -v "$WORKSPACE_DIR:/workspace"
-        -v "$SCRIPT_DIR:$AR_RUNTIME_CONTAINER_DIR:ro"
+        -v "$SCRIPT_DIR:$AR_INSTALL_CONTAINER_DIR:ro"
         -v "$UV_CACHE_DIR:/uv-cache"
         -v "$UV_PYTHON_INSTALL_DIR:/uv-python"
         -v "$UV_TOOL_DIR:/uv-tools"
@@ -2937,10 +2633,10 @@ launch_oci_runtime() {
         -e "HOST_USER=$host_user"
         -e "HOST_GROUP=$host_group"
         -e "SANDBOX_TOOL=$AR_CLI_TOOL"
-        -e "AR_CONTAINER_RUNTIME=$AR_CONTAINER_RUNTIME"
-        -e "AR_RUNTIME_DIR=$(ar_runtime_env_path)"
+        -e "AR_SANDBOX=$AR_SANDBOX"
+        -e "AR_INSTALL_DIR=$(ar_install_env_path)"
         -e "AR_NOTES_CLI=$(ar_notes_cli_env_path)"
-        -e "AR_GPU_BACKEND=${GPU_BACKEND:-none}"
+        -e "AR_JOB_BACKEND=${JOB_BACKEND:-none}"
         -e "AR_STATE_ROOT=$STATE_ROOT"
         -e "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
         -e "AR_MAIN_AGENT=${AR_MAIN_AGENT:-research-coordinator}"
@@ -2948,7 +2644,6 @@ launch_oci_runtime() {
         -e "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
         -e "AR_AGENTIC_STATE_BRANCH=${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
         -e "AR_NOTES_AUTO_REFRESH=${AR_NOTES_AUTO_REFRESH:-true}"
-        -e "AR_INSTRUCTIONS_TEMPLATE=$(instructions_template_env_path)"
         -e "AR_RESOLVER_GIT_NAME=${AR_RESOLVER_GIT_NAME:-}"
         -e "AR_RESOLVER_GIT_EMAIL=${AR_RESOLVER_GIT_EMAIL:-}"
         -e "AR_NOTES_GIT_NAME=${AR_NOTES_GIT_NAME:-}"
@@ -2990,9 +2685,6 @@ launch_oci_runtime() {
     # Instead, copy files into $AR_CONFIG_STORE before mounting the directory.
     case "$AR_CLI_TOOL" in
         claude)
-            if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
-                render_instruction_template "$AR_CONFIG_STORE/INSTRUCTIONS.md.template"
-            fi
             OCI_ARGS+=(
                 -v "$AR_CONFIG_STORE:/claude-home/.claude"
                 -v "$CLAUDE_JSON:/claude-home/.claude.json"
@@ -3008,10 +2700,6 @@ launch_oci_runtime() {
             if [[ -d "${OPENCODE_DATA_DIR:-}" ]]; then
                 OCI_ARGS+=(-v "$OPENCODE_DATA_DIR:/claude-home/.local/share/opencode")
             fi
-            if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
-                render_instruction_template "$AR_CONFIG_STORE/INSTRUCTIONS.md.template"
-                OCI_ARGS+=(-v "$AR_CONFIG_STORE:/claude-home/.claude")
-            fi
             ;;
         gemini)
             if [[ -d "${GEMINI_STATE_DIR:-}" ]]; then
@@ -3021,10 +2709,6 @@ launch_oci_runtime() {
         codex)
             if [[ -d "${CODEX_STATE_DIR:-}" ]]; then
                 OCI_ARGS+=(-v "$CODEX_STATE_DIR:/claude-home/.codex")
-            fi
-            if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
-                render_instruction_template "$AR_CONFIG_STORE/INSTRUCTIONS.md.template"
-                OCI_ARGS+=(-v "$AR_CONFIG_STORE:/claude-home/.claude")
             fi
             ;;
     esac
@@ -3059,12 +2743,12 @@ native_tool_command() {
 }
 
 setup_native_environment() {
-    export AR_CONTAINER_RUNTIME="$AR_CONTAINER_RUNTIME"
-    export AR_RUNTIME_DIR
-    AR_RUNTIME_DIR="$(ar_runtime_env_path)"
+    export AR_SANDBOX="$AR_SANDBOX"
+    export AR_INSTALL_DIR
+    AR_INSTALL_DIR="$(ar_install_env_path)"
     export AR_NOTES_CLI
     AR_NOTES_CLI="$(ar_notes_cli_env_path)"
-    export AR_GPU_BACKEND="${GPU_BACKEND:-none}"
+    export AR_JOB_BACKEND="${JOB_BACKEND:-none}"
     export AR_CLI_TOOL="$AR_CLI_TOOL"
     export AR_STATE_ROOT="$STATE_ROOT"
     export AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
@@ -3073,8 +2757,6 @@ setup_native_environment() {
     export AR_PROJECT_ID="${AR_PROJECT_ID:-}"
     export AR_AGENTIC_STATE_BRANCH="${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
     export AR_NOTES_AUTO_REFRESH="${AR_NOTES_AUTO_REFRESH:-true}"
-    export AR_INSTRUCTIONS_TEMPLATE
-    AR_INSTRUCTIONS_TEMPLATE="$(instructions_template_env_path)"
     export AR_RESOLVER_GIT_NAME="${AR_RESOLVER_GIT_NAME:-}"
     export AR_RESOLVER_GIT_EMAIL="${AR_RESOLVER_GIT_EMAIL:-}"
     export AR_NOTES_GIT_NAME="${AR_NOTES_GIT_NAME:-}"
@@ -3115,11 +2797,11 @@ run_native_test() {
     native_fail() { echo "  [FAIL] $1"; fail_count=$((fail_count + 1)); }
     native_warn() { echo "  [WARN] $1"; warn_count=$((warn_count + 1)); }
 
-    echo "=== Native Runtime ==="
+    echo "=== Sandbox: none ==="
     if [[ "$HOME" != "/claude-home" ]]; then
         native_pass "Using host HOME: $HOME"
     else
-        native_warn "HOME is /claude-home; native mode normally uses the host HOME"
+        native_warn "HOME is /claude-home; no-sandbox mode normally uses the host HOME"
     fi
 
     if [[ -d "$WORKSPACE_DIR" ]]; then
@@ -3157,10 +2839,10 @@ run_native_test() {
     fi
 
     echo ""
-    echo "=== GPU Backend: ${GPU_BACKEND:-none} ==="
-    case "${GPU_BACKEND:-none}" in
+    echo "=== Job Backend: ${JOB_BACKEND:-none} ==="
+    case "${JOB_BACKEND:-none}" in
         none)
-            native_pass "No external GPU backend configured"
+            native_pass "No external job backend configured"
             ;;
         cluster-run)
             if command -v cluster-run >/dev/null 2>&1 && cluster-run --help >/dev/null 2>&1; then
@@ -3170,7 +2852,7 @@ run_native_test() {
             fi
             ;;
         remote-run)
-            native_fail "remote-run backend is container/Slurm only; use --multi-node with Apptainer"
+            native_fail "remote-run optional skill requires --sandbox apptainer"
             ;;
     esac
 
@@ -3211,8 +2893,8 @@ launch_native() {
     fi
 
     if ! command -v "$tool_cmd" >/dev/null 2>&1; then
-        echo "Error: Native runtime selected, but '$tool_cmd' is not installed or not on PATH."
-        echo "Install the selected CLI tool on the host or use a container runtime."
+        echo "Error: Sandbox none selected, but '$tool_cmd' is not installed or not on PATH."
+        echo "Install the selected CLI tool on the host or use a container sandbox."
         exit 1
     fi
 
@@ -3221,21 +2903,18 @@ launch_native() {
 }
 
 main() {
-    check_install_staleness
     capture_env_overrides
     parse_arguments "$@"
     load_config
     apply_env_overrides
     apply_defaults
-    validate_runtime
+    validate_sandbox
     validate_workspace
     validate_project_id
     validate_api_key
-    resolve_gpu_backend
     resolve_optional_skills
-    validate_gpu_backend
     validate_optional_skills
-    validate_multi_node
+    run_optional_skill_hooks preflight
     ensure_container_image
     validate_container
     setup_storage
@@ -3249,12 +2928,12 @@ main() {
     setup_auth_binds
     setup_research_binds
     setup_optional_binds
-    setup_multi_node
+    run_optional_skill_hooks setup
     build_env_args
     print_debug_launch
 
     # Tool-specific setup
-    if [[ "$AR_CONTAINER_RUNTIME" != "native" && "$AR_CLI_TOOL" == "opencode" ]]; then
+    if [[ "$AR_SANDBOX" != "none" && "$AR_CLI_TOOL" == "opencode" ]]; then
         setup_opencode
     fi
     setup_project_skills
@@ -3273,10 +2952,10 @@ main() {
     local banner_width=64
     echo "╔$(printf '═%.0s' $(seq 1 $banner_width))╗"
     local title
-    if [[ "${GPU_BACKEND:-none}" == "remote-run" ]]; then
-        title="Agentic Researcher - $tool_display (Multi-Node)"
-    elif [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
-        title="Agentic Researcher - $tool_display (Native)"
+    if [[ "${JOB_BACKEND:-none}" == "remote-run" ]]; then
+        title="Agentic Researcher - $tool_display (Remote Run)"
+    elif [[ "$AR_SANDBOX" == "none" ]]; then
+        title="Agentic Researcher - $tool_display (No Sandbox)"
     else
         title="Agentic Researcher - $tool_display"
     fi
@@ -3285,23 +2964,23 @@ main() {
     echo "╚$(printf '═%.0s' $(seq 1 $banner_width))╝"
     echo ""
 
-    if [[ "${GPU_BACKEND:-none}" == "remote-run" ]]; then
+    if [[ "${JOB_BACKEND:-none}" == "remote-run" ]]; then
         echo "Slurm Job:      $SLURM_JOB_ID"
-        echo "Nodes:          $MN_NUM_NODES ($MN_NODELIST)"
-        echo "Head node:      $MN_HEAD_NODE"
-        echo "GPUs/node:      $MN_GPUS_PER_NODE"
-        echo "Total GPUs:     $((MN_NUM_NODES * MN_GPUS_PER_NODE))"
+        echo "Nodes:          $REMOTE_RUN_NUM_NODES ($REMOTE_RUN_NODELIST)"
+        echo "Head node:      $REMOTE_RUN_HEAD_NODE"
+        echo "GPUs/node:      $REMOTE_RUN_GPUS_PER_NODE"
+        echo "Total GPUs:     $((REMOTE_RUN_NUM_NODES * REMOTE_RUN_GPUS_PER_NODE))"
         echo ""
     fi
 
     echo "Workspace:      $WORKSPACE_DIR"
-    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
-        echo "Sandboxed:      No (host-native; full host filesystem access)"
+    if [[ "$AR_SANDBOX" == "none" ]]; then
+        echo "Sandboxed:      No (sandbox none; full host filesystem access)"
     else
-        echo "Sandboxed:      /workspace plus AR state/runtime mounts"
+        echo "Sandboxed:      /workspace plus AR state/install mounts"
     fi
-    echo "GPU backend:    ${GPU_BACKEND:-none}"
-    if [[ "${GPU_BACKEND:-none}" == "remote-run" ]]; then
+    echo "Job backend:    ${JOB_BACKEND:-none}"
+    if [[ "${JOB_BACKEND:-none}" == "remote-run" ]]; then
         echo "Dispatch dir:   $DISPATCH_DIR"
     fi
     echo "UV Cache:       $UV_CACHE_DIR"
@@ -3313,16 +2992,12 @@ main() {
     fi
     echo ""
 
-    # Multi-node test mode
-    if [[ "${GPU_BACKEND:-none}" == "remote-run" && "$TEST_MODE" == "true" ]]; then
-        test_multi_node
-        # test_multi_node calls exit 0
+    if [[ "$TEST_MODE" == "true" ]] && run_optional_skill_hooks test true; then
+        exit 0
     fi
 
-    # Multi-node: start dispatcher and register cleanup
-    if [[ "${GPU_BACKEND:-none}" == "remote-run" ]]; then
-        trap cleanup_multi_node EXIT
-        start_dispatcher
+    if run_optional_skill_hooks start true; then
+        trap 'run_optional_skill_hooks cleanup' EXIT
     fi
 
     echo "Starting $tool_display..."
@@ -3330,13 +3005,13 @@ main() {
     echo ""
 
     # Launch
-    if [[ "$AR_CONTAINER_RUNTIME" == "docker" || "$AR_CONTAINER_RUNTIME" == "podman" ]]; then
+    if [[ "$AR_SANDBOX" == "docker" || "$AR_SANDBOX" == "podman" ]]; then
         if [[ "$TEST_MODE" == "true" ]]; then
             launch_oci_runtime test
         else
             launch_oci_runtime run
         fi
-    elif [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+    elif [[ "$AR_SANDBOX" == "none" ]]; then
         if [[ "$TEST_MODE" == "true" ]]; then
             launch_native test
         else

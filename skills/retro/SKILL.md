@@ -7,6 +7,8 @@ You are reflecting on the current research session to identify improvements for 
 
 Use any extra user text supplied with the skill invocation as feedback to consider.
 
+Set `$PROJECT_DIR` to `/workspace` if that directory exists; otherwise set it to the current working directory.
+
 ## Step 1: Gather Context
 
 Detect which instruction file exists in the workspace:
@@ -15,16 +17,14 @@ Detect which instruction file exists in the workspace:
 
 Read the following files (skip any that don't exist):
 
-1. `/workspace/REVISION.md` -- previous retrospective entries (if any)
+1. `$PROJECT_DIR/REVISION.md` -- previous retrospective entries (if any)
 2. The shared Agentic Researcher experiment `SUMMARY.md` if available, plus individual experiment YAML files only when needed
-3. `/workspace/report.tex` -- branch-local narrative analysis and report quality
-4. `/workspace/TODO.md` -- branch-local open items and deferred work
-5. `/workspace/$INSTRUCTION_FILE` -- the instructions governing this session (especially Section 8: Project Instructions)
-6. The injected Agentic Notes section in `$INSTRUCTION_FILE`; read on-demand note files only when they are needed to evaluate a concrete note-related issue
+3. `$PROJECT_DIR/report.tex` -- branch-local narrative analysis and report quality
+4. `$PROJECT_DIR/TODO.md` -- branch-local open items and deferred work
+5. `$PROJECT_DIR/$INSTRUCTION_FILE` -- the materialized instructions governing this session, including the selected main-agent section
+6. The injected Agentic Notes section in `$INSTRUCTION_FILE`, especially project role notes for the active role; read on-demand note files only when they are needed to evaluate a concrete note-related issue
 7. Run `git log --oneline -30` -- see the commit history (style, frequency, quality)
 8. Run `git diff --stat HEAD~5..HEAD 2>/dev/null || true` -- recent change patterns
-
-**Backward compatibility:** If `/workspace/research_instructions.md` exists (older format), read it as supplementary context for the original research goal.
 
 ## Step 2: Commandment Compliance
 
@@ -96,7 +96,7 @@ Reflect on these additional dimensions:
 
 ## Step 4: Write to REVISION.md
 
-Update `/workspace/REVISION.md` following these rules. `REVISION.md` is a normal branch-local project file unless the user merges it through ordinary Git workflow.
+Update `$PROJECT_DIR/REVISION.md` following these rules. `REVISION.md` is a normal branch-local project file unless the user merges it through ordinary Git workflow.
 
 ### If REVISION.md does NOT exist:
 Create it with this structure:
