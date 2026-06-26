@@ -102,23 +102,56 @@ def write_yaml(path: Path, data: dict[str, Any]) -> None:
         yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=False)
 
 
-def project_id(project_dir: Path, explicit: str | None = None) -> str:
-    if explicit:
-        return slugify(explicit, default="project")
-    if os.environ.get("AR_PROJECT_ID"):
-        return slugify(os.environ["AR_PROJECT_ID"], default="project")
-    raise ArNotesError(
-        "AR_PROJECT_ID is required. Set it in config, export it for this launch, "
-        "or pass --project-id to agentic-researcher."
-    )
-
-
 def slugify(text: str, *, default: str = "item", max_len: int = 72) -> str:
     slug = re.sub(r"[^A-Za-z0-9]+", "-", text.strip().lower()).strip("-")
     slug = re.sub(r"-+", "-", slug)
     if not slug:
         slug = default
     return slug[:max_len].rstrip("-") or default
+
+
+def project_remote_url(project_dir: Path) -> str | None:
+    result = run(
+        ["git", "-C", str(project_dir), "remote", "get-url", "origin"],
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    remote = result.stdout.strip()
+    return remote or None
+
+
+def project_remote_name(remote: str) -> str:
+    value = remote.strip()
+    value = re.sub(r"#.*$", "", value)
+    value = value.rstrip("/")
+
+    match = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://(?:[^/]+)/(.*)$", value)
+    if match:
+        value = match.group(1)
+    elif value.startswith("file://"):
+        value = value[7:]
+    else:
+        scp = re.match(r"^(?:[^@/:]+@)?[^/:]+:(.+)$", value)
+        if scp:
+            value = scp.group(1)
+
+    value = value.rstrip("/").removesuffix(".git")
+    return Path(value).name or "project"
+
+
+def project_id(project_dir: Path, explicit: str | None = None) -> str:
+    if explicit:
+        return slugify(explicit, default="project")
+    if os.environ.get("AR_PROJECT_ID"):
+        return slugify(os.environ["AR_PROJECT_ID"], default="project")
+    remote = project_remote_url(project_dir)
+    if remote:
+        return slugify(project_remote_name(remote), default="project")
+    raise ArNotesError(
+        "Project id could not be inferred because this project has no git remote. "
+        "Pass --project-id to agentic-researcher or set AR_PROJECT_ID."
+    )
 
 
 def org_checkout_path() -> Path:
@@ -287,7 +320,7 @@ def init_org_notes(args: argparse.Namespace) -> None:
         notes_dir.mkdir(parents=True, exist_ok=True)
         always_injected = notes_dir / ALWAYS_INJECTED_NOTE
         if not always_injected.exists():
-            always_injected.write_text("# Organization Notes\n\n", encoding="utf-8")
+            always_injected.write_text("# Organization-Wide Notes\n\n", encoding="utf-8")
         commit_if_changed(repo_arg, "agentic: initialize org notes")
     checkout = ensure_org_checkout(args.repo)
     if checkout is not None:
@@ -455,7 +488,7 @@ def build_notes_section(project_dir: Path, role: str, *, markers: bool = True) -
         ]
     )
 
-    append_injected_note(lines, "Organization Notes", org_notes / ALWAYS_INJECTED_NOTE)
+    append_injected_note(lines, "Organization-Wide Notes", org_notes / ALWAYS_INJECTED_NOTE)
     append_injected_note(lines, f"Role Notes: {role}", role_notes / ALWAYS_INJECTED_NOTE)
     append_injected_note(lines, "Project Notes", project_notes / ALWAYS_INJECTED_NOTE)
 

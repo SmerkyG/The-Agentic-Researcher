@@ -58,6 +58,7 @@ capture_env_overrides() {
         AR_PROJECT_ID
         AR_AGENTIC_STATE_BRANCH
         AR_NOTES_AUTO_REFRESH
+        AR_AUTO_BUILD
         AR_RESOLVER_GIT_NAME
         AR_RESOLVER_GIT_EMAIL
         AR_NOTES_GIT_NAME
@@ -112,6 +113,7 @@ apply_env_overrides() {
         AR_PROJECT_ID
         AR_AGENTIC_STATE_BRANCH
         AR_NOTES_AUTO_REFRESH
+        AR_AUTO_BUILD
         AR_RESOLVER_GIT_NAME
         AR_RESOLVER_GIT_EMAIL
         AR_NOTES_GIT_NAME
@@ -210,6 +212,7 @@ apply_defaults() {
     AR_PROJECT_ID="${AR_PROJECT_ID:-}"
     AR_AGENTIC_STATE_BRANCH="${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
     AR_NOTES_AUTO_REFRESH="${AR_NOTES_AUTO_REFRESH:-true}"
+    AR_AUTO_BUILD="${AR_AUTO_BUILD:-true}"
 
     case "$AR_CLI_TOOL" in
         claude)
@@ -261,17 +264,6 @@ parse_arguments() {
                 shift
                 exec "$SCRIPT_DIR/scripts/first-setup.sh" "$@"
                 ;;
-            --build)
-                load_config
-                apply_env_overrides
-                apply_defaults
-                if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
-                    echo "Native runtime selected; no container image to build."
-                    exit 0
-                fi
-                exec "$SCRIPT_DIR/container/build.sh" \
-                    ${AR_CONTAINER_RUNTIME:+--$AR_CONTAINER_RUNTIME}
-                ;;
             --clean)
                 shift
                 exec "$SCRIPT_DIR/scripts/cleanup.sh" "$@"
@@ -292,21 +284,13 @@ parse_arguments() {
                 DEBUG_LAUNCH=true
                 shift
                 ;;
-            --docker)
-                AR_CONTAINER_RUNTIME_OVERRIDE="docker"
-                shift
-                ;;
-            --podman)
-                AR_CONTAINER_RUNTIME_OVERRIDE="podman"
-                shift
-                ;;
-            --apptainer)
-                AR_CONTAINER_RUNTIME_OVERRIDE="apptainer"
-                shift
-                ;;
-            --native|--host)
-                AR_CONTAINER_RUNTIME_OVERRIDE="native"
-                shift
+            --runtime)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --runtime requires a value (docker|podman|apptainer|native)"
+                    exit 1
+                fi
+                AR_CONTAINER_RUNTIME_OVERRIDE="$2"
+                shift 2
                 ;;
             --tool)
                 if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
@@ -396,27 +380,22 @@ parse_arguments() {
 
 show_help() {
     cat << 'EOF'
-agentic-researcher: Launch an AI coding agent in a sandboxed container
-                    for autonomous research.
+agentic-researcher: Launch an AI coding agent for autonomous research.
 
 Usage:
   agentic-researcher [OPTIONS] [DIRECTORY] [TOOL_OPTIONS...]
 
 Options:
   --setup             Run the optional interactive setup wizard
-  --build             Build or rebuild the container image (no-op for --native)
   --clean             Remove launcher-managed local state
   --uninstall         Remove the installed launcher and optional local state
-  --docker            Force Docker runtime for this invocation
-  --podman            Force Podman runtime for this invocation
-  --apptainer         Force Apptainer runtime for this invocation
-  --native, --host    Run the selected CLI directly on the host (no sandbox)
+  --runtime NAME      Runtime for this invocation (docker|podman|apptainer|native)
   --test              Quick validation of sandbox environment
   --multi-node        Enable multi-node dispatch (Apptainer + Slurm only)
   --gpu-backend NAME  GPU job backend (auto|none|cluster-run|remote-run)
   --optional-skill NAME
                       Install an optional skill from optional-skills/ (repeatable)
-  --project-id ID     Required stable project id for notes and experiment state
+  --project-id ID     Override inferred project id for notes and experiment state
   --debug-launch      Print extra launcher details and enable tool startup logs where supported
   --tool TOOL         Select CLI tool (claude|opencode|gemini|codex|pi)
   --yolo              Auto-approve all permissions (Claude Code only)
@@ -427,27 +406,24 @@ Options:
   TOOL_OPTIONS        Additional options passed to the CLI tool
 
 Examples:
-  agentic-researcher --build                      # Build default container
-  agentic-researcher --docker --build             # Build Docker container
-  agentic-researcher --podman --build             # Build Podman container
-  agentic-researcher --apptainer --build          # Build Apptainer container
-  agentic-researcher --project-id my-project-2026 --native
-  agentic-researcher --project-id my-project-2026 --native --gpu-backend cluster-run
-  agentic-researcher --project-id my-project-2026 --optional-skill cluster-run
+  agentic-researcher --runtime native
+  agentic-researcher --runtime native --gpu-backend cluster-run
+  agentic-researcher --runtime apptainer --multi-node
+  agentic-researcher --optional-skill cluster-run
   agentic-researcher --setup                      # Optional setup wizard
   agentic-researcher --clean                      # Interactive cleanup of local state
   agentic-researcher --uninstall                  # Remove installed launcher
   agentic-researcher --clean --yes --include-config
-  agentic-researcher --project-id my-project-2026 --test
-  agentic-researcher --project-id my-project-2026 --tool opencode --debug-launch
-  agentic-researcher --project-id my-project-2026 # Current directory
-  agentic-researcher --project-id my-project-2026 ~/my-project
-  agentic-researcher --project-id my-project-2026 --yolo
-  agentic-researcher --project-id my-project-2026 --tool gemini
-  agentic-researcher --project-id my-project-2026 --tool codex ~/project
-  agentic-researcher --project-id my-project-2026 --yolo --model opus
-  agentic-researcher --project-id my-project-2026 --multi-node
-  agentic-researcher --project-id my-project-2026 --multi-node --test
+  agentic-researcher --test
+  agentic-researcher --tool opencode --debug-launch
+  agentic-researcher                         # Current directory
+  agentic-researcher ~/my-project
+  agentic-researcher --yolo
+  agentic-researcher --tool gemini
+  agentic-researcher --tool codex ~/project
+  agentic-researcher --yolo --model opus
+  agentic-researcher --runtime apptainer --multi-node
+  agentic-researcher --runtime apptainer --multi-node --test
 
 What's Sandboxed:
   The agent can write your project directory and AR_STATE_ROOT.
@@ -457,7 +433,7 @@ What's Sandboxed:
 
 Security:
   --yolo auto-approves tool calls but maintains filesystem isolation.
-  --native/--host disables Agentic Researcher filesystem isolation.
+  --runtime native disables Agentic Researcher filesystem isolation.
   OpenCode/Gemini/Codex have no built-in permission system.
   Review changes before committing to git.
 EOF
@@ -507,19 +483,64 @@ validate_workspace() {
     esac
 }
 
-validate_project_id() {
-    if [[ -z "${AR_PROJECT_ID:-}" ]]; then
-        echo "Error: Agentic Researcher requires a stable project id."
-        echo ""
-        echo "Provide one per launch:"
-        echo "  agentic-researcher --project-id my-project-2026 $WORKSPACE_DIR"
-        echo ""
-        echo "Or set AR_PROJECT_ID in your config or environment:"
-        echo "  agentic-researcher --setup AR_PROJECT_ID=my-project-2026"
-        echo ""
-        echo "Use the same id for all worktrees and agents that should share notes and experiment logs."
-        exit 1
+slugify_project_id() {
+    local text="$1" slug
+    slug="$(printf '%s' "$text" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')"
+    slug="${slug:0:72}"
+    slug="${slug%-}"
+    printf '%s\n' "${slug:-project}"
+}
+
+project_remote_name() {
+    local value="$1" repo
+    value="${value%%#*}"
+    value="${value%/}"
+
+    if [[ "$value" =~ ^[A-Za-z][A-Za-z0-9+.-]*://[^/]+/(.+)$ ]]; then
+        value="${BASH_REMATCH[1]}"
+    elif [[ "$value" == file://* ]]; then
+        value="${value#file://}"
+    elif [[ "$value" =~ ^([^@/:]+@)?([^/:]+):(.+)$ ]]; then
+        value="${BASH_REMATCH[3]}"
     fi
+
+    value="${value%/}"
+    value="${value%.git}"
+    repo="${value##*/}"
+    printf '%s\n' "${repo:-project}"
+}
+
+infer_project_id_from_remote() {
+    local remote repo_name
+    remote="$(git -C "$WORKSPACE_DIR" remote get-url origin 2>/dev/null || true)"
+    [[ -n "$remote" ]] || return 1
+    repo_name="$(project_remote_name "$remote")"
+    slugify_project_id "$repo_name"
+}
+
+validate_project_id() {
+    local inferred
+    if [[ -n "${AR_PROJECT_ID:-}" ]]; then
+        AR_PROJECT_ID="$(slugify_project_id "$AR_PROJECT_ID")"
+        export AR_PROJECT_ID
+        return
+    fi
+
+    if inferred="$(infer_project_id_from_remote)" && [[ -n "$inferred" ]]; then
+        AR_PROJECT_ID="$inferred"
+        export AR_PROJECT_ID
+        return
+    fi
+
+    echo "Error: Agentic Researcher could not infer a project id because this project has no git remote."
+    echo ""
+    echo "Add a git remote or provide an explicit id:"
+    echo "  agentic-researcher --project-id my-project-2026 $WORKSPACE_DIR"
+    echo ""
+    echo "Use the same id for all worktrees and agents that should share notes and experiment logs."
+    exit 1
 }
 
 validate_api_key() {
@@ -547,7 +568,7 @@ validate_apptainer_host() {
         echo "Error: Apptainer is only supported on Linux hosts. Current host: $host_os"
         echo ""
         echo "Use Docker on this machine instead:"
-        echo "  agentic-researcher --docker ..."
+        echo "  agentic-researcher --runtime docker ..."
         echo ""
         echo "To test Apptainer, run the launcher on a Linux workstation, WSL2 instance, or cluster node."
         exit 1
@@ -557,7 +578,7 @@ validate_apptainer_host() {
         echo "Error: Apptainer runtime selected, but 'apptainer' is not installed or not on PATH."
         echo ""
         echo "Install Apptainer on the Linux host, then rerun:"
-        echo "  agentic-researcher --apptainer --build"
+        echo "  $SCRIPT_DIR/container/build.sh --runtime apptainer"
         exit 1
     fi
 }
@@ -574,15 +595,74 @@ validate_runtime() {
     esac
 }
 
+container_image_exists() {
+    case "$AR_CONTAINER_RUNTIME" in
+        native)
+            return 0
+            ;;
+        apptainer)
+            [[ -f "$SCRIPT_DIR/container/agentic_researcher.sif" ]]
+            ;;
+        docker|podman)
+            command -v "$AR_CONTAINER_RUNTIME" >/dev/null 2>&1 || return 1
+            "$AR_CONTAINER_RUNTIME" image inspect agentic-researcher:latest >/dev/null 2>&1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+auto_build_enabled() {
+    case "${AR_AUTO_BUILD:-true}" in
+        0|false|False|FALSE|no|No|NO|off|Off|OFF)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+build_container_image() {
+    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+        return 0
+    fi
+    "$SCRIPT_DIR/container/build.sh" --runtime "$AR_CONTAINER_RUNTIME"
+}
+
+ensure_container_image() {
+    if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
+        return 0
+    fi
+
+    if container_image_exists; then
+        return 0
+    fi
+
+    if ! auto_build_enabled; then
+        echo "Error: Container image for $AR_CONTAINER_RUNTIME was not found."
+        echo ""
+        echo "Build it with:"
+        echo "  $SCRIPT_DIR/container/build.sh --runtime $AR_CONTAINER_RUNTIME"
+        echo ""
+        echo "Or use native mode:"
+        echo "  agentic-researcher --runtime native ..."
+        exit 1
+    fi
+
+    echo "Container image for $AR_CONTAINER_RUNTIME was not found."
+    echo "Building it now. This may take several minutes."
+    echo ""
+    build_container_image
+}
+
 validate_container() {
     if [[ "$AR_CONTAINER_RUNTIME" == "apptainer" ]]; then
         validate_apptainer_host
         CONTAINER_IMAGE="$SCRIPT_DIR/container/agentic_researcher.sif"
         if [[ ! -f "$CONTAINER_IMAGE" ]]; then
-            echo "Error: Container image not found: $CONTAINER_IMAGE"
-            echo ""
-            echo "Build the container first:"
-            echo "  agentic-researcher --build"
+            echo "Error: Container image not found after build: $CONTAINER_IMAGE"
             exit 1
         fi
 
@@ -659,7 +739,7 @@ validate_gpu_backend() {
             ;;
         cluster-run)
             if [[ "$AR_CONTAINER_RUNTIME" != "native" ]]; then
-                echo "Error: cluster-run GPU backend requires --native/--host."
+                echo "Error: cluster-run GPU backend requires --runtime native."
                 exit 1
             fi
             if ! command -v cluster-run >/dev/null 2>&1; then
@@ -1078,6 +1158,10 @@ render_agentic_notes_for_role() {
         --role "$render_role" 2>/dev/null || true
 }
 
+valid_agent_name() {
+    [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]
+}
+
 render_agent_for_tool() {
     local source_path="$1"
     local target_path="$2"
@@ -1099,7 +1183,7 @@ render_agent_for_tool() {
                     printf 'model_reasoning_effort = "%s"\n' "$reasoning_escaped"
                 fi
                 printf 'developer_instructions = """\n'
-                printf '<!-- Generated by agentic-researcher. Edit agents/%s.md to change this agent. -->\n\n' "$agent_name"
+                printf '<!-- Generated by agentic-researcher. Edit the source agent definition to change this agent. -->\n\n'
                 strip_frontmatter "$source_path" | sed 's/"""/\\"""/g'
                 printf '\n'
                 render_agentic_notes_for_role "$agent_name" | sed 's/"""/\\"""/g'
@@ -1113,7 +1197,7 @@ render_agent_for_tool() {
                 printf 'description: "%s"\n' "$description_escaped"
                 printf 'mode: subagent\n'
                 printf -- '---\n\n'
-                printf '<!-- Generated by agentic-researcher. Edit agents/%s.md to change this agent. -->\n\n' "$agent_name"
+                printf '<!-- Generated by agentic-researcher. Edit the source agent definition to change this agent. -->\n\n'
                 strip_frontmatter "$source_path"
                 printf '\n'
                 render_agentic_notes_for_role "$agent_name"
@@ -1127,7 +1211,7 @@ render_agent_for_tool() {
                 in_frontmatter && $0 == "---" {
                     print
                     print ""
-                    print "<!-- Generated by agentic-researcher. Edit agents/" agent_name ".md to change this agent. -->"
+                    print "<!-- Generated by agentic-researcher. Edit the source agent definition to change this agent. -->"
                     inserted=1
                     in_frontmatter=0
                     next
@@ -1135,7 +1219,7 @@ render_agent_for_tool() {
                 { print }
                 END {
                     if (inserted == 0) {
-                        print "<!-- Generated by agentic-researcher. Edit agents/" agent_name ".md to change this agent. -->"
+                        print "<!-- Generated by agentic-researcher. Edit the source agent definition to change this agent. -->"
                     }
                 }
             ' "$source_path" > "$temp_path"
@@ -1152,17 +1236,16 @@ render_agent_for_tool() {
     mv "$temp_path" "$target_path"
 }
 
-setup_project_agents() {
-    local agent_root
-    agent_root="$(project_agent_root_for_tool)"
-    [[ -n "$agent_root" ]] || return 0
-    [[ -d "$SCRIPT_DIR/agents" ]] || return 0
-
+render_agent_source_dir() {
+    local agent_root="$1"
+    local source_dir="$2"
+    local source_label="$3"
     local managed_marker="Generated by agentic-researcher"
     local source_path file_stem agent_name description codex_reasoning_effort target_path
-    mkdir -p "$agent_root"
 
-    for source_path in "$SCRIPT_DIR"/agents/*.md; do
+    [[ -d "$source_dir" ]] || return 0
+
+    for source_path in "$source_dir"/*.md; do
         [[ -f "$source_path" ]] || continue
         file_stem="$(basename "$source_path" .md)"
         agent_name="$(frontmatter_value "$source_path" "name")"
@@ -1174,6 +1257,11 @@ setup_project_agents() {
         [[ -n "$agent_name" ]] || agent_name="$file_stem"
         [[ -n "$description" ]] || description="$agent_name agent."
 
+        if ! valid_agent_name "$agent_name"; then
+            echo "Warning: Skipping $source_label agent with invalid name: $agent_name"
+            continue
+        fi
+
         case "$AR_CLI_TOOL" in
             codex)
                 target_path="$agent_root/$agent_name.toml"
@@ -1184,12 +1272,26 @@ setup_project_agents() {
         esac
 
         if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
-            echo "Warning: Skipping existing agent at $target_path (not managed by agentic-researcher)"
+            echo "Warning: Skipping $source_label agent at $target_path (not managed by agentic-researcher)"
             continue
         fi
 
         render_agent_for_tool "$source_path" "$target_path" "$agent_name" "$description" "$codex_reasoning_effort"
     done
+}
+
+setup_project_agents() {
+    local agent_root
+    agent_root="$(project_agent_root_for_tool)"
+    [[ -n "$agent_root" ]] || return 0
+
+    mkdir -p "$agent_root"
+
+    render_agent_source_dir "$agent_root" "$SCRIPT_DIR/agents" "built-in"
+
+    if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
+        render_agent_source_dir "$agent_root" "$STATE_ROOT/repos/org-agentic-notes/agents" "org"
+    fi
 }
 
 append_skill_instruction_block() {
@@ -2150,7 +2252,7 @@ validate_multi_node() {
     fi
 
     if [[ "$AR_CONTAINER_RUNTIME" != "apptainer" ]]; then
-        echo "Error: --multi-node requires the Apptainer runtime (--apptainer)."
+        echo "Error: --multi-node requires the Apptainer runtime (--runtime apptainer)."
         exit 1
     fi
 
@@ -2562,7 +2664,7 @@ launch_oci_runtime() {
         echo "Error: $oci_runtime runtime selected, but '$oci_runtime' is not installed or not on PATH."
         echo ""
         echo "Install $oci_runtime on the host, then rerun:"
-        echo "  agentic-researcher --$oci_runtime --build"
+        echo "  $SCRIPT_DIR/container/build.sh --runtime $oci_runtime"
         exit 1
     fi
 
@@ -2935,8 +3037,9 @@ main() {
     resolve_optional_skills
     validate_gpu_backend
     validate_optional_skills
-    validate_container
     validate_multi_node
+    ensure_container_image
+    validate_container
     setup_storage
     setup_agentic_notes_state
     setup_instruction_file

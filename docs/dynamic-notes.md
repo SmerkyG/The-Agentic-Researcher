@@ -1,14 +1,16 @@
 # Dynamic Notes
 
-Agentic Researcher stores learned organization, role, and project knowledge as Git-backed Markdown notes. Notes are not CLI skills. Skills remain for durable procedures and tool affordances; learned facts, package gotchas, role conventions, and project-local lessons live in notes so they can be reviewed, merged, committed, and shared like normal text.
+Agentic Researcher stores learned organization-wide, role-specific, and project knowledge as Git-backed Markdown notes. Notes are not CLI skills. Skills remain for durable procedures and tool affordances; learned facts, package gotchas, role conventions, and project-local lessons live in notes so they can be reviewed, merged, committed, and shared like normal text.
 
 The launcher generates instruction and subagent config files that tell the model what notes exist and when to read them.
 
 ## Layouts
 
-Organization notes are checked out under `$AR_STATE_ROOT/repos/org-agentic-notes/` from `AR_ORG_NOTES_REPO`:
+Org notes are optional. When `AR_ORG_NOTES_REPO` is set, they are checked out under `$AR_STATE_ROOT/repos/org-agentic-notes/`. An empty org notes repo is a valid blank shared memory: AR can create org and role notes there over time via the note-updater flow. It just contributes no injected or listed org/role guidance until notes have been added. A starter layout is available in [examples/org-notes/](../examples/org-notes/).
 
 ```text
+agents/
+  data-curator.md
 notes/
   always-injected.md
   triton.md
@@ -24,9 +26,11 @@ roles/
       benchmarking.md
 ```
 
-Role notes live inside the organization notes repo at `roles/<role_id>/notes/`. Role `always-injected.md` is injected for agents running that role; other notes are listed for on-demand reading.
+Role notes live inside the optional org notes repo at `roles/<role_id>/notes/`. Role `always-injected.md` is injected for agents running that role; other notes are listed for on-demand reading.
 
-Project notes and experiment logs live on the project `agentic/state` branch, cached at `$AR_STATE_ROOT/projects/$AR_PROJECT_ID/agentic-state/`:
+Org-provided subagents live at `agents/*.md` in the org repo. They use the same neutral Markdown format as built-in AR subagents. AR renders built-in agents first and org agents second, so an org agent with the same `name` as a built-in agent overrides the built-in rendered output.
+
+Project notes and experiment logs live on the project `agentic/state` branch, cached at `$AR_STATE_ROOT/projects/<project-id>/agentic-state/`:
 
 ```text
 .agentic/
@@ -42,7 +46,7 @@ Project notes and experiment logs live on the project `agentic/state` branch, ca
       E0001_alice_triton-power2-shape-test.yaml
 ```
 
-`AR_PROJECT_ID` is required. Provide it through `agentic-researcher --project-id ID`, an environment variable, or config. AR does not infer project identity from the directory name and does not require a `.agentic/project.yaml` file in the project repo.
+AR derives `<project-id>` from the project Git `origin` repo name by default. Common remote forms such as `git@github.com:org/repo.git`, `https://github.com/org/repo`, and `ssh://git@github.com/org/repo.git` resolve to `repo`. AR does not infer project identity from the directory name and does not require a `.agentic/project.yaml` file in the project repo. Use `agentic-researcher --project-id ID`, `AR_PROJECT_ID`, or config when the project has no remote, when two unrelated repos share the same repo name, or when multiple differently named repos should share one state checkout.
 
 ## Project Setup and Multiple Worktrees
 
@@ -50,15 +54,15 @@ For shared project notes and experiment logs, the project should be an ordinary 
 
 When AR creates `agentic/state` for the first time, it uses an orphan branch with no parent commit and an empty starting fileset. The first state commit contains only the `.agentic/` notes and experiment-log layout. It does not include the current code tree or any files from the agent's code branch. If `agentic/state` already exists, AR checks out that existing branch and updates it.
 
-Launch AR from the project worktree and pass the same project id for every launch that should share notes and experiment logs:
+Launch AR from the project worktree. Worktrees whose `origin` remotes have the same repo name share notes and experiment logs automatically:
 
 ```bash
-agentic-researcher --project-id my-project-2026 .
+agentic-researcher .
 ```
 
-Multiple projects are supported in one AR installation. They are separated by `$AR_PROJECT_ID` under `$AR_STATE_ROOT/projects/`. Missing project ids are rejected so separate Git worktrees cannot silently become separate AR projects because of directory-name differences.
+Multiple projects are supported in one AR installation. They are separated by resolved project id under `$AR_STATE_ROOT/projects/`. Projects without a Git remote must pass `--project-id` or set `AR_PROJECT_ID`; this prevents directory-name differences from silently defining project identity.
 
-Multiple top-level agents may work in separate Git worktrees of the same project as long as they share the same project id. Code changes stay isolated in each agent worktree. Note updates and experiment logging go through the shared cached project state checkout and are serialized with local state locks before pulling, committing, and pushing.
+Multiple top-level agents may work in separate Git worktrees of the same project as long as they share the same resolved project id. Code changes stay isolated in each agent worktree. Note updates and experiment logging go through the shared cached project state checkout and are serialized with local state locks before pulling, committing, and pushing.
 
 Subagents inherit the parent launch's project id and rendered note list. They do not need separate project-state configuration unless they are launched as independent top-level agents.
 
@@ -68,8 +72,8 @@ In container mode, the launcher mounts the AR runtime read-only at `/opt/agentic
 
 The launcher keeps the existing `INSTRUCTIONS.md` behavior for `CLAUDE.md`, `GEMINI.md`, and `AGENTS.md`. It appends a managed "Agentic Notes" section that injects the full text of available `always-injected.md` files:
 
-- organization `notes/always-injected.md`
-- current role `roles/$AR_ROLE_ID/notes/always-injected.md`
+- organization-wide `notes/always-injected.md`, when `AR_ORG_NOTES_REPO` is configured
+- current role `roles/$AR_ROLE_ID/notes/always-injected.md`, when `AR_ORG_NOTES_REPO` is configured
 - project `.agentic/notes/always-injected.md`
 
 Other notes are not injected. They are listed by source directory and filename, excluding `always-injected.md`, so the working agent can read only the notes relevant to the current task. Agents should not open source `always-injected.md` note files directly; their contents are already injected when available.
@@ -84,7 +88,7 @@ Working agents do not edit note files directly. When a reusable lesson is learne
 
 If a push is rejected, the updater fetches latest, re-reads the target note, reapplies the semantic merge, recommits, and pushes again. If a semantic conflict remains, it stops and reports the conflict.
 
-Use package notes for package-specific lessons, architecture notes for architecture optimization lessons, role `always-injected.md` for role-wide lessons, org `always-injected.md` for org-wide lessons, and project notes for project-only lessons.
+Use package notes for package-specific lessons, architecture notes for architecture optimization lessons, role `always-injected.md` for role-wide lessons, org `always-injected.md` for organization-wide lessons, and project notes for project-only lessons. Org and role note updates require `AR_ORG_NOTES_REPO`; project note updates do not.
 
 ## Experiment Logs
 

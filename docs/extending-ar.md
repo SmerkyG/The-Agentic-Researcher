@@ -6,9 +6,71 @@ Use:
 
 - `skills/` for always-on project skills that should be rendered for every launch.
 - `optional-skills/` for selectable capabilities such as GPU job backends, cluster tools, site-specific data systems, or lab-specific workflows.
-- `agents/` for subagents that should be rendered into the selected CLI's subagent directory.
+- AR install `agents/` for built-in subagents that should be rendered into the selected CLI's subagent directory.
+- Org repo `agents/` for organization-provided subagents shared across AR installations.
 
-This page focuses on optional skills because they are the usual extension point for custom GPU job backends.
+This page covers optional skills and subagents. Optional skills are the usual extension point for custom GPU job backends; subagents are the extension point for new reusable agent roles.
+
+## Subagents and Roles
+
+AR ships neutral subagent definitions in its built-in `agents/` directory. If `AR_ORG_NOTES_REPO` is configured, the org repo may also provide neutral subagent definitions in its own `agents/` directory. On every launch, AR renders those Markdown files into the selected CLI's project subagent directory:
+
+| Tool | Rendered subagent directory |
+|------|-----------------------------|
+| Claude | `.claude/agents/` |
+| Gemini | `.gemini/agents/` |
+| OpenCode | `.opencode/agents/` |
+| Codex | `.codex/agents/` |
+
+To add a new managed subagent for one AR installation, create a Markdown file in the AR install's `agents/` directory. To share the same subagent across every AR installation configured with the same org repo, create it in the org repo's `agents/` directory instead:
+
+```text
+agents/
+  data-curator.md
+```
+
+Use this format:
+
+```markdown
+---
+name: data-curator
+description: Inspect datasets, manifests, splits, and preprocessing for research experiments.
+codex_reasoning_effort: medium
+---
+
+You are a data curation agent for Agentic Researcher projects.
+
+Responsibilities:
+
+- Check dataset manifests and split definitions before experiments use them.
+- Identify leakage, duplicate examples, missing labels, and preprocessing drift.
+- Summarize risks and exact files inspected.
+
+Return:
+
+- Dataset or split checked
+- Problems found
+- Commands or files used for verification
+- Recommended fixes
+```
+
+`name` is the subagent id the working agent will use when launching the subagent. It also doubles as the role id for role notes when AR renders that subagent's Agentic Notes section. For example, a subagent named `data-curator` will receive role notes from:
+
+```text
+roles/
+  data-curator/
+    notes/
+      always-injected.md
+      data-quality.md
+```
+
+`description` should be short and action-oriented because CLIs use it to decide when the subagent is relevant. `codex_reasoning_effort` is optional and is rendered only for Codex-compatible configs; use `low`, `medium`, or `high`.
+
+Precedence is intentional: AR renders built-in agents first and org repo agents second. If an org repo agent has the same `name` as a built-in AR agent, the org repo version wins and replaces the managed rendered output for that name. Unmanaged project-local CLI-native agent files are still protected; AR skips them instead of overwriting them.
+
+Keep subagents narrow. If a capability is mostly a tool, command, or backend workflow, prefer an optional skill. If it is a recurring delegation role with its own responsibilities and output shape, make it a subagent.
+
+Current limitation: AR renders all built-in and org repo Markdown files in `agents/` for every launch. There is not yet an `optional-agents/` selector. Project-local CLI-native subagent files may still work for a specific CLI, and AR will not overwrite unmanaged files at the same rendered path, but those files are not portable across CLIs and do not get AR's neutral rendering behavior.
 
 ## Optional Skill Layout
 
@@ -43,7 +105,7 @@ An optional skill directory must contain at least one of `SKILL.md` or `INSTRUCT
 Enable an optional skill for one launch:
 
 ```bash
-agentic-researcher --project-id my-project-2026 --optional-skill my-gpu-backend .
+agentic-researcher --optional-skill my-gpu-backend .
 ```
 
 Enable one or more optional skills through config:
@@ -152,7 +214,7 @@ Keep first-class launcher integration small. Most backend-specific behavior belo
 - Test with:
 
 ```bash
-agentic-researcher --project-id test-project --optional-skill my-gpu-backend --native --tool codex /path/to/project
+agentic-researcher --optional-skill my-gpu-backend --runtime native --tool codex /path/to/project
 ```
 
 Then confirm the rendered skill appears under the selected CLI's project skill directory and the instruction overlay appears in the workspace instruction file.

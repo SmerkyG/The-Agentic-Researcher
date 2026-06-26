@@ -102,7 +102,7 @@ def write_xdg_config(xdg_config_home: Path, content: str) -> Path:
 
 
 def test_build_script_uses_podman_for_podman_runtime(base_env: dict[str, str]) -> None:
-    result = run([str(BUILD_SCRIPT), "--podman"], base_env)
+    result = run([str(BUILD_SCRIPT), "--runtime", "podman"], base_env)
 
     assert result.returncode == 0
     assert "Building Podman container" in result.stdout
@@ -121,7 +121,7 @@ def test_build_script_reads_xdg_config_for_proxy(base_env: dict[str, str], tmp_p
     )
 
     result = run(
-        [str(BUILD_SCRIPT), "--podman"],
+        [str(BUILD_SCRIPT), "--runtime", "podman"],
         {**base_env, "XDG_CONFIG_HOME": str(xdg_config_home)},
     )
 
@@ -208,7 +208,6 @@ def test_install_script_accepts_podman_runtime(base_env: dict[str, str], tmp_pat
             "--runtime",
             "podman",
             "--write-config",
-            "--build",
             "--force",
         ],
         {**base_env, "XDG_CONFIG_HOME": str(config_dir)},
@@ -218,12 +217,13 @@ def test_install_script_accepts_podman_runtime(base_env: dict[str, str], tmp_pat
     assert (bin_dir / "agentic-researcher").is_symlink()
     config_text = (config_dir / "agentic-researcher" / "config.sh").read_text()
     assert 'AR_CONTAINER_RUNTIME="podman"' in config_text
-    assert "build --format docker -t agentic-researcher:latest" in read_log(base_env["FAKE_PODMAN_LOG"])
+    assert 'AR_AUTO_BUILD="true"' in config_text
+    assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
 
-def test_launcher_builds_with_podman_flag(base_env: dict[str, str]) -> None:
-    result = run([str(AGENTIC_RESEARCHER), "--podman", "--build"], base_env)
+def test_build_command_builds_with_podman_runtime(base_env: dict[str, str]) -> None:
+    result = run([str(BUILD_SCRIPT), "--runtime", "podman"], base_env)
 
     assert result.returncode == 0
     assert "Building Podman container" in result.stdout
@@ -231,12 +231,12 @@ def test_launcher_builds_with_podman_flag(base_env: dict[str, str]) -> None:
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
 
-def test_launcher_auto_detects_podman_for_build_when_docker_is_absent(
+def test_build_command_auto_detects_podman_when_docker_is_absent(
     base_env: dict[str, str], fake_bin: Path
 ) -> None:
     (fake_bin / "docker").unlink()
 
-    result = run([str(AGENTIC_RESEARCHER), "--build"], base_env)
+    result = run([str(BUILD_SCRIPT)], base_env)
 
     assert result.returncode == 0
     assert "Docker not found, falling back to Podman." in result.stdout
@@ -246,7 +246,7 @@ def test_launcher_auto_detects_podman_for_build_when_docker_is_absent(
 
 
 def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str]) -> None:
-    result = run([str(AGENTIC_RESEARCHER), "--podman", "--tool", "codex", "--test"], base_env)
+    result = run([str(AGENTIC_RESEARCHER), "--runtime", "podman", "--tool", "codex", "--test"], base_env)
 
     assert result.returncode == 0
     podman_log = read_log(base_env["FAKE_PODMAN_LOG"])
@@ -260,6 +260,35 @@ def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str]
     assert "AR_NOTES_CLI=/opt/agentic-researcher/scripts/ar-notes" in podman_log
     assert "--entrypoint /bin/bash" in podman_log
     assert "/test_sandbox.sh" in podman_log
+
+
+def test_launcher_auto_builds_missing_podman_image(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-auto-build"
+    workspace.mkdir()
+    make_executable(
+        fake_bin / "podman",
+        "#!/bin/sh\n"
+        "printf 'cmd:%s %s\\n' \"$0\" \"$*\" >> \"${FAKE_PODMAN_LOG:?}\"\n"
+        "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+        "  exit 1\n"
+        "fi\n"
+        "exit 0\n",
+    )
+
+    result = run(
+        [str(AGENTIC_RESEARCHER), "--runtime", "podman", "--tool", "pi", str(workspace)],
+        base_env,
+    )
+
+    assert result.returncode == 0
+    assert "Container image for podman was not found." in result.stdout
+    assert "Building it now." in result.stdout
+    podman_log = read_log(base_env["FAKE_PODMAN_LOG"])
+    assert "image inspect agentic-researcher:latest" in podman_log
+    assert "build --format docker -t agentic-researcher:latest" in podman_log
+    assert "run --rm" in podman_log
 
 
 def test_launcher_native_runs_host_tool_without_container(
@@ -278,7 +307,7 @@ def test_launcher_native_runs_host_tool_without_container(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "codex",
             "--model",
@@ -336,7 +365,7 @@ def test_launcher_requires_project_id_for_launch(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "codex",
             str(workspace),
@@ -345,8 +374,39 @@ def test_launcher_requires_project_id_for_launch(
     )
 
     assert result.returncode == 1
-    assert "requires a stable project id" in result.stdout
+    assert "could not infer a project id" in result.stdout
     assert "agentic-researcher --project-id my-project-2026" in result.stdout
+
+
+def test_launcher_infers_project_id_from_git_remote(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-remote-project"
+    remote = tmp_path / "project.git"
+    run(["git", "init", "--bare", str(remote)], base_env)
+    run(["git", "init", str(workspace)], base_env)
+    run(["git", "-C", str(workspace), "remote", "add", "origin", str(remote)], base_env)
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = {**base_env, "AR_GPU_BACKEND": "none"}
+    env.pop("AR_PROJECT_ID", None)
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--runtime", "native",
+            "--tool",
+            "codex",
+            str(workspace),
+        ],
+        env,
+    )
+
+    assert result.returncode == 0
+    projects_root = Path(env["HOME"]) / ".cache" / "agentic-researcher" / "projects"
+    projects = list(projects_root.iterdir())
+    assert len(projects) == 1
+    assert projects[0].name == "project"
+    assert (projects[0] / "agentic-state" / ".agentic" / "notes" / "always-injected.md").exists()
 
 
 def test_launcher_project_id_flag_overrides_missing_env(
@@ -361,7 +421,7 @@ def test_launcher_project_id_flag_overrides_missing_env(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "codex",
             "--project-id",
@@ -401,7 +461,7 @@ def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
 
     command = [
         str(AGENTIC_RESEARCHER),
-        "--native",
+        "--runtime", "native",
         "--tool",
         "codex",
         str(workspace),
@@ -420,8 +480,8 @@ def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
     assert len(managed_commands) == 1
 
 
-def test_launcher_native_build_is_noop(base_env: dict[str, str]) -> None:
-    result = run([str(AGENTIC_RESEARCHER), "--native", "--build"], base_env)
+def test_build_command_native_runtime_is_noop(base_env: dict[str, str]) -> None:
+    result = run([str(BUILD_SCRIPT), "--runtime", "native"], base_env)
 
     assert result.returncode == 0
     assert "Native runtime selected; no container image to build." in result.stdout
@@ -441,7 +501,7 @@ def test_launcher_native_test_checks_rocm_when_nvidia_unavailable(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "codex",
             "--test",
@@ -473,7 +533,7 @@ def test_native_cluster_run_backend_renders_project_skill(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "codex",
             "--gpu-backend",
@@ -509,7 +569,7 @@ def test_native_optional_skill_renders_skill_and_instruction_overlay(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "codex",
             "--optional-skill",
@@ -537,7 +597,7 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "claude",
             "--gpu-backend",
@@ -580,7 +640,7 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "gemini",
             "--gpu-backend",
@@ -626,7 +686,7 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "opencode",
             "--gpu-backend",
@@ -672,7 +732,6 @@ def test_install_script_auto_detects_podman_when_docker_is_absent(
             "--bin-dir",
             str(bin_dir),
             "--write-config",
-            "--build",
             "--force",
         ],
         {**base_env, "XDG_CONFIG_HOME": str(config_dir)},
@@ -681,9 +740,10 @@ def test_install_script_auto_detects_podman_when_docker_is_absent(
     assert result.returncode == 0
     config_text = (config_dir / "agentic-researcher" / "config.sh").read_text()
     assert 'AR_CONTAINER_RUNTIME="podman"' in config_text
+    assert 'AR_AUTO_BUILD="true"' in config_text
     assert "Docker not found, falling back to Podman." in result.stdout
-    assert "Building Podman container" in result.stdout
-    assert "build --format docker -t agentic-researcher:latest" in read_log(base_env["FAKE_PODMAN_LOG"])
+    assert "Building Podman container" not in result.stdout
+    assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
 
@@ -704,7 +764,6 @@ def test_install_script_accepts_native_runtime(base_env: dict[str, str], tmp_pat
             "--tool",
             "codex",
             "--write-config",
-            "--build",
             "--force",
         ],
         {**base_env, "XDG_CONFIG_HOME": str(config_dir)},
@@ -715,7 +774,7 @@ def test_install_script_accepts_native_runtime(base_env: dict[str, str], tmp_pat
     assert 'AR_CONTAINER_RUNTIME="native"' in config_text
     assert 'AR_GPU_BACKEND="auto"' in config_text
     assert 'AR_OPTIONAL_SKILLS=""' in config_text
-    assert "Native runtime selected; no container image to build." in result.stdout
+    assert 'AR_AUTO_BUILD="true"' in config_text
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
@@ -727,7 +786,7 @@ def test_launcher_podman_runs_pi_tool(base_env: dict[str, str], tmp_path: Path) 
     workspace.mkdir()
 
     result = run(
-        [str(AGENTIC_RESEARCHER), "--podman", "--tool", "pi", str(workspace)],
+        [str(AGENTIC_RESEARCHER), "--runtime", "podman", "--tool", "pi", str(workspace)],
         base_env,
     )
 
@@ -766,7 +825,7 @@ def test_pi_translates_resume_to_session_and_warns_on_yolo(
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--podman",
+            "--runtime", "podman",
             "--tool",
             "pi",
             "--debug-launch",

@@ -305,8 +305,8 @@ AR_EXTRA_BIND_DIRS="$AR_EXTRA_BIND_DIRS"
 # GPU job backend: auto | none | cluster-run | remote-run
 AR_GPU_BACKEND="$AR_GPU_BACKEND"
 
-# Agentic Notes configuration. AR_PROJECT_ID is required at launch; leave it
-# empty here when you prefer passing --project-id per project.
+# Agentic Notes configuration. AR derives project identity from the git
+# origin remote by default; set AR_PROJECT_ID only when you need an override.
 AR_ORG_NOTES_REPO=""
 AR_ROLE_ID="researcher"
 AR_USER_ID="\$USER"
@@ -315,6 +315,7 @@ AR_AGENTIC_STATE_BRANCH="agentic/state"
 AR_NOTES_AUTO_REFRESH="true"
 AR_NOTES_GIT_NAME=""
 AR_NOTES_GIT_EMAIL=""
+AR_AUTO_BUILD="true"
 
 # Optional skills from optional-skills/ to install at launch (comma-separated)
 AR_OPTIONAL_SKILLS=""
@@ -329,13 +330,13 @@ echo ""
 echo "Next steps:"
 if [[ "$AR_CONTAINER_RUNTIME" == "native" ]]; then
     echo "  1. Make sure '$AR_CLI_TOOL' is installed on PATH"
-    echo "  2. Launch: agentic-researcher"
+    echo "  2. Launch: agentic-researcher ~/your-project"
 elif [[ "$AR_CLI_TOOL" == "claude" ]]; then
-    echo "  1. Build the container: agentic-researcher --build"
-    echo "  2. Launch: agentic-researcher  (will prompt for OAuth login)"
+    echo "  1. Launch: agentic-researcher ~/your-project  (will prompt for OAuth login)"
+    echo "     The container image builds automatically on first launch."
 else
-    echo "  1. Build the container: agentic-researcher --build"
-    echo "  2. Launch: agentic-researcher"
-    echo "  3. If needed, export the tool's standard API key env var before launch"
+    echo "  1. Launch: agentic-researcher ~/your-project"
+    echo "     The container image builds automatically on first launch."
+    echo "  2. If needed, export the tool's standard API key env var before launch"
 fi
 echo "════════════════════════════════════════════════════════════════"

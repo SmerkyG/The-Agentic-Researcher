@@ -53,10 +53,10 @@ AR_GPU_BACKEND="auto"
 # Leave empty to use only role/project-local note state.
 AR_ORG_NOTES_REPO=""
 
-# Current role, user, and required project id for Agentic Notes.
-# You can leave AR_PROJECT_ID empty here and pass --project-id per launch.
-# Use the same project id for all worktrees/agents that should share notes and
-# experiment logs.
+# Current role, user, and optional project id override for Agentic Notes.
+# By default AR derives project identity from the git origin remote.
+# Set AR_PROJECT_ID only when there is no remote or when multiple remotes/forks
+# should share one notes and experiment-log state.
 AR_ROLE_ID="researcher"
 AR_USER_ID="$USER"
 AR_PROJECT_ID=""
@@ -64,6 +64,10 @@ AR_PROJECT_ID=""
 # Durable project state branch and local note refresh behavior.
 AR_AGENTIC_STATE_BRANCH="agentic/state"
 AR_NOTES_AUTO_REFRESH="true"
+
+# Container images build automatically on first launch when missing.
+# Set false to require explicit prebuilds with container/build.sh.
+AR_AUTO_BUILD="true"
 
 # Optional Git identity for note-updater and experiment-log commits.
 AR_NOTES_GIT_NAME=""

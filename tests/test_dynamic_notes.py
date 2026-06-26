@@ -214,7 +214,7 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     launch = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "codex",
             str(project),
@@ -367,7 +367,23 @@ def test_project_state_initialization_creates_required_layout(tmp_path: Path) ->
     assert len(head_with_parents) == 1
 
 
-def test_project_state_requires_explicit_project_id(tmp_path: Path) -> None:
+def test_project_state_requires_project_id_when_no_remote_exists(tmp_path: Path) -> None:
+    project = tmp_path / "project-without-remote"
+    project.mkdir()
+    env = base_env(tmp_path)
+    env.pop("AR_PROJECT_ID", None)
+
+    result = run(
+        [str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)],
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "could not be inferred" in result.stderr
+
+
+def test_project_state_infers_project_id_from_git_remote(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
     env = base_env(tmp_path)
@@ -379,8 +395,23 @@ def test_project_state_requires_explicit_project_id(tmp_path: Path) -> None:
         check=False,
     )
 
-    assert result.returncode == 1
-    assert "AR_PROJECT_ID is required" in result.stderr
+    assert result.returncode == 0
+    projects = list((Path(env["AR_STATE_ROOT"]) / "projects").iterdir())
+    assert len(projects) == 1
+    assert projects[0].name == "project"
+    assert (projects[0] / "agentic-state" / ".agentic" / "notes" / "always-injected.md").exists()
+
+
+def test_project_remote_name_uses_repo_basename() -> None:
+    loader = SourceFileLoader("ar_notes_project_remote_name_test", str(AR_NOTES))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
+    ar_notes = importlib.util.module_from_spec(spec)
+    loader.exec_module(ar_notes)
+
+    assert ar_notes.project_remote_name("https://github.com/SmerkyG/abctest") == "abctest"
+    assert ar_notes.project_remote_name("git@github.com:SmerkyG/abctest.git") == "abctest"
+    assert ar_notes.project_remote_name("/tmp/abctest.git") == "abctest"
 
 
 def test_update_note_refresh_parent_locks_org_and_parent_project(tmp_path: Path) -> None:
@@ -767,7 +798,7 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     result = run(
         [
             str(AGENTIC_RESEARCHER),
-            "--native",
+            "--runtime", "native",
             "--tool",
             "codex",
             str(project),
@@ -785,3 +816,65 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert "### Agentic Notes" in instruction_text
     assert "## Agentic Notes" in instruction_text
     assert "Org body." in instruction_text
+
+
+def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path) -> None:
+    org_remote = init_bare_remote(
+        tmp_path,
+        "org-agent-extensions",
+        {
+            "notes/always-injected.md": "# Org Notes\n\nOrg body.\n",
+            "agents/experiment-runner.md": (
+                "---\n"
+                "name: experiment-runner\n"
+                "description: Org-specific experiment runner.\n"
+                "codex_reasoning_effort: low\n"
+                "---\n\n"
+                "You are the org-specific experiment runner.\n"
+            ),
+            "agents/data-curator.md": (
+                "---\n"
+                "name: data-curator\n"
+                "description: Inspect datasets and splits.\n"
+                "codex_reasoning_effort: medium\n"
+                "---\n\n"
+                "You are the org data curator.\n"
+            ),
+            "roles/data-curator/notes/always-injected.md": (
+                "# Data Curator Role\n\nUse the org dataset checklist.\n"
+            ),
+        },
+    )
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = base_env(tmp_path, org_remote)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["AR_GPU_BACKEND"] = "none"
+
+    run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--runtime",
+            "native",
+            "--tool",
+            "codex",
+            str(project),
+        ],
+        env=env,
+    )
+
+    experiment_runner = project / ".codex" / "agents" / "experiment-runner.toml"
+    data_curator = project / ".codex" / "agents" / "data-curator.toml"
+    assert experiment_runner.exists()
+    assert data_curator.exists()
+    experiment_text = experiment_runner.read_text(encoding="utf-8")
+    data_curator_text = data_curator.read_text(encoding="utf-8")
+    assert "Org-specific experiment runner" in experiment_text
+    assert "You are the org-specific experiment runner." in experiment_text
+    assert 'model_reasoning_effort = "low"' in experiment_text
+    assert "Run one clearly scoped experiment at a time." not in experiment_text
+    assert "You are the org data curator." in data_curator_text
+    assert "Use the org dataset checklist." in data_curator_text

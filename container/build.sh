@@ -19,38 +19,91 @@ fi
 [[ -n "${https_proxy:-}" ]] && export https_proxy
 [[ -n "${http_proxy:-}" ]] && export http_proxy
 
-OCI_RUNTIME=""
-case "${1:-}" in
-    --docker|docker)
-        OCI_RUNTIME="docker"
+detect_default_oci_runtime() {
+    if command -v docker >/dev/null 2>&1; then
+        printf '%s\n' "docker"
+    elif command -v podman >/dev/null 2>&1; then
+        printf '%s\n' "podman"
+    else
+        printf '%s\n' "docker"
+    fi
+}
+
+show_help() {
+    cat <<'EOF'
+Usage:
+  container/build.sh [--runtime docker|podman|apptainer|native]
+
+Build the Agentic Researcher container image for the selected runtime.
+Native mode does not use a container image.
+EOF
+}
+
+RUNTIME="${AR_CONTAINER_RUNTIME:-}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --runtime)
+            if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                echo "Error: --runtime requires a value (docker|podman|apptainer|native)." >&2
+                exit 1
+            fi
+            RUNTIME="$2"
+            shift 2
+            ;;
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown build option: $1" >&2
+            echo "" >&2
+            show_help >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "$RUNTIME" ]]; then
+    RUNTIME="$(detect_default_oci_runtime)"
+    if [[ "$RUNTIME" == "podman" ]] && ! command -v docker >/dev/null 2>&1; then
+        echo "Docker not found, falling back to Podman."
+    fi
+fi
+
+case "$RUNTIME" in
+    docker|podman|apptainer|native)
         ;;
-    --podman|podman)
-        OCI_RUNTIME="podman"
-        ;;
-    --native|native)
-        echo "Native runtime selected; no container image to build."
-        exit 0
+    *)
+        echo "Error: Unsupported runtime: $RUNTIME" >&2
+        echo "Supported runtimes: docker, podman, apptainer, native" >&2
+        exit 1
         ;;
 esac
 
-if [[ -n "$OCI_RUNTIME" ]]; then
-    if ! command -v "$OCI_RUNTIME" >/dev/null 2>&1; then
-        echo "Error: '$OCI_RUNTIME' is not installed or not on PATH."
+if [[ "$RUNTIME" == "native" ]]; then
+    echo "Native runtime selected; no container image to build."
+    exit 0
+fi
+
+if [[ "$RUNTIME" == "docker" || "$RUNTIME" == "podman" ]]; then
+    if ! command -v "$RUNTIME" >/dev/null 2>&1; then
+        echo "Error: '$RUNTIME' is not installed or not on PATH."
         echo ""
-        echo "Install $OCI_RUNTIME on the host, then rerun:"
-        echo "  agentic-researcher --$OCI_RUNTIME --build"
+        echo "Install $RUNTIME on the host, then rerun:"
+        echo "  container/build.sh --runtime $RUNTIME"
         exit 1
     fi
 
-    first_char="${OCI_RUNTIME%${OCI_RUNTIME#?}}"
-    rest="${OCI_RUNTIME#?}"
+    first_char="${RUNTIME%${RUNTIME#?}}"
+    rest="${RUNTIME#?}"
     first_char_upper="$(printf '%s' "$first_char" | tr '[:lower:]' '[:upper:]')"
     runtime_name="${first_char_upper}${rest}"
     echo "Building ${runtime_name} container..."
-    if [[ "$OCI_RUNTIME" == "podman" ]]; then
-        "$OCI_RUNTIME" build --format docker -t agentic-researcher:latest "$SCRIPT_DIR"
+    if [[ "$RUNTIME" == "podman" ]]; then
+        "$RUNTIME" build --format docker -t agentic-researcher:latest "$SCRIPT_DIR"
     else
-        "$OCI_RUNTIME" build -t agentic-researcher:latest "$SCRIPT_DIR"
+        "$RUNTIME" build -t agentic-researcher:latest "$SCRIPT_DIR"
     fi
     echo ""
     echo "${runtime_name} image built: agentic-researcher:latest"
@@ -59,14 +112,14 @@ else
         echo "Error: Apptainer builds are only supported on Linux hosts. Current host: $(uname -s)"
         echo ""
         echo "Use Docker on this machine:"
-        echo "  agentic-researcher --docker --build"
+        echo "  container/build.sh --runtime docker"
         exit 1
     fi
     if ! command -v apptainer >/dev/null 2>&1; then
         echo "Error: 'apptainer' is not installed or not on PATH."
         echo ""
         echo "Install Apptainer on the Linux host, then rerun:"
-        echo "  agentic-researcher --apptainer --build"
+        echo "  container/build.sh --runtime apptainer"
         exit 1
     fi
 
@@ -95,4 +148,4 @@ else
 fi
 
 echo ""
-echo "Run with: agentic-researcher"
+echo "Run with: agentic-researcher ~/your-project"
