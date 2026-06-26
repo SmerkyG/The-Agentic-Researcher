@@ -2,7 +2,7 @@
 
 Agentic Researcher stores learned organization-wide, role-specific, and project knowledge as Git-backed Markdown notes. Notes are not CLI skills. Skills remain for durable procedures and tool affordances; learned facts, package gotchas, role conventions, and project-local lessons live in notes so they can be reviewed, merged, committed, and shared like normal text.
 
-The launcher generates instruction and subagent config files that tell the model what notes exist and when to read them.
+The launcher generates top-level instruction files and subagent config files that tell the model what notes exist and when to read them.
 
 ## Layouts
 
@@ -11,6 +11,7 @@ Org notes are optional. When `AR_ORG_NOTES_REPO` is set, they are checked out un
 ```text
 agents/
   data-curator.md
+  research-paper-author.md
 notes/
   always-injected.md
   triton.md
@@ -26,9 +27,9 @@ roles/
       benchmarking.md
 ```
 
-Role notes live inside the optional org notes repo at `roles/<role_id>/notes/`. Role `always-injected.md` is injected for agents running that role; other notes are listed for on-demand reading.
+Role notes live inside the optional org notes repo at `roles/<role_id>/notes/`. Role `always-injected.md` is injected for agents running that role; other notes are listed for on-demand reading. For top-level launches, the role id is the selected `AR_MAIN_AGENT` value, which defaults to `research-coordinator`. For subagents, the role id is the subagent `name`.
 
-Org-provided subagents live at `agents/*.md` in the org repo. They use the same neutral Markdown format as built-in AR subagents. AR renders built-in agents first and org agents second, so an org agent with the same `name` as a built-in agent overrides the built-in rendered output.
+Org-provided agents live at `agents/*.md` in the org repo. They use the same neutral Markdown format as built-in AR agents. `kind: main` agents are selectable with `AR_MAIN_AGENT`; `kind: subagent` agents are rendered into the selected CLI's subagent directory. Missing `kind` is treated as `subagent` for older org repos. AR loads built-in agents first and org agents second, so an org agent with the same `name` as a built-in agent overrides the built-in definition.
 
 Project notes and experiment logs live on the project `agentic/state` branch, cached at `$AR_STATE_ROOT/projects/<project-id>/agentic-state/`:
 
@@ -70,17 +71,17 @@ In container mode, the launcher mounts the AR runtime read-only at `/opt/agentic
 
 ## Instruction Generation
 
-The launcher keeps the existing `INSTRUCTIONS.md` behavior for `CLAUDE.md`, `GEMINI.md`, and `AGENTS.md`. It appends a managed "Agentic Notes" section that injects the full text of available `always-injected.md` files:
+The launcher starts from the shared `INSTRUCTIONS.md` base, inserts the selected `kind: main` agent section, and writes the invocation-specific top-level instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) when needed. It appends a managed "Agentic Notes" section that injects the full text of available `always-injected.md` files:
 
 - organization-wide `notes/always-injected.md`, when `AR_ORG_NOTES_REPO` is configured
-- current role `roles/$AR_ROLE_ID/notes/always-injected.md`, when `AR_ORG_NOTES_REPO` is configured
+- selected main-agent role `roles/$AR_MAIN_AGENT/notes/always-injected.md`, when `AR_ORG_NOTES_REPO` is configured
 - project `.agentic/notes/always-injected.md`
 
 Other notes are not injected. They are listed by source directory and filename, excluding `always-injected.md`, so the working agent can read only the notes relevant to the current task. Agents should not open source `always-injected.md` note files directly; their contents are already injected when available.
 
 The launcher also renders a managed compaction hook for the selected CLI. The hook pulls the org notes and project `agentic/state` checkouts under local locks, rematerializes the invocation-specific instruction file in the worktree, tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary for note-reading rules, and asks the model to read the refreshed file before resuming the interrupted task. This gives post-compaction sessions a concrete refresh path without relying on a vague instruction to remember injected context.
 
-Subagent configs are rendered through the existing launcher machinery. When a subagent is rendered, its note section uses that subagent's role name, plus org and project notes.
+Subagent configs are rendered through the same agent registry. When a subagent is rendered, its note section uses that subagent's role name, plus org and project notes. Main-agent definitions are not rendered as subagents.
 
 ## Note Updates
 

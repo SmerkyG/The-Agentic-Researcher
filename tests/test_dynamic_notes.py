@@ -80,7 +80,7 @@ def base_env(tmp_path: Path, org_remote: Path | None = None) -> dict[str, str]:
     env.update(
         {
             "AR_STATE_ROOT": str(tmp_path / "state"),
-            "AR_ROLE_ID": "gpu-kernel-engineer",
+            "AR_MAIN_AGENT": "research-coordinator",
             "AR_USER_ID": "alice",
             "AR_PROJECT_ID": "sparse-transformer-2026",
             "AR_AGENTIC_STATE_BRANCH": "agentic/state",
@@ -812,7 +812,10 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert not (project / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
     assert (project / ".codex" / "agents" / "note-updater.toml").exists()
     assert (project / ".codex" / "agents" / "experiment-logger.toml").exists()
+    assert not (project / ".codex" / "agents" / "research-coordinator.toml").exists()
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START name=research-coordinator -->" in instruction_text
+    assert "# Research Coordinator Instructions" in instruction_text
     assert "### Agentic Notes" in instruction_text
     assert "## Agentic Notes" in instruction_text
     assert "Org body." in instruction_text
@@ -827,6 +830,7 @@ def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path
             "agents/experiment-runner.md": (
                 "---\n"
                 "name: experiment-runner\n"
+                "kind: subagent\n"
                 "description: Org-specific experiment runner.\n"
                 "codex_reasoning_effort: low\n"
                 "---\n\n"
@@ -835,6 +839,7 @@ def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path
             "agents/data-curator.md": (
                 "---\n"
                 "name: data-curator\n"
+                "kind: subagent\n"
                 "description: Inspect datasets and splits.\n"
                 "codex_reasoning_effort: medium\n"
                 "---\n\n"
@@ -878,3 +883,99 @@ def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path
     assert "Run one clearly scoped experiment at a time." not in experiment_text
     assert "You are the org data curator." in data_curator_text
     assert "Use the org dataset checklist." in data_curator_text
+
+
+def test_launcher_renders_org_main_agent_override_without_subagent(tmp_path: Path) -> None:
+    org_remote = init_bare_remote(
+        tmp_path,
+        "org-main-agents",
+        {
+            "agents/research-coordinator.md": (
+                "---\n"
+                "name: research-coordinator\n"
+                "kind: main\n"
+                "description: Org research coordinator.\n"
+                "codex_reasoning_effort: high\n"
+                "---\n\n"
+                "# Org Research Coordinator\n\n"
+                "Use the org-specific research playbook.\n"
+            ),
+            "roles/research-coordinator/notes/always-injected.md": (
+                "# Coordinator Role Notes\n\nUse the org coordinator note.\n"
+            ),
+        },
+    )
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = base_env(tmp_path, org_remote)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["AR_GPU_BACKEND"] = "none"
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--runtime",
+            "native",
+            "--tool",
+            "codex",
+            str(project),
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "# Org Research Coordinator" in instruction_text
+    assert "Use the org-specific research playbook." in instruction_text
+    assert "# Research Coordinator Instructions" not in instruction_text
+    assert "Use the org coordinator note." in instruction_text
+    assert not (project / ".codex" / "agents" / "research-coordinator.toml").exists()
+
+
+def test_org_main_agent_name_conflict_removes_builtin_subagent(tmp_path: Path) -> None:
+    org_remote = init_bare_remote(
+        tmp_path,
+        "org-main-conflict",
+        {
+            "agents/experiment-runner.md": (
+                "---\n"
+                "name: experiment-runner\n"
+                "kind: main\n"
+                "description: Not a subagent in this org.\n"
+                "---\n\n"
+                "This definition intentionally claims the built-in subagent name.\n"
+            ),
+        },
+    )
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    stale_agent = project / ".codex" / "agents" / "experiment-runner.toml"
+    stale_agent.parent.mkdir(parents=True)
+    stale_agent.write_text(
+        "<!-- Generated by agentic-researcher. Edit the source agent definition to change this agent. -->\n",
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = base_env(tmp_path, org_remote)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["AR_GPU_BACKEND"] = "none"
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--runtime",
+            "native",
+            "--tool",
+            "codex",
+            str(project),
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not stale_agent.exists()

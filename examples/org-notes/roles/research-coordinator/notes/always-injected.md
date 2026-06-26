@@ -1,7 +1,7 @@
-# Researcher Role Notes
+# Research Coordinator Role Notes
 
-Use this file for guidance that should apply to general research agents across
-projects.
+Use this file for guidance that should apply to the default
+`research-coordinator` main agent across projects.
 
 Example guidance:
 

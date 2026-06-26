@@ -305,10 +305,10 @@ AR_EXTRA_BIND_DIRS="$AR_EXTRA_BIND_DIRS"
 # GPU job backend: auto | none | cluster-run | remote-run
 AR_GPU_BACKEND="$AR_GPU_BACKEND"
 
-# Agentic Notes configuration. AR derives project identity from the git
-# origin remote by default; set AR_PROJECT_ID only when you need an override.
+# Agentic Notes and main-agent configuration. AR derives project identity from
+# the git origin remote by default; set AR_PROJECT_ID only when you need an override.
 AR_ORG_NOTES_REPO=""
-AR_ROLE_ID="researcher"
+AR_MAIN_AGENT="research-coordinator"
 AR_USER_ID="\$USER"
 AR_PROJECT_ID=""
 AR_AGENTIC_STATE_BRANCH="agentic/state"

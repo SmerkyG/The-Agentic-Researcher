@@ -1,5 +1,6 @@
 ---
 name: note-updater
+kind: subagent
 description: Update one Git-backed Agentic Notes file after a reusable lesson is learned.
 codex_reasoning_effort: medium
 ---

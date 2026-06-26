@@ -1,5 +1,6 @@
 ---
 name: literature-reviewer
+kind: subagent
 description: Review papers, notes, and references relevant to a research direction.
 codex_reasoning_effort: high
 ---

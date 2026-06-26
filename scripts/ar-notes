@@ -79,7 +79,7 @@ def state_branch() -> str:
 
 
 def role_id(value: str | None = None) -> str:
-    return value or os.environ.get("AR_ROLE_ID") or "researcher"
+    return value or os.environ.get("AR_MAIN_AGENT") or "research-coordinator"
 
 
 def user_id(value: str | None = None) -> str:

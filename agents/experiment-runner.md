@@ -1,5 +1,6 @@
 ---
 name: experiment-runner
+kind: subagent
 description: Run bounded research experiments, record results, and preserve reproducibility.
 codex_reasoning_effort: medium
 ---

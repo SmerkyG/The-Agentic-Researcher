@@ -1,5 +1,6 @@
 ---
 name: data-curator
+kind: subagent
 description: Inspect datasets, manifests, splits, and preprocessing for research experiments.
 codex_reasoning_effort: medium
 ---

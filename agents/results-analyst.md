@@ -1,5 +1,6 @@
 ---
 name: results-analyst
+kind: subagent
 description: Analyze experiment logs, metrics, and reports to decide what to try next.
 codex_reasoning_effort: high
 ---

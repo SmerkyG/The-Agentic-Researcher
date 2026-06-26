@@ -54,15 +54,15 @@ cd The-Agentic-Researcher
 
 The installer adds the `agentic-researcher` launcher and creates optional local configuration when requested.
 
-Optional: configure a shared org notes repo if you want organization-wide notes, role-specific notes, or org-provided subagents to follow this AR installation across projects. Create the local config first if it does not already exist:
+Optional: configure a shared org notes repo if you want organization-wide notes, role-specific notes, or org-provided agents to follow this AR installation across projects. Create the local config first if it does not already exist:
 
 ```bash
 agentic-researcher --setup
 agentic-researcher --setup AR_ORG_NOTES_REPO=git@github.com:ORG/org-agentic-notes.git
-agentic-researcher --setup AR_ROLE_ID=gpu-kernel-engineer
+agentic-researcher --setup AR_MAIN_AGENT=research-paper-author
 ```
 
-Org notes are optional. Without them, AR still maintains project notes and the shared experiment log on the project's `agentic/state` branch. See [Org Notes](#org-notes) for the repo layout and when to use it.
+`AR_MAIN_AGENT` defaults to `research-coordinator`. Only change it when the AR install or org notes repo provides another `kind: main` agent. Org notes are optional. Without them, AR still maintains project notes and the shared experiment log on the project's `agentic/state` branch. See [Org Notes](#org-notes) for the repo layout and when to use it.
 
 ## Workflow
 
@@ -70,7 +70,7 @@ Org notes are optional. Without them, AR still maintains project notes and the s
 
 1. **Start from a normal project Git checkout.** The checkout should usually have an `origin` remote so AR can derive the project identity from the repo name automatically.
 2. **Run AR from that checkout:** `cd ~/my-project && agentic-researcher .`. For auto-approved Claude permissions, add `--yolo`.
-3. **For a new research effort, ask the agent to use the `setup_research_plan` skill.** This starts an interactive dialogue about your research goal, evaluation metrics, constraints, and compute budget.
+3. **For a new research effort, ask the default `research-coordinator` main agent to use the `setup_research_plan` skill.** This starts an interactive dialogue about your research goal, evaluation metrics, constraints, and compute budget.
 4. The agent fills in the **Project Instructions** section of the instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) and creates branch-local research files such as `report.tex` and `TODO.md`.
 
 If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID` so repeated launches use the same notes and experiment-log state.
@@ -102,6 +102,7 @@ Run `agentic-researcher --setup` to create a configuration file at `${XDG_CONFIG
 - **Authentication** — OAuth login or API key (with configurable env var name)
 - **Custom API endpoint** — point Claude at an Anthropic-compatible proxy or gateway
 - **Org notes repo** (`AR_ORG_NOTES_REPO`) — optional shared Git repo for organization-wide and role-specific notes
+- **Main agent** (`AR_MAIN_AGENT`) — top-level agent definition to render into the workspace instruction file. Defaults to `research-coordinator`
 - **State/cache directory** (`AR_STATE_ROOT`) — where caches, container `/tmp`, and tool state are stored. Defaults to `~/.cache/agentic-researcher`. On HPC systems with Apptainer, set this to a path with sufficient space (e.g. on a scratch filesystem) to avoid hitting the default 64 MB overlay limit
 - **Extra environment variables** (`AR_EXTRA_ENV`) — pipe-separated `KEY=VALUE` pairs forwarded into the container (e.g. `HF_TOKEN=hf_...|WANDB_API_KEY=...`)
 - **Network proxy** — HTTP/HTTPS proxy settings for use inside the container
@@ -186,7 +187,7 @@ Agentic Researcher can render project skills for GPU placement backends. In nati
 
 Skill definitions start from neutral Agentic Researcher sources. Always-on skills live in `skills/`; selectable skills live in `optional-skills/`. Both are rendered into the selected CLI's project discovery path: `.claude/skills` for Claude, `.gemini/skills` for Gemini, `.opencode/skills` for OpenCode, and `.agents/skills` for Codex/pi. If a selected skill has `INSTRUCTIONS.md`, that file is also injected into the workspace instruction file.
 
-Subagent definitions start from neutral Markdown files in AR's built-in `agents/` directory and optional org repo `agents/` directory, then are rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Org repo agents render after built-ins, so org agents win on name conflict. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that subagent. To add subagent roles, see [docs/extending-ar.md](docs/extending-ar.md#subagents-and-roles).
+Agent definitions start from neutral Markdown files in AR's built-in `agents/` directory and optional org repo `agents/` directory. A definition with `kind: main` can be selected with `AR_MAIN_AGENT` and is inserted into the top-level instruction file. A definition with `kind: subagent` is rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Org repo agents render after built-ins, so org agents win on name conflict. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that agent where supported. To add agents and roles, see [docs/extending-ar.md](docs/extending-ar.md#agents-and-roles).
 
 ```bash
 agentic-researcher --runtime native --gpu-backend cluster-run
@@ -201,30 +202,31 @@ To add lab- or site-specific backends, create an optional skill under `optional-
 
 ## Org Notes
 
-An org notes repo is optional shared memory for guidance and learned lessons that should follow agents across multiple projects or AR installations. Use it for lab-wide conventions, shared infrastructure notes, package gotchas, benchmark rules, role-specific habits, or org-provided subagents. An empty org notes repo is a valid starting point when you want AR to accumulate organization-wide and role-specific notes over time. It just will not inject or list org/role guidance until notes have been added.
+An org notes repo is optional shared memory for guidance and learned lessons that should follow agents across multiple projects or AR installations. Use it for lab-wide conventions, shared infrastructure notes, package gotchas, benchmark rules, role-specific habits, or org-provided main agents and subagents. An empty org notes repo is a valid starting point when you want AR to accumulate organization-wide and role-specific notes over time. It just will not inject or list org/role guidance until notes have been added.
 
 For immediate useful guidance, seed the repo from the example layout in [examples/org-notes/](examples/org-notes/):
 
 ```text
 agents/
-  data-curator.md          # org-provided subagent rendered for every install
+  data-curator.md          # kind: subagent rendered for every install
+  research-paper-author.md # kind: main selectable with AR_MAIN_AGENT
 notes/
   always-injected.md      # short organization-wide guidance injected every time
   git.md                  # on-demand topic note listed for relevant work
 roles/
-  researcher/
+  research-coordinator/
     notes/
-      always-injected.md  # injected only when AR_ROLE_ID=researcher
+      always-injected.md  # injected for the default main agent
   gpu-kernel-engineer/
     notes/
-      always-injected.md  # injected only when AR_ROLE_ID=gpu-kernel-engineer
+      always-injected.md  # injected for that role id
 ```
 
 Put only short, high-value guidance in `always-injected.md`. Put longer or situational details in topic notes such as `notes/git.md`, `notes/slurm.md`, `notes/pytorch.md`, or `roles/gpu-kernel-engineer/notes/benchmarking.md`; AR lists those notes so agents can read them only when relevant.
 
-Org-provided subagents in `agents/*.md` use the same neutral Markdown format as AR's built-in subagents. They are rendered after built-ins, so an org agent with the same `name` as a built-in agent wins. `AR_ROLE_ID` selects which role-specific notes the top-level agent receives; subagents use their own `name` as the role id for role notes.
+Org-provided agents in `agents/*.md` use the same neutral Markdown format as AR's built-in agents. They are rendered after built-ins, so an org agent with the same `name` as a built-in agent wins. `AR_MAIN_AGENT` selects both the top-level main-agent definition and the role-specific notes for that top-level agent. Subagents use their own `name` as the role id for role notes.
 
-See [docs/dynamic-notes.md](docs/dynamic-notes.md) for the full notes layout and [docs/extending-ar.md](docs/extending-ar.md#subagents-and-roles) for the subagent format.
+See [docs/dynamic-notes.md](docs/dynamic-notes.md) for the full notes layout and [docs/extending-ar.md](docs/extending-ar.md#agents-and-roles) for the agent format.
 
 ## Supported CLI Tools
 

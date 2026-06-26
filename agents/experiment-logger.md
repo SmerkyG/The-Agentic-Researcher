@@ -1,5 +1,6 @@
 ---
 name: experiment-logger
+kind: subagent
 description: Append experiments and corrections to the shared Agentic Researcher experiment log.
 codex_reasoning_effort: low
 ---

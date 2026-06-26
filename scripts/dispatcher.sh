@@ -62,7 +62,7 @@ build_apptainer_args() {
         --env "AR_GPU_BACKEND=remote-run"
         --env "AR_STATE_ROOT=$STATE_ROOT"
         --env "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
-        --env "AR_ROLE_ID=${AR_ROLE_ID:-researcher}"
+        --env "AR_MAIN_AGENT=${AR_MAIN_AGENT:-research-coordinator}"
         --env "AR_USER_ID=${AR_USER_ID:-}"
         --env "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
         --env "AR_AGENTIC_STATE_BRANCH=${AR_AGENTIC_STATE_BRANCH:-agentic/state}"

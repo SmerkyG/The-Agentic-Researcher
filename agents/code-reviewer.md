@@ -1,5 +1,6 @@
 ---
 name: code-reviewer
+kind: subagent
 description: Review code changes for correctness, research validity, and missing tests.
 codex_reasoning_effort: high
 ---

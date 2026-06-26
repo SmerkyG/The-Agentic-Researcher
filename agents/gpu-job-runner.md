@@ -1,5 +1,6 @@
 ---
 name: gpu-job-runner
+kind: subagent
 description: Place, monitor, and summarize local or backend GPU jobs for independent experiments.
 codex_reasoning_effort: low
 ---

@@ -53,11 +53,11 @@ AR_GPU_BACKEND="auto"
 # Leave empty to use only role/project-local note state.
 AR_ORG_NOTES_REPO=""
 
-# Current role, user, and optional project id override for Agentic Notes.
+# Selected top-level main agent, user, and optional project id override.
 # By default AR derives project identity from the git origin remote.
 # Set AR_PROJECT_ID only when there is no remote or when multiple remotes/forks
 # should share one notes and experiment-log state.
-AR_ROLE_ID="researcher"
+AR_MAIN_AGENT="research-coordinator"
 AR_USER_ID="$USER"
 AR_PROJECT_ID=""
 

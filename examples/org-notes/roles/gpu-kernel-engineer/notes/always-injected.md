@@ -1,7 +1,7 @@
 # GPU Kernel Engineer Role Notes
 
-Use this file for guidance that should apply whenever
-`AR_ROLE_ID=gpu-kernel-engineer`.
+Use this file for guidance that should apply whenever an agent runs with the
+`gpu-kernel-engineer` role id.
 
 Example guidance:
 
