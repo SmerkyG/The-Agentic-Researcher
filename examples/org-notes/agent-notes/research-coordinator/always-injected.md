@@ -1,4 +1,4 @@
-# Research Coordinator Role Notes
+# Research Coordinator Agent Type Notes
 
 Use this file for guidance that should apply to the default
 `research-coordinator` main agent across projects.

@@ -23,7 +23,7 @@ LLM CLIs supported: [Claude Code](https://github.com/anthropics/claude-code), [O
 
 Long-running agent teams have a memory problem: agents make mistakes, discover missing knowledge, learn local conventions, and uncover tool or infrastructure gotchas, but those lessons usually disappear with the session or context compaction. The next agent, project, or team repeats the same failure because the learning was not captured in a place other agents can use.
 
-Agentic Team's solution is simple: agents take notes. Organization-wide and role-specific notes live in an org-level Git repo. Project-wide and project role notes live on an orphan `agentic/state` branch in the project repo, separate from the normal code branches. Those Git-backed notes are shared across agents, projects, installations, and teams through ordinary Git review and merge workflows.
+Agentic Team's solution is simple: agents take notes. Org notes live in an org-level Git repo under `agent-notes/all-agents/` and `agent-notes/<agent_type>/`. Project notes live on an orphan `agentic/state` branch under `.agentic/agent-notes/all-agents/` and `.agentic/agent-notes/<agent_type>/`, separate from the normal code branches. Those Git-backed notes are shared across agents, projects, installations, and teams through ordinary Git review and merge workflows.
 
 There are two note modes. `always-injected.md` notes are short, high-value guidance injected into the agent's startup context. On-demand notes are listed in the generated instructions but read only when relevant, so detailed package, benchmark, backend, or project knowledge is available without bloating every context.
 
@@ -55,13 +55,13 @@ The installer adds the `agentic-researcher` launcher. The setup wizard creates l
 1. **Start from a normal project Git checkout.** The checkout should usually have an `origin` remote so AR can derive the project identity from the repo name automatically.
 2. **Run AR from that checkout:** `cd ~/my-project && agentic-researcher .`. For auto-approved agent permissions, add `--yolo`.
 3. **For a new research effort, ask the default `research-coordinator` main agent to use the `setup_research_plan` skill.** This starts an interactive dialogue about your research goal, evaluation metrics, constraints, and compute budget.
-4. The agent writes role-specific project instructions to project role notes on the project `agentic/state` branch. AR injects those notes into the worktree instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) and creates branch-local research files such as `report.tex` and `TODO.md`.
+4. The agent writes agent-type-specific project instructions to project agent-type notes on the project `agentic/state` branch. AR injects those notes into the worktree instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) and creates branch-local research files such as `report.tex` and `TODO.md`.
 
 If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID` so repeated launches use the same notes and experiment-log state.
 
 ### Resuming a Session
 
-Relaunch AR from the same project Git checkout or another worktree with the same resolved project identity. The rendered instructions tell the agent to use the injected project role notes, shared experiment summary, branch-local `report.tex`, and `TODO.md` before continuing. Use `setup_research_plan` on resume only when you want a structured recap or to revise the coordinator project role note.
+Relaunch AR from the same project Git checkout or another worktree with the same resolved project identity. The rendered instructions tell the agent to use the injected project agent-type notes, shared experiment summary, branch-local `report.tex`, and `TODO.md` before continuing. Use `setup_research_plan` on resume only when you want a structured recap or to revise the coordinator project agent-type note.
 
 ## Sandbox
 
@@ -85,7 +85,7 @@ Run `agentic-researcher --setup` to create a configuration file at `${XDG_CONFIG
 - **CLI tool** — Claude Code, OpenCode, Gemini CLI, Codex CLI, or pi
 - **Authentication** — OAuth login or API key (with configurable env var name)
 - **Custom API endpoint** — point Claude at an Anthropic-compatible proxy or gateway
-- **Org notes repo** (`AR_ORG_NOTES_REPO`) — optional shared Git repo for organization-wide and role-specific notes
+- **Org notes repo** (`AR_ORG_NOTES_REPO`) — optional shared Git repo for organization-wide and agent-type-specific notes
 - **Main agent** (`AR_MAIN_AGENT`) — top-level agent definition to render into the workspace instruction file. Defaults to `research-coordinator`
 - **State/cache directory** (`AR_STATE_ROOT`) — where caches, container `/tmp`, and tool state are stored. Defaults to `~/.cache/agentic-researcher`. On HPC systems with Apptainer, set this to a path with sufficient space (e.g. on a scratch filesystem) to avoid hitting the default 64 MB overlay limit
 - **Extra environment variables** (`AR_EXTRA_ENV`) — pipe-separated `KEY=VALUE` pairs forwarded into the container (e.g. `HF_TOKEN=hf_...|WANDB_API_KEY=...`)
@@ -132,13 +132,13 @@ Use AR from an ordinary project worktree. If the project Git repo has an `origin
 agentic-researcher .
 ```
 
-Organization-wide and role-specific notes are optional; configure `AR_ORG_NOTES_REPO` only when you want that shared layer.
+Organization-wide and agent-type-specific notes are optional; configure `AR_ORG_NOTES_REPO` only when you want that shared scope.
 
 On launch, AR creates or updates a cached checkout at `$AR_STATE_ROOT/projects/<project-id>/agentic-state/` and uses the project `agentic/state` branch for:
 
 ```text
-.agentic/notes/always-injected.md
-.agentic/roles/<role-id>/notes/always-injected.md
+.agentic/agent-notes/all-agents/always-injected.md
+.agentic/agent-notes/<agent_type>/always-injected.md
 .agentic/experiment-log/COUNTER.yaml
 .agentic/experiment-log/SUMMARY.md
 .agentic/experiment-log/experiments/
@@ -150,7 +150,7 @@ If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID`. Th
 
 Multiple projects are supported within one AR installation. Each project gets a separate cache directory keyed by the resolved project id. AR does not infer project identity from the directory name. For multi-worktree or multi-agent projects, use worktrees whose `origin` remotes have the same repo name, or pass the same `--project-id` or set the same `AR_PROJECT_ID` in every launch so all agents share the same notes and experiment log.
 
-Multiple top-level agents should work in separate Git worktrees of the same project repo. Their code branches and materialized instruction files stay independent, while project notes, project role notes, and experiment-log operations are serialized through the shared cached `agentic/state` checkout. Subagents rendered by a top-level launch use the same project id and state checkout as their parent agent.
+Multiple top-level agents should work in separate Git worktrees of the same project repo. Their code branches and materialized instruction files stay independent, while project notes, project agent-type notes, and experiment-log operations are serialized through the shared cached `agentic/state` checkout. Subagents rendered by a top-level launch use the same project id and state checkout as their parent agent.
 
 Example with a coordinator and a paper author sharing one project:
 
@@ -162,15 +162,15 @@ agentic-researcher --main-agent research-coordinator ../my-project-coordinator
 agentic-researcher --main-agent research-paper-author ../my-project-paper
 ```
 
-Run the `research-coordinator` project setup flow once to create or revise `.agentic/roles/research-coordinator/notes/always-injected.md`. Other main agents can have their own project role notes; run their setup flow only when that role needs role-specific project instructions.
+Run the `research-coordinator` project setup flow once to create or revise `.agentic/agent-notes/research-coordinator/always-injected.md`. Other main agents can have their own project agent-type notes; run their setup flow only when that agent type needs agent-type-specific project instructions.
 
-Each worktree gets its own generated `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` based on the selected main agent. Those files are materialized views and should not be treated as canonical shared state. Shared project guidance lives in `.agentic/notes/always-injected.md`; role-specific project guidance lives in `.agentic/roles/<role-id>/notes/always-injected.md`.
+Each worktree gets its own generated `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` based on the selected main agent. Those files are materialized views and should not be treated as canonical shared state. Shared project guidance for all agents lives in `.agentic/agent-notes/all-agents/always-injected.md`; agent-type-specific project guidance lives in `.agentic/agent-notes/<agent_type>/always-injected.md`.
 
 The `agentic/state` branch does not store `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`. It stores Agentic Notes and the experiment log; each worktree rematerializes its own instruction file on launch or refresh.
 
 `report.tex` and `TODO.md` remain normal files in the project worktree. AR does not lock them, so they should be treated as branch-local narrative and checklist files rather than a shared multi-agent queue or canonical experiment index. The shared cross-agent experiment history is the locked experiment log on `agentic/state`.
 
-See [docs/agentic-notes.md](docs/agentic-notes.md) for the notes repo layout, role notes, note-updater flow, experiment-logger flow, and experiment log format.
+See [docs/agentic-notes.md](docs/agentic-notes.md) for the notes repo layout, agent-type notes, note-updater flow, experiment-logger flow, and experiment log format.
 
 ### Job Backend Skills
 
@@ -178,7 +178,7 @@ Agentic Researcher can render project skills for job placement and execution bac
 
 Skill definitions start from neutral Agentic Researcher sources. Always-on skills live in `skills/`; selectable skills live in `optional-skills/`. Both are rendered into the selected CLI's project discovery path: `.claude/skills` for Claude, `.gemini/skills` for Gemini, `.opencode/skills` for OpenCode, and `.agents/skills` for Codex/pi. If a selected skill has `INSTRUCTIONS.md`, that file is also injected into the workspace instruction file.
 
-Agent definitions start from neutral Markdown files in AR's built-in `agents/` directory and optional org repo `agents/` directory. A definition with `kind: main` can be selected with `AR_MAIN_AGENT` and is inserted into the top-level instruction file. A definition with `kind: subagent` is rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Org repo agents render after built-ins, so org agents win on name conflict. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that agent where supported. To add agents and roles, see [docs/extending-ar.md](docs/extending-ar.md#agents-and-roles).
+Agent definitions start from neutral Markdown files in AR's built-in `agents/` directory and optional org repo `agents/` directory. A definition with `kind: main` can be selected with `AR_MAIN_AGENT` and is inserted into the top-level instruction file. A definition with `kind: subagent` is rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Org repo agents render after built-ins, so org agents win on name conflict. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that agent where supported. To add agents and agent types, see [docs/extending-ar.md](docs/extending-ar.md#agents-and-agent-types).
 
 ```bash
 agentic-researcher --optional-skill cluster-run
@@ -200,7 +200,7 @@ To add lab- or site-specific backends, create an optional skill under `optional-
 
 ## Org Notes
 
-An org notes repo is optional shared memory for guidance and learned lessons that should follow agents across multiple projects or AR installations. Use it for lab-wide conventions, shared infrastructure notes, package gotchas, benchmark rules, role-specific habits, or org-provided main agents and subagents. An empty org notes repo is a valid starting point when you want AR to accumulate organization-wide and role-specific notes over time. It just will not inject or list org/role guidance until notes have been added.
+An org notes repo is optional shared memory for guidance and learned lessons that should follow agents across multiple projects or AR installations. Use it for lab-wide conventions, shared infrastructure notes, package gotchas, benchmark rules, agent-type-specific habits, or org-provided main agents and subagents. An empty org notes repo is a valid starting point when you want AR to accumulate organization-wide and agent-type-specific notes over time. It just will not inject or list org/agent-type guidance until notes have been added.
 
 For immediate useful guidance, seed the repo from the example layout in [examples/org-notes/](examples/org-notes/):
 
@@ -208,23 +208,21 @@ For immediate useful guidance, seed the repo from the example layout in [example
 agents/
   data-curator.md          # kind: subagent rendered for every install
   research-paper-author.md # kind: main selectable with AR_MAIN_AGENT
-notes/
-  always-injected.md      # short organization-wide guidance injected every time
-  git.md                  # on-demand topic note listed for relevant work
-roles/
+agent-notes/
+  all-agents/
+    always-injected.md    # short organization-wide guidance injected every time
+    git.md                # on-demand topic note listed for relevant work
   research-coordinator/
-    notes/
-      always-injected.md  # injected for the default main agent
+    always-injected.md    # injected for the default main agent
   gpu-kernel-engineer/
-    notes/
-      always-injected.md  # injected for that role id
+    always-injected.md    # injected for that agent type
 ```
 
-Put only short, high-value guidance in `always-injected.md`. Put longer or situational details in topic notes such as `notes/git.md`, `notes/slurm.md`, `notes/pytorch.md`, or `roles/gpu-kernel-engineer/notes/benchmarking.md`; AR lists those notes so agents can read them only when relevant.
+Put only short, high-value guidance in `always-injected.md`. Put longer or situational details in topic notes such as `agent-notes/all-agents/git.md`, `agent-notes/all-agents/slurm.md`, `agent-notes/all-agents/pytorch.md`, or `agent-notes/gpu-kernel-engineer/benchmarking.md`; AR lists those notes so agents can read them only when relevant.
 
-Org-provided agents in `agents/*.md` use the same neutral Markdown format as AR's built-in agents. They are rendered after built-ins, so an org agent with the same `name` as a built-in agent wins. `AR_MAIN_AGENT` selects both the top-level main-agent definition and the role-specific notes for that top-level agent. Subagents use their own `name` as the role id for role notes.
+Org-provided agents in `agents/*.md` use the same neutral Markdown format as AR's built-in agents. They are rendered after built-ins, so an org agent with the same `name` as a built-in agent wins. `AR_MAIN_AGENT` selects both the top-level main-agent definition and the agent-type-specific notes for that top-level agent. Subagents use their own `name` as the agent type for agent-type notes.
 
-See [docs/agentic-notes.md](docs/agentic-notes.md) for the full notes layout and [docs/extending-ar.md](docs/extending-ar.md#agents-and-roles) for the agent format.
+See [docs/agentic-notes.md](docs/agentic-notes.md) for the full notes layout and [docs/extending-ar.md](docs/extending-ar.md#agents-and-agent-types) for the agent format.
 
 ## Supported CLI Tools
 
@@ -254,7 +252,7 @@ At launch, AR also renders a project-local compaction hook for the selected CLI.
 
 ### Research Agent Instructions
 
-The framework ships `INSTRUCTIONS.md` as a shared base template and `agents/*.md` as neutral main-agent and subagent definitions. At launch, AR renders the selected main agent and injects matching org/project notes into the workspace under the filename required by the selected tool. The `setup_research_plan` skill updates the `research-coordinator` project role note on `agentic/state`; it does not make the materialized instruction file canonical.
+The framework ships `INSTRUCTIONS.md` as a shared base template and `agents/*.md` as neutral main-agent and subagent definitions. At launch, AR renders the selected main agent and injects matching org/project notes into the workspace under the filename required by the selected tool. The `setup_research_plan` skill updates the `research-coordinator` project agent-type note on `agentic/state`; it does not make the materialized instruction file canonical.
 
 ## Citation
 

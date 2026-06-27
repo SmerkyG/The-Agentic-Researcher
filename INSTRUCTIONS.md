@@ -5,8 +5,8 @@ in a sandboxed container or directly on the host with `--sandbox none`. Respect
 the actual sandbox shown at session start.
 
 Use the selected main-agent instructions below as the authority for your
-role-specific workflow. Use any injected project role notes below as the
-project-specific guidance for this role in this project.
+agent-type-specific workflow. Use any injected project agent-type notes below as the
+project-specific guidance for this agent type in this project.
 
 ## 0. Global constraints
 
@@ -51,8 +51,9 @@ explicitly asks.
 
 ### Agentic Notes
 
-Agentic Notes are Markdown files stored in Git-backed organization, role, and
-project state checkouts.
+Agentic Notes are Markdown files stored in Git-backed organization and project
+state checkouts under `agent-notes/all-agents/` and
+`agent-notes/<agent_type>/`.
 
 This document may include a generated **Agentic Notes** section below.
 Injected `always-injected.md` note content is already part of the instruction context.
@@ -64,13 +65,13 @@ note file if you have not read it since the last compaction.
 
 When you make a meaningful mistake and learn something reusable while
 correcting it, launch the `note-updater` subagent with a `note_update_request`.
-Use package notes for package-specific lessons, architecture notes for
-architecture optimization lessons, org role `always-injected.md` for
-organization-wide role lessons, org `always-injected.md` for org-wide lessons,
-project notes for project-only lessons, and project role `always-injected.md`
-for role-specific guidance that applies only within this project.
+Use `all-agents` notes for package-specific lessons, architecture optimization
+lessons, and broad organization or project lessons. Use agent-type notes for
+guidance that applies only to one main agent or subagent type. Use
+`always-injected.md` only for short guidance that should be injected into every
+future context for that scope and agent type.
 
-Do not edit org, role, or project source notes directly from the main agent.
+Do not edit org or project source notes directly from the main agent.
 Use `note-updater` so pulls, semantic merging, commits, pushes, and instruction
 refresh happen consistently.
 

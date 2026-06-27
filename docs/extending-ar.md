@@ -9,9 +9,9 @@ Use:
 - AR install `agents/` for built-in main agents and subagents.
 - Org repo `agents/` for organization-provided main agents and subagents shared across AR installations.
 
-This page covers optional skills and agents. Optional skills are the usual extension point for custom job backends; agents are the extension point for top-level workflows and reusable delegation roles.
+This page covers optional skills and agents. Optional skills are the usual extension point for custom job backends; agents are the extension point for top-level workflows and reusable delegation agent types.
 
-## Agents and Roles
+## Agents and Agent Types
 
 AR ships neutral agent definitions in its built-in `agents/` directory. If `AR_ORG_NOTES_REPO` is configured, the org repo may also provide neutral agent definitions in its own `agents/` directory. Each definition declares whether it is a top-level main agent or a rendered subagent:
 
@@ -77,33 +77,31 @@ and verified references before drafting. Treat experiment logs and cited sources
 as evidence; do not invent results, metrics, citations, or claims.
 ```
 
-`name` is the stable agent id. For `kind: main`, it is the value used in `AR_MAIN_AGENT`. For `kind: subagent`, it is the id the working agent will use when launching the subagent. The same name also doubles as the role id for role notes. For example, a subagent named `data-curator` will receive role notes from:
+`name` is the stable agent id. For `kind: main`, it is the value used in `AR_MAIN_AGENT`. For `kind: subagent`, it is the id the working agent will use when launching the subagent. The same name also doubles as the agent type for agent-type notes. For example, a subagent named `data-curator` will receive agent-type notes from:
 
 ```text
-roles/
+agent-notes/
   data-curator/
-    notes/
-      always-injected.md
-      data-quality.md
+    always-injected.md
+    data-quality.md
 ```
 
-The default top-level agent, `research-coordinator`, receives role notes from:
+The default top-level agent, `research-coordinator`, receives agent-type notes from:
 
 ```text
-roles/
+agent-notes/
   research-coordinator/
-    notes/
-      always-injected.md
-      planning.md
+    always-injected.md
+    planning.md
 ```
 
-`description` should be short and action-oriented because CLIs use it to decide when a subagent is relevant and because humans use it to choose main agents. `kind` should be explicit for new definitions. Missing `kind` is treated as `subagent` for older org repos. `codex_reasoning_effort` is optional and is rendered only for Codex-compatible configs; use `low`, `medium`, or `high`.
+`description` should be short and action-oriented because CLIs use it to decide when a subagent is relevant and because humans use it to choose main agents. `kind` is required. `codex_reasoning_effort` is optional and is rendered only for Codex-compatible configs; use `low`, `medium`, or `high`.
 
 Precedence is intentional: AR loads built-in agents first and org repo agents second. If an org repo agent has the same `name` as a built-in AR agent, the org repo version wins. This applies across kinds: an org `kind: main` definition with the same name as a built-in `kind: subagent` prevents the built-in subagent from being rendered.
 
 Unmanaged project-local CLI-specific agent files are still protected; AR skips them instead of overwriting them.
 
-Keep subagents narrow. If a capability is mostly a tool, command, or backend workflow, prefer an optional skill. If it is a recurring delegation role with its own responsibilities and output shape, make it a subagent. Use main agents for top-level operating modes, such as `research-coordinator` or an org-provided `research-paper-author`.
+Keep subagents narrow. If a capability is mostly a tool, command, or backend workflow, prefer an optional skill. If it is a recurring delegation agent type with its own responsibilities and output shape, make it a subagent. Use main agents for top-level operating modes, such as `research-coordinator` or an org-provided `research-paper-author`.
 
 Current limitation: AR renders all final `kind: subagent` definitions for every launch. There is not yet an `optional-agents/` selector. Project-local CLI-specific subagent files may still work for a specific CLI, and AR will not overwrite unmanaged files at the same rendered path, but those files are not portable across CLIs and do not get AR's neutral rendering behavior.
 

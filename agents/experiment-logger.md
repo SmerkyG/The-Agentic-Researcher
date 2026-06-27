@@ -17,7 +17,7 @@ title: "Triton power-of-two shape test"
 short_description: "triton power-of-two shape test"
 user_id: alice
 source:
-  role_id: experiment-runner
+  agent_type: experiment-runner
   actor_id: actor-01
 description: |
   What was tested and why.
@@ -44,7 +44,7 @@ user_id: alice
 summary: "Metric was computed on the wrong split."
 correction: "Use the fixed validation split."
 source:
-  role_id: results-analyst
+  agent_type: results-analyst
   actor_id: actor-02
 ```
 

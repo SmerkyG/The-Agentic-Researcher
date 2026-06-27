@@ -90,7 +90,7 @@ run sequentially within one job or on the same local device.
 
 Do this every session or after context compaction:
 
-1. Use any injected `Project Role Notes: research-coordinator` text below as
+1. Use any injected `Project Agent Notes: research-coordinator` text below as
    the authoritative project-specific research guidance.
 2. Use any Agentic Notes text below as active guidance. Do not open source
    `always-injected.md` note files. Identify listed on-demand notes that may be

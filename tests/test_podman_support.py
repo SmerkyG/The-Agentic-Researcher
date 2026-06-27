@@ -410,7 +410,14 @@ def test_launcher_infers_project_id_from_git_remote(
     projects = list(projects_root.iterdir())
     assert len(projects) == 1
     assert projects[0].name == "project"
-    assert (projects[0] / "agentic-state" / ".agentic" / "notes" / "always-injected.md").exists()
+    assert (
+        projects[0]
+        / "agentic-state"
+        / ".agentic"
+        / "agent-notes"
+        / "all-agents"
+        / "always-injected.md"
+    ).exists()
 
 
 def test_launcher_project_id_flag_overrides_missing_env(

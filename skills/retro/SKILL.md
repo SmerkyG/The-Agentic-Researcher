@@ -22,7 +22,7 @@ Read the following files (skip any that don't exist):
 3. `$PROJECT_DIR/report.tex` -- branch-local narrative analysis and report quality
 4. `$PROJECT_DIR/TODO.md` -- branch-local open items and deferred work
 5. `$PROJECT_DIR/$INSTRUCTION_FILE` -- the materialized instructions governing this session, including the selected main-agent section
-6. The injected Agentic Notes section in `$INSTRUCTION_FILE`, especially project role notes for the active role; read on-demand note files only when they are needed to evaluate a concrete note-related issue
+6. The injected Agentic Notes section in `$INSTRUCTION_FILE`, especially project agent-type notes for the active agent type; read on-demand note files only when they are needed to evaluate a concrete note-related issue
 7. Run `git log --oneline -30` -- see the commit history (style, frequency, quality)
 8. Run `git diff --stat HEAD~5..HEAD 2>/dev/null || true` -- recent change patterns
 

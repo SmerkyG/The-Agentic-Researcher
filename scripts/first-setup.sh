@@ -248,7 +248,7 @@ echo ""
 
 # ── 6. Org notes repo ────────────────────────────────────────────────
 echo "─── Org Notes Repo ───"
-echo "  Optional shared Git repo for organization-wide notes, role notes, and"
+echo "  Optional shared Git repo for organization-wide notes, agent-type notes, and"
 echo "  org-provided agents. Leave empty to use only project-local state."
 echo ""
 read -rp "Org notes repo Git URL or local path [none]: " AR_ORG_NOTES_REPO

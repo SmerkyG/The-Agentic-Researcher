@@ -12,8 +12,8 @@ Inputs should be a YAML request shaped like:
 ```yaml
 kind: note_update_request
 target:
-  scope: org | role | project | project_role
-  role_id: gpu-kernel-engineer
+  scope: org | project
+  agent_type: all-agents | gpu-kernel-engineer
   project_id: sparse-transformer-2026
   note_name: triton
 summary: "Triton tl.arange block bounds must be powers of two."
@@ -23,7 +23,7 @@ rationale: |
   The agent used a raw logical size as a Triton block bound and corrected it after a failure.
 source:
   user_id: alice
-  role_id: gpu-kernel-engineer
+  agent_type: gpu-kernel-engineer
   project_id: sparse-transformer-2026
 ```
 
@@ -40,10 +40,10 @@ Rules:
 
 Target mapping:
 
-- `org`: organization notes checkout `notes/<note_name>.md`
-- `role`: organization notes checkout `roles/<role_id>/notes/<note_name>.md`
-- `project`: project state checkout `.agentic/notes/<note_name>.md` on the configured `agentic/state` branch
-- `project_role`: project state checkout `.agentic/roles/<role_id>/notes/<note_name>.md` on the configured `agentic/state` branch
-- Use `note_name: always-injected` only for lessons that should be injected into every future agent context for that scope.
+- `scope: org`: organization notes checkout `agent-notes/<agent_type>/<note_name>.md`
+- `scope: project`: project state checkout `.agentic/agent-notes/<agent_type>/<note_name>.md` on the configured `agentic/state` branch
+- Use `agent_type: all-agents` for lessons that every agent in the scope should receive or see listed.
+- Use a specific `agent_type` such as `gpu-kernel-engineer` for lessons only relevant to that main agent or subagent type.
+- Use `note_name: always-injected` only for lessons that should be injected into every future agent context for the selected scope and agent type.
 
 After a successful update, refresh the parent agent worktree instructions with `${AR_NOTES_CLI:-scripts/ar-notes} refresh` and `${AR_NOTES_CLI:-scripts/ar-notes} generate-instructions` when the helper did not already do so.

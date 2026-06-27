@@ -117,11 +117,11 @@ def seed_org_remote(tmp_path: Path) -> Path:
         tmp_path,
         "org-notes",
         {
-            "notes/always-injected.md": "# Org Notes\n\nOrg body.\n",
-            "notes/triton.md": "# Triton\n\n",
-            "notes/pytorch.md": "# PyTorch\n\n",
-            "roles/gpu-kernel-engineer/notes/always-injected.md": "# Role Notes\n\nRole body.\n",
-            "roles/gpu-kernel-engineer/notes/kernel-optimization.md": "# Kernel Optimization\n\n",
+            "agent-notes/all-agents/always-injected.md": "# Org Notes\n\nOrg body.\n",
+            "agent-notes/all-agents/triton.md": "# Triton\n\n",
+            "agent-notes/all-agents/pytorch.md": "# PyTorch\n\n",
+            "agent-notes/gpu-kernel-engineer/always-injected.md": "# Agent Type Notes\n\nAgent Type body.\n",
+            "agent-notes/gpu-kernel-engineer/kernel-optimization.md": "# Kernel Optimization\n\n",
         },
     )
 
@@ -139,26 +139,26 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     run([str(AR_NOTES), "init-org-notes", "--repo", str(org_remote)], env=env)
     run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
     state = state_checkout(env)
-    (state / ".agentic" / "notes" / "always-injected.md").write_text(
+    (state / ".agentic" / "agent-notes" / "all-agents" / "always-injected.md").write_text(
         "# Project Notes\n\nProject body.\n", encoding="utf-8"
     )
-    (state / ".agentic" / "notes" / "evaluation.md").write_text(
+    (state / ".agentic" / "agent-notes" / "all-agents" / "evaluation.md").write_text(
         "# Evaluation\n\n", encoding="utf-8"
     )
-    project_role = state / ".agentic" / "roles" / "gpu-kernel-engineer" / "notes"
-    project_role.mkdir(parents=True, exist_ok=True)
-    (project_role / "always-injected.md").write_text(
-        "# Project GPU Role Notes\n\nProject role body.\n",
+    project_agent = state / ".agentic" / "agent-notes" / "gpu-kernel-engineer"
+    project_agent.mkdir(parents=True, exist_ok=True)
+    (project_agent / "always-injected.md").write_text(
+        "# Project GPU Agent Type Notes\n\nProject agent type body.\n",
         encoding="utf-8",
     )
-    (project_role / "benchmarking.md").write_text("# Project Benchmarking\n\n", encoding="utf-8")
+    (project_agent / "benchmarking.md").write_text("# Project Benchmarking\n\n", encoding="utf-8")
     git(
         state,
         "add",
-        ".agentic/notes/always-injected.md",
-        ".agentic/notes/evaluation.md",
-        ".agentic/roles/gpu-kernel-engineer/notes/always-injected.md",
-        ".agentic/roles/gpu-kernel-engineer/notes/benchmarking.md",
+        ".agentic/agent-notes/all-agents/always-injected.md",
+        ".agentic/agent-notes/all-agents/evaluation.md",
+        ".agentic/agent-notes/gpu-kernel-engineer/always-injected.md",
+        ".agentic/agent-notes/gpu-kernel-engineer/benchmarking.md",
     )
     git(state, "commit", "-m", "seed project notes")
     git(state, "push")
@@ -171,7 +171,7 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
             "generate-instructions",
             "--project-dir",
             str(project),
-            "--role",
+            "--agent-type",
             "gpu-kernel-engineer",
             "--tool",
             "codex",
@@ -182,13 +182,13 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "# Main Agent Body" in text
     assert "Org body." in text
-    assert "Role body." in text
+    assert "Agent Type body." in text
     assert "Project body." in text
-    assert "Project role body." in text
-    assert "Org notes:" in text
-    assert "Organization role notes: gpu-kernel-engineer" in text
-    assert "Project notes:" in text
-    assert "Project role notes: gpu-kernel-engineer" in text
+    assert "Project agent type body." in text
+    assert "Org agent notes: all-agents" in text
+    assert "Org agent notes: gpu-kernel-engineer" in text
+    assert "Project agent notes: all-agents" in text
+    assert "Project agent notes: gpu-kernel-engineer" in text
     assert "  - triton.md" in text
     assert "  - pytorch.md" in text
     assert "  - kernel-optimization.md" in text
@@ -197,7 +197,7 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     assert "  - always-injected.md" not in text
 
 
-def test_replace_project_role_note_updates_shared_state_and_rendered_instructions(tmp_path: Path) -> None:
+def test_replace_project_agent_note_updates_shared_state_and_rendered_instructions(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
     env = base_env(tmp_path)
@@ -220,8 +220,8 @@ def test_replace_project_role_note_updates_shared_state_and_rendered_instruction
             "--project-dir",
             str(project),
             "--scope",
-            "project_role",
-            "--role",
+            "project",
+            "--agent-type",
             "research-coordinator",
             "--note-name",
             "always-injected",
@@ -236,7 +236,7 @@ def test_replace_project_role_note_updates_shared_state_and_rendered_instruction
 
     state = state_checkout(env)
     stored = (
-        state / ".agentic" / "roles" / "research-coordinator" / "notes" / "always-injected.md"
+        state / ".agentic" / "agent-notes" / "research-coordinator" / "always-injected.md"
     ).read_text(encoding="utf-8")
     rendered = (project / "AGENTS.md").read_text(encoding="utf-8")
     listed = run(
@@ -244,8 +244,8 @@ def test_replace_project_role_note_updates_shared_state_and_rendered_instruction
             str(AR_NOTES),
             "list-notes",
             "--scope",
-            "project_role",
-            "--role",
+            "project",
+            "--agent-type",
             "research-coordinator",
             "--project-dir",
             str(project),
@@ -256,7 +256,7 @@ def test_replace_project_role_note_updates_shared_state_and_rendered_instruction
     assert not (state / "AGENTS.md").exists()
     assert "**Goal:** Draft a sparse transformer paper." in rendered
     assert "validation loss" in stored
-    assert "Project Role Notes: research-coordinator" in rendered
+    assert "Project Agent Notes: research-coordinator" in rendered
     assert "Directory:" in listed.stdout
 
 
@@ -269,10 +269,10 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     run([str(AR_NOTES), "init-org-notes", "--repo", str(org_remote)], env=env)
     run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
     state = state_checkout(env)
-    (state / ".agentic" / "notes" / "always-injected.md").write_text(
+    (state / ".agentic" / "agent-notes" / "all-agents" / "always-injected.md").write_text(
         "# Project Notes\n\nOld project body.\n", encoding="utf-8"
     )
-    git(state, "add", ".agentic/notes/always-injected.md")
+    git(state, "add", ".agentic/agent-notes/all-agents/always-injected.md")
     git(state, "commit", "-m", "seed old project note")
     git(state, "push")
     run(
@@ -281,7 +281,7 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
             "generate-instructions",
             "--project-dir",
             str(project),
-            "--role",
+            "--agent-type",
             "gpu-kernel-engineer",
             "--tool",
             "codex",
@@ -310,10 +310,10 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     org_update = tmp_path / "org-update"
     run(["git", "clone", str(org_remote), str(org_update)])
     configure_git(org_update)
-    (org_update / "notes" / "always-injected.md").write_text(
+    (org_update / "agent-notes" / "all-agents" / "always-injected.md").write_text(
         "# Org Notes\n\nFresh org body.\n", encoding="utf-8"
     )
-    git(org_update, "add", "notes/always-injected.md")
+    git(org_update, "add", "agent-notes/all-agents/always-injected.md")
     git(org_update, "commit", "-m", "fresh org note")
     git(org_update, "push")
 
@@ -322,10 +322,10 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     configure_git(state_update)
     git(state_update, "fetch", "origin", "agentic/state")
     git(state_update, "checkout", "-B", "agentic/state", "origin/agentic/state")
-    (state_update / ".agentic" / "notes" / "always-injected.md").write_text(
+    (state_update / ".agentic" / "agent-notes" / "all-agents" / "always-injected.md").write_text(
         "# Project Notes\n\nFresh project body.\n", encoding="utf-8"
     )
-    git(state_update, "add", ".agentic/notes/always-injected.md")
+    git(state_update, "add", ".agentic/agent-notes/all-agents/always-injected.md")
     git(state_update, "commit", "-m", "fresh project note")
     git(state_update, "push", "origin", "agentic/state")
 
@@ -362,40 +362,40 @@ def test_note_updater_creates_new_org_note_and_commits(tmp_path: Path) -> None:
         tmp_path,
         {
             "kind": "note_update_request",
-            "target": {"scope": "org", "note_name": "git"},
+            "target": {"scope": "org", "agent_type": "all-agents", "note_name": "git"},
             "summary": "Prefer named staging.",
             "lesson": "Stage files by explicit path instead of using git add all.",
-            "source": {"user_id": "alice", "role_id": "gpu-kernel-engineer"},
+            "source": {"user_id": "alice", "agent_type": "gpu-kernel-engineer"},
         },
     )
 
     run([str(AR_NOTES), "update-note", "--request", str(request), "--project-dir", str(project)], env=env)
 
     checkout = org_checkout(env)
-    assert "Stage files by explicit path" in (checkout / "notes" / "git.md").read_text()
-    assert "notes: update notes/git.md" in git(checkout, "log", "-1", "--pretty=%s").stdout
+    assert "Stage files by explicit path" in (checkout / "agent-notes" / "all-agents" / "git.md").read_text()
+    assert "notes: update agent-notes/all-agents/git.md" in git(checkout, "log", "-1", "--pretty=%s").stdout
 
 
-def test_note_updater_does_not_duplicate_existing_role_bullet(tmp_path: Path) -> None:
+def test_note_updater_does_not_duplicate_existing_agent_type_bullet(tmp_path: Path) -> None:
     org_remote = seed_org_remote(tmp_path)
     project = tmp_path / "project"
     project.mkdir()
     env = base_env(tmp_path, org_remote)
     run([str(AR_NOTES), "init-org-notes", "--repo", str(org_remote)], env=env)
     checkout = org_checkout(env)
-    note = checkout / "roles" / "gpu-kernel-engineer" / "notes" / "triton.md"
+    note = checkout / "agent-notes" / "gpu-kernel-engineer" / "triton.md"
     note.write_text("# Triton\n\n## Lessons\n\n- Keep BLOCK power-of-two.\n", encoding="utf-8")
     git(checkout, "add", str(note.relative_to(checkout)))
-    git(checkout, "commit", "-m", "seed role triton note")
+    git(checkout, "commit", "-m", "seed agent type triton note")
     git(checkout, "push")
     request = make_request(
         tmp_path,
         {
             "kind": "note_update_request",
-            "target": {"scope": "role", "role_id": "gpu-kernel-engineer", "note_name": "triton"},
+            "target": {"scope": "org", "agent_type": "gpu-kernel-engineer", "note_name": "triton"},
             "summary": "Power-of-two blocks.",
             "lesson": "Keep BLOCK power-of-two.",
-            "source": {"user_id": "alice", "role_id": "gpu-kernel-engineer"},
+            "source": {"user_id": "alice", "agent_type": "gpu-kernel-engineer"},
         },
     )
 
@@ -415,6 +415,7 @@ def test_note_updater_updates_project_note_on_agentic_state_branch(tmp_path: Pat
             "kind": "note_update_request",
             "target": {
                 "scope": "project",
+                "agent_type": "all-agents",
                 "project_id": "sparse-transformer-2026",
                 "note_name": "evaluation",
             },
@@ -428,7 +429,9 @@ def test_note_updater_updates_project_note_on_agentic_state_branch(tmp_path: Pat
 
     inspect = tmp_path / "inspect-state"
     run(["git", "clone", "-b", "agentic/state", str(project_remote), str(inspect)])
-    assert "evaluation split unchanged" in (inspect / ".agentic" / "notes" / "evaluation.md").read_text()
+    assert "evaluation split unchanged" in (
+        inspect / ".agentic" / "agent-notes" / "all-agents" / "evaluation.md"
+    ).read_text()
 
 
 def test_project_state_initialization_creates_required_layout(tmp_path: Path) -> None:
@@ -439,7 +442,7 @@ def test_project_state_initialization_creates_required_layout(tmp_path: Path) ->
     run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
 
     state = state_checkout(env)
-    assert (state / ".agentic" / "notes" / "always-injected.md").exists()
+    assert (state / ".agentic" / "agent-notes" / "all-agents" / "always-injected.md").exists()
     assert (state / ".agentic" / "experiment-log" / "COUNTER.yaml").exists()
     assert (state / ".agentic" / "experiment-log" / "SUMMARY.md").exists()
     assert (state / ".agentic" / "experiment-log" / "experiments").is_dir()
@@ -481,7 +484,14 @@ def test_project_state_infers_project_id_from_git_remote(tmp_path: Path) -> None
     projects = list((Path(env["AR_STATE_ROOT"]) / "projects").iterdir())
     assert len(projects) == 1
     assert projects[0].name == "project"
-    assert (projects[0] / "agentic-state" / ".agentic" / "notes" / "always-injected.md").exists()
+    assert (
+        projects[0]
+        / "agentic-state"
+        / ".agentic"
+        / "agent-notes"
+        / "all-agents"
+        / "always-injected.md"
+    ).exists()
 
 
 def test_project_remote_name_uses_repo_basename() -> None:
@@ -501,7 +511,7 @@ def test_update_note_refresh_parent_locks_org_and_parent_project(tmp_path: Path)
         tmp_path,
         {
             "kind": "note_update_request",
-            "target": {"scope": "org", "note_name": "git"},
+            "target": {"scope": "org", "agent_type": "all-agents", "note_name": "git"},
             "summary": "Lock test.",
             "lesson": "Lock test.",
         },
@@ -549,7 +559,7 @@ def experiment_request(tmp_path: Path, short_description: str, key_result: str =
             "short_description": short_description,
             "title": short_description,
             "description": "Test experiment.",
-            "source": {"actor_id": "gpu-kernel-engineer", "role_id": "gpu-kernel-engineer"},
+            "source": {"actor_id": "gpu-kernel-engineer", "agent_type": "gpu-kernel-engineer"},
             "code": {"repo": "local", "branch": "test", "commit": "9f4d2a8c7b0e", "dirty": False},
             "command": "uv run pytest",
             "status": "completed",
@@ -907,7 +917,7 @@ def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path
         tmp_path,
         "org-agent-extensions",
         {
-            "notes/always-injected.md": "# Org Notes\n\nOrg body.\n",
+            "agent-notes/all-agents/always-injected.md": "# Org Notes\n\nOrg body.\n",
             "agents/experiment-runner.md": (
                 "---\n"
                 "name: experiment-runner\n"
@@ -926,8 +936,8 @@ def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path
                 "---\n\n"
                 "You are the org data curator.\n"
             ),
-            "roles/data-curator/notes/always-injected.md": (
-                "# Data Curator Role\n\nUse the org dataset checklist.\n"
+            "agent-notes/data-curator/always-injected.md": (
+                "# Data Curator Agent Type\n\nUse the org dataset checklist.\n"
             ),
         },
     )
@@ -980,8 +990,8 @@ def test_launcher_renders_org_main_agent_override_without_subagent(tmp_path: Pat
                 "# Org Research Coordinator\n\n"
                 "Use the org-specific research playbook.\n"
             ),
-            "roles/research-coordinator/notes/always-injected.md": (
-                "# Coordinator Role Notes\n\nUse the org coordinator note.\n"
+            "agent-notes/research-coordinator/always-injected.md": (
+                "# Coordinator Agent Type Notes\n\nUse the org coordinator note.\n"
             ),
         },
     )
@@ -1014,7 +1024,7 @@ def test_launcher_renders_org_main_agent_override_without_subagent(tmp_path: Pat
     assert not (project / ".codex" / "agents" / "research-coordinator.toml").exists()
 
 
-def test_multiple_main_agents_use_separate_worktrees_and_project_role_notes(tmp_path: Path) -> None:
+def test_multiple_main_agents_use_separate_worktrees_and_project_agent_notes(tmp_path: Path) -> None:
     org_remote = init_bare_remote(
         tmp_path,
         "org-paper-agent",
@@ -1027,7 +1037,7 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_role_notes(tmp_
                 "codex_reasoning_effort: high\n"
                 "---\n\n"
                 "# Research Paper Author Instructions\n\n"
-                "Write from verified experiment logs and project role notes.\n"
+                "Write from verified experiment logs and project agent-type notes.\n"
             ),
         },
     )
@@ -1050,7 +1060,7 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_role_notes(tmp_
         "Paper goal: write the manuscript from verified evidence.\n",
         encoding="utf-8",
     )
-    for role, note in (
+    for agent_type, note in (
         ("research-coordinator", coordinator_note),
         ("research-paper-author", paper_note),
     ):
@@ -1061,9 +1071,9 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_role_notes(tmp_
                 "--project-dir",
                 str(coordinator),
                 "--scope",
-                "project_role",
-                "--role",
-                role,
+                "project",
+                "--agent-type",
+                agent_type,
                 "--note-name",
                 "always-injected",
                 "--note-file",
@@ -1117,8 +1127,8 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_role_notes(tmp_
     assert "Paper goal: write the manuscript from verified evidence." in paper_text
     assert "Coordinator goal: run verified experiments." not in paper_text
     state = state_checkout(env)
-    assert (state / ".agentic" / "roles" / "research-coordinator" / "notes" / "always-injected.md").exists()
-    assert (state / ".agentic" / "roles" / "research-paper-author" / "notes" / "always-injected.md").exists()
+    assert (state / ".agentic" / "agent-notes" / "research-coordinator" / "always-injected.md").exists()
+    assert (state / ".agentic" / "agent-notes" / "research-paper-author" / "always-injected.md").exists()
     assert not (state / "AGENTS.md").exists()
 
 

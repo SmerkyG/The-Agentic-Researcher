@@ -1,7 +1,7 @@
-# GPU Kernel Engineer Role Notes
+# GPU Kernel Engineer Agent Type Notes
 
 Use this file for guidance that should apply whenever an agent runs with the
-`gpu-kernel-engineer` role id.
+`gpu-kernel-engineer` agent type.
 
 Example guidance:
 

@@ -33,6 +33,7 @@ NOTES_BEGIN = "<!-- AGENTIC-RESEARCHER-NOTES-START -->"
 NOTES_END = "<!-- AGENTIC-RESEARCHER-NOTES-END -->"
 ALWAYS_INJECTED_NOTE = "always-injected.md"
 ALWAYS_INJECTED_NOTE_STEM = "always-injected"
+ALL_AGENTS_TYPE = "all-agents"
 
 
 class ArNotesError(RuntimeError):
@@ -78,7 +79,7 @@ def state_branch() -> str:
     return os.environ.get("AR_AGENTIC_STATE_BRANCH", "agentic/state")
 
 
-def role_id(value: str | None = None) -> str:
+def agent_type(value: str | None = None) -> str:
     return value or os.environ.get("AR_MAIN_AGENT") or "research-coordinator"
 
 
@@ -316,11 +317,11 @@ def init_org_notes(args: argparse.Namespace) -> None:
     repo_arg = Path(args.repo).expanduser()
     if not re.match(r"^[A-Za-z0-9_.+-]+://", args.repo) and not repo_arg.exists():
         ensure_local_git_repo(repo_arg, "main")
-        notes_dir = repo_arg / "notes"
+        notes_dir = repo_arg / "agent-notes" / ALL_AGENTS_TYPE
         notes_dir.mkdir(parents=True, exist_ok=True)
         always_injected = notes_dir / ALWAYS_INJECTED_NOTE
         if not always_injected.exists():
-            always_injected.write_text("# Organization-Wide Notes\n\n", encoding="utf-8")
+            always_injected.write_text("# All Agents Notes\n\n", encoding="utf-8")
         commit_if_changed(repo_arg, "agentic: initialize org notes")
     checkout = ensure_org_checkout(args.repo)
     if checkout is not None:
@@ -381,14 +382,14 @@ def initial_summary() -> str:
 
 def ensure_project_state_files(repo: Path) -> list[Path]:
     changed_paths: list[Path] = []
-    notes_dir = repo / ".agentic" / "notes"
+    notes_dir = repo / ".agentic" / "agent-notes" / ALL_AGENTS_TYPE
     experiments_dir = repo / ".agentic" / "experiment-log" / "experiments"
     notes_dir.mkdir(parents=True, exist_ok=True)
     experiments_dir.mkdir(parents=True, exist_ok=True)
 
     always_injected = notes_dir / ALWAYS_INJECTED_NOTE
     if not always_injected.exists():
-        always_injected.write_text("# Project Notes\n\n", encoding="utf-8")
+        always_injected.write_text("# Project All Agents Notes\n\n", encoding="utf-8")
         changed_paths.append(always_injected)
 
     counter = repo / ".agentic" / "experiment-log" / "COUNTER.yaml"
@@ -464,13 +465,21 @@ def append_injected_note(lines: list[str], label: str, path: Path) -> None:
     )
 
 
-def build_notes_section(project_dir: Path, role: str, *, markers: bool = True) -> str:
+def agent_notes_dir(repo: Path, scope: str, agent_type_value: str) -> Path:
+    if scope == "org":
+        return repo / "agent-notes" / agent_type_value
+    if scope == "project":
+        return repo / ".agentic" / "agent-notes" / agent_type_value
+    raise ArNotesError("scope must be org or project")
+
+
+def build_notes_section(project_dir: Path, agent_type_value: str, *, markers: bool = True) -> str:
     project_repo = project_state_path(project_dir)
     org_repo = org_checkout_path()
-    org_notes = org_repo / "notes"
-    role_notes = org_repo / "roles" / role / "notes"
-    project_notes = project_repo / ".agentic" / "notes"
-    project_role_notes = project_repo / ".agentic" / "roles" / role / "notes"
+    org_all_notes = agent_notes_dir(org_repo, "org", ALL_AGENTS_TYPE)
+    org_agent_notes = agent_notes_dir(org_repo, "org", agent_type_value)
+    project_all_notes = agent_notes_dir(project_repo, "project", ALL_AGENTS_TYPE)
+    project_agent_notes = agent_notes_dir(project_repo, "project", agent_type_value)
 
     lines: list[str] = []
     if markers:
@@ -480,36 +489,40 @@ def build_notes_section(project_dir: Path, role: str, *, markers: bool = True) -
         [
             "## Agentic Notes",
             "",
-            "The following Git-backed note files contain helpful knowledge about packages, tools, architectures, project conventions, and role-specific work.",
+            "The following Git-backed note files contain helpful knowledge about packages, tools, architectures, project conventions, and agent-type-specific work.",
             "",
             "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed on-demand note files, read the relevant note file if you have not read it since the last compaction.",
             "",
-            "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies across the whole organization, update org `always-injected.md`. If it applies across a whole role in the organization, update org role `always-injected.md`. If it applies only to this project, update a project note. If it applies only to this role within this project, update project role `always-injected.md`.",
+            "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies across every agent in the organization, update org `all-agents` `always-injected.md`. If it applies across this agent type in the organization, update org agent-type `always-injected.md`. If it applies to every agent in this project, update project `all-agents` `always-injected.md`. If it applies only to this agent type within this project, update project agent-type `always-injected.md`.",
             "",
         ]
     )
 
-    append_injected_note(lines, "Organization-Wide Notes", org_notes / ALWAYS_INJECTED_NOTE)
-    append_injected_note(lines, f"Organization Role Notes: {role}", role_notes / ALWAYS_INJECTED_NOTE)
-    append_injected_note(lines, "Project Notes", project_notes / ALWAYS_INJECTED_NOTE)
-    append_injected_note(lines, f"Project Role Notes: {role}", project_role_notes / ALWAYS_INJECTED_NOTE)
+    append_injected_note(lines, "Org Agent Notes: all-agents", org_all_notes / ALWAYS_INJECTED_NOTE)
+    if agent_type_value != ALL_AGENTS_TYPE:
+        append_injected_note(lines, f"Org Agent Notes: {agent_type_value}", org_agent_notes / ALWAYS_INJECTED_NOTE)
+    append_injected_note(lines, "Project Agent Notes: all-agents", project_all_notes / ALWAYS_INJECTED_NOTE)
+    if agent_type_value != ALL_AGENTS_TYPE:
+        append_injected_note(lines, f"Project Agent Notes: {agent_type_value}", project_agent_notes / ALWAYS_INJECTED_NOTE)
 
     lines.extend(["### Available On-Demand Notes", ""])
-    lines.extend(["Org notes:", f"  Directory: {org_notes}/"])
-    org_specific = note_names(org_notes)
-    lines.extend([f"  - {name}" for name in org_specific] or ["  (none)"])
+    lines.extend(["Org agent notes: all-agents", f"  Directory: {org_all_notes}/"])
+    org_all_specific = note_names(org_all_notes)
+    lines.extend([f"  - {name}" for name in org_all_specific] or ["  (none)"])
     lines.append("")
-    lines.extend([f"Organization role notes: {role}", f"  Directory: {role_notes}/"])
-    role_specific = note_names(role_notes)
-    lines.extend([f"  - {name}" for name in role_specific] or ["  (none)"])
+    if agent_type_value != ALL_AGENTS_TYPE:
+        lines.extend([f"Org agent notes: {agent_type_value}", f"  Directory: {org_agent_notes}/"])
+        org_agent_specific = note_names(org_agent_notes)
+        lines.extend([f"  - {name}" for name in org_agent_specific] or ["  (none)"])
+        lines.append("")
+    lines.extend(["Project agent notes: all-agents", f"  Directory: {project_all_notes}/"])
+    project_all_specific = note_names(project_all_notes)
+    lines.extend([f"  - {name}" for name in project_all_specific] or ["  (none)"])
     lines.append("")
-    lines.extend(["Project notes:", f"  Directory: {project_notes}/"])
-    project_specific = note_names(project_notes)
-    lines.extend([f"  - {name}" for name in project_specific] or ["  (none)"])
-    lines.append("")
-    lines.extend([f"Project role notes: {role}", f"  Directory: {project_role_notes}/"])
-    project_role_specific = note_names(project_role_notes)
-    lines.extend([f"  - {name}" for name in project_role_specific] or ["  (none)"])
+    if agent_type_value != ALL_AGENTS_TYPE:
+        lines.extend([f"Project agent notes: {agent_type_value}", f"  Directory: {project_agent_notes}/"])
+        project_agent_specific = note_names(project_agent_notes)
+        lines.extend([f"  - {name}" for name in project_agent_specific] or ["  (none)"])
     lines.append("")
 
     if markers:
@@ -550,33 +563,28 @@ def strip_notes_section(text: str) -> str:
 
 def generate_instructions(args: argparse.Namespace) -> None:
     project_dir = Path(args.project_dir).resolve()
-    role = role_id(args.role)
+    active_agent_type = agent_type(args.agent_type)
     target = project_dir / instruction_target(args.tool)
     if not target.exists():
         render_instruction_template(target)
     text = strip_notes_section(target.read_text(encoding="utf-8"))
     ensure_project_state(project_dir)
-    notes_section = build_notes_section(project_dir, role, markers=True)
+    notes_section = build_notes_section(project_dir, active_agent_type, markers=True)
     target.write_text(text.rstrip() + "\n\n" + notes_section, encoding="utf-8")
 
 
 def render_section(args: argparse.Namespace) -> None:
     project_dir = Path(args.project_dir).resolve()
-    print(build_notes_section(project_dir, role_id(args.role), markers=False))
+    print(build_notes_section(project_dir, agent_type(args.agent_type), markers=False))
 
 
 def list_notes(args: argparse.Namespace) -> None:
     project_dir = Path(args.project_dir).resolve()
-    role = role_id(args.role)
-    scope = args.scope
-    if scope == "org":
-        directory = org_checkout_path() / "notes"
-    elif scope == "role":
-        directory = org_checkout_path() / "roles" / role / "notes"
-    elif scope == "project":
-        directory = project_state_path(project_dir) / ".agentic" / "notes"
+    active_agent_type = agent_type(args.agent_type)
+    if args.scope == "org":
+        directory = agent_notes_dir(org_checkout_path(), "org", active_agent_type)
     else:
-        directory = project_state_path(project_dir) / ".agentic" / "roles" / role / "notes"
+        directory = agent_notes_dir(project_state_path(project_dir), "project", active_agent_type)
     print(f"Directory: {directory}/")
     for name in note_names(directory):
         print(f"- {name}")
@@ -594,30 +602,23 @@ def note_path_for_target(
     scope: str,
     project_dir: Path,
     note_name: str,
-    role: str | None = None,
+    agent_type_value: str,
     project_id_value: str | None = None,
 ) -> tuple[Path, Path]:
     normalized_note_name = normalize_note_name(note_name)
+    if not agent_type_value:
+        raise ArNotesError("target.agent_type is required; use all-agents for broad notes")
+    req_agent_type = agent_type_value
     if scope == "org":
         repo = ensure_org_checkout()
         if repo is None:
             raise ArNotesError("AR_ORG_NOTES_REPO is required for org note updates")
-        note_path = repo / "notes" / f"{normalized_note_name}.md"
-    elif scope == "role":
-        repo = ensure_org_checkout()
-        if repo is None:
-            raise ArNotesError("AR_ORG_NOTES_REPO is required for role note updates")
-        req_role = str(role or role_id())
-        note_path = repo / "roles" / req_role / "notes" / f"{normalized_note_name}.md"
+        note_path = agent_notes_dir(repo, "org", req_agent_type) / f"{normalized_note_name}.md"
     elif scope == "project":
         repo = ensure_project_state(project_dir, project_id_value)
-        note_path = repo / ".agentic" / "notes" / f"{normalized_note_name}.md"
-    elif scope == "project_role":
-        repo = ensure_project_state(project_dir, project_id_value)
-        req_role = str(role or role_id())
-        note_path = repo / ".agentic" / "roles" / req_role / "notes" / f"{normalized_note_name}.md"
+        note_path = agent_notes_dir(repo, "project", req_agent_type) / f"{normalized_note_name}.md"
     else:
-        raise ArNotesError("target.scope must be org, role, project, or project_role")
+        raise ArNotesError("target.scope must be org or project")
     return repo, note_path
 
 
@@ -628,13 +629,15 @@ def note_path_for_request(request: dict[str, Any], project_dir: Path) -> tuple[P
     scope = str(target.get("scope") or "")
     source = request.get("source") if isinstance(request.get("source"), dict) else {}
     note_name = str(target.get("note_name") or ALWAYS_INJECTED_NOTE_STEM)
-    req_role = str(target.get("role_id") or source.get("role_id") or role_id())
+    req_agent_type = str(target.get("agent_type") or "")
+    if not req_agent_type:
+        raise ArNotesError("note update request target.agent_type is required; use all-agents for broad notes")
     req_project_id = target.get("project_id") or source.get("project_id")
     return note_path_for_target(
         scope=scope,
         project_dir=project_dir,
         note_name=note_name,
-        role=req_role,
+        agent_type_value=req_agent_type,
         project_id_value=str(req_project_id) if req_project_id else None,
     )
 
@@ -714,7 +717,7 @@ def update_note(args: argparse.Namespace) -> None:
                 generate_instructions(
                     argparse.Namespace(
                         project_dir=str(project_dir),
-                        role=request.get("source", {}).get("role_id") or role_id(),
+                        agent_type=request.get("source", {}).get("agent_type") or agent_type(),
                         tool=os.environ.get("AR_CLI_TOOL", "codex"),
                     )
                 )
@@ -733,7 +736,7 @@ def replace_note(args: argparse.Namespace) -> None:
         scope=args.scope,
         project_dir=project_dir,
         note_name=args.note_name,
-        role=args.role,
+        agent_type_value=args.agent_type,
         project_id_value=args.project_id,
     )
     text = Path(args.note_file).read_text(encoding="utf-8").rstrip() + "\n"
@@ -754,7 +757,7 @@ def replace_note(args: argparse.Namespace) -> None:
         generate_instructions(
             argparse.Namespace(
                 project_dir=str(project_dir),
-                role=args.role or role_id(),
+                agent_type=args.agent_type or agent_type(),
                 tool=args.tool or os.environ.get("AR_CLI_TOOL", "codex"),
             )
         )
@@ -969,14 +972,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("generate-instructions")
     p.add_argument("--project-dir", required=True)
-    p.add_argument("--role", default=None)
+    p.add_argument("--agent-type", default=None)
     p.add_argument("--tool", required=True, choices=["claude", "gemini", "opencode", "codex", "pi"])
     p.set_defaults(func=generate_instructions)
 
     p = sub.add_parser("list-notes")
-    p.add_argument("--scope", required=True, choices=["org", "role", "project", "project_role"])
+    p.add_argument("--scope", required=True, choices=["org", "project"])
     p.add_argument("--project-dir", default=".")
-    p.add_argument("--role", default=None)
+    p.add_argument("--agent-type", required=True)
     p.set_defaults(func=list_notes)
 
     p = sub.add_parser("update-note")
@@ -986,11 +989,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=update_note)
 
     p = sub.add_parser("replace-note")
-    p.add_argument("--scope", required=True, choices=["org", "role", "project", "project_role"])
+    p.add_argument("--scope", required=True, choices=["org", "project"])
     p.add_argument("--note-name", required=True)
     p.add_argument("--note-file", required=True)
     p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
-    p.add_argument("--role", default=None)
+    p.add_argument("--agent-type", required=True)
     p.add_argument("--project-id", default=None)
     p.add_argument("--refresh-parent", action="store_true")
     p.add_argument("--tool", default=os.environ.get("AR_CLI_TOOL", "codex"), choices=["claude", "gemini", "opencode", "codex", "pi"])
@@ -1046,16 +1049,16 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
             add_org_lock()
         add_project_lock(None)
     elif command == "list-notes":
-        if getattr(args, "scope", "") in {"org", "role"}:
+        if getattr(args, "scope", "") == "org":
             add_org_lock()
-        elif getattr(args, "scope", "") in {"project", "project_role"}:
+        elif getattr(args, "scope", "") == "project":
             add_project_lock(None)
     elif command == "update-note":
         target = request_target(getattr(args, "request", None))
         scope = target.get("scope")
-        if scope in {"org", "role"}:
+        if scope == "org":
             add_org_lock()
-        elif scope in {"project", "project_role"}:
+        elif scope == "project":
             explicit = target.get("project_id")
             add_project_lock(str(explicit) if explicit else None)
         if getattr(args, "refresh_parent", False):
@@ -1064,9 +1067,9 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
             add_project_lock(None)
     elif command == "replace-note":
         scope = getattr(args, "scope", "")
-        if scope in {"org", "role"}:
+        if scope == "org":
             add_org_lock()
-        elif scope in {"project", "project_role"}:
+        elif scope == "project":
             add_project_lock(getattr(args, "project_id", None))
         if getattr(args, "refresh_parent", False):
             if os.environ.get("AR_ORG_NOTES_REPO"):
@@ -1088,7 +1091,7 @@ def main(argv: list[str] | None = None) -> int:
         parser = argparse.ArgumentParser(description=argparse.SUPPRESS)
         parser.add_argument("command")
         parser.add_argument("--project-dir", required=True)
-        parser.add_argument("--role", default=None)
+        parser.add_argument("--agent-type", default=None)
         args = parser.parse_args(argv)
         try:
             with ExitStack() as stack:

@@ -50,7 +50,7 @@ AR_EXTRA_BIND_DIRS=""
 AR_GPU_BACKEND="auto"
 
 # Git URL or local path for organization-wide Agentic Notes.
-# Leave empty to use only role/project-local note state.
+# Leave empty to use only project-local Agentic Notes state.
 AR_ORG_NOTES_REPO=""
 
 # Selected top-level main agent, user, and optional project id override.
