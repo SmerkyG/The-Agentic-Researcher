@@ -58,10 +58,12 @@ state checkouts under `agent-notes/all-agents/` and
 This document may include a generated **Agentic Notes** section below.
 Injected `always-injected.md` note content is already part of the instruction context.
 Never open source note files named `always-injected.md` directly. The generated section
-also lists on-demand note files by source directory. Before working
-on a package, library, architecture, benchmark, project convention, or other
-work item that appears related to a listed on-demand note, read that
-note file if you have not read it since the last compaction.
+also lists on-demand note topics. Before working on a package, library,
+architecture, benchmark, project convention, or other work item that appears
+related to a listed on-demand note topic, use the generated `read-note` command
+to read the rendered note if you have not read it since the last compaction.
+Rendered notes dynamically combine all available organization/project and
+all-agents/agent-type note portions for this project and agent type.
 
 When you make a meaningful mistake and learn something reusable while
 correcting it, launch the `note-updater` subagent with a `note_update_request`.

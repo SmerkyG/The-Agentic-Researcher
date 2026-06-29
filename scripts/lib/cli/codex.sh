@@ -95,12 +95,36 @@ EOF
 }
 
 cli_codex_translate_tool_args() {
+    local translated=()
+    local i arg next
+
+    for ((i=0; i<${#TOOL_ARGS[@]}; i++)); do
+        arg="${TOOL_ARGS[$i]}"
+        case "$arg" in
+            --resume)
+                translated+=("resume")
+                next="${TOOL_ARGS[$((i+1))]:-}"
+                if [[ -n "$next" && ! "$next" =~ ^- ]]; then
+                    translated+=("$next")
+                    i=$((i + 1))
+                fi
+                ;;
+            --continue)
+                translated+=("resume" "--last")
+                ;;
+            *)
+                translated+=("$arg")
+                ;;
+        esac
+    done
+    TOOL_ARGS=()
     if [[ "$MODEL_SPECIFIED" == "false" && -n "${AR_DEFAULT_MODEL:-}" ]]; then
         TOOL_ARGS+=("--model" "$AR_DEFAULT_MODEL")
     fi
     if [[ "$YOLO_MODE" == "true" ]]; then
         TOOL_ARGS+=("--dangerously-bypass-approvals-and-sandbox")
     fi
+    TOOL_ARGS+=("${translated[@]}")
 }
 
 cli_codex_add_env_args() {

@@ -25,9 +25,9 @@ Long-running agent teams have a memory problem: agents make mistakes, discover m
 
 Agentic Team's solution is simple: agents take notes. Org notes live in an org-level Git repo under `agent-notes/all-agents/` and `agent-notes/<agent_type>/`. Project notes live on an orphan `agentic/state` branch under `.agentic/agent-notes/all-agents/` and `.agentic/agent-notes/<agent_type>/`, separate from the normal code branches. Those Git-backed notes are shared across agents, projects, installations, and teams through ordinary Git review and merge workflows.
 
-There are two note modes. `always-injected.md` notes are short, high-value guidance injected into the agent's startup context. On-demand notes are listed in the generated instructions but read only when relevant, so detailed package, benchmark, backend, or project knowledge is available without bloating every context.
+There are two note modes. `always-injected.md` notes are short, high-value guidance injected into the agent's startup context. On-demand note topics are listed in the generated instructions but read only when relevant; agents read them through `ar-notes read-note`, which dynamically combines the organization/project and all-agents/agent-type portions for the current project and agent type.
 
-The entire notes system is simple enough that you can edit the files directly if you wish.
+The storage layout is simple enough that you can add or edit note files directly if you wish. Working agents should still read notes through the rendered view instead of opening raw note storage files.
 
 ## Prerequisites
 
@@ -222,7 +222,7 @@ agent-notes/
     always-injected.md    # injected for that agent type
 ```
 
-Put only short, high-value guidance in `always-injected.md`. Put longer or situational details in topic notes such as `agent-notes/all-agents/git.md`, `agent-notes/all-agents/slurm.md`, `agent-notes/all-agents/pytorch.md`, or `agent-notes/gpu-kernel-engineer/benchmarking.md`; AR lists those notes so agents can read them only when relevant.
+Put only short, high-value guidance in `always-injected.md`. Put longer or situational details in topic notes such as `agent-notes/all-agents/git.md`, `agent-notes/all-agents/slurm.md`, `agent-notes/all-agents/pytorch.md`, or `agent-notes/gpu-kernel-engineer/benchmarking.md`; AR lists those topics so agents can read the rendered note only when relevant.
 
 Org-provided agents in `agents/*.md` use the same neutral Markdown format as AR's built-in agents. They are rendered after built-ins, so an org agent with the same `name` as a built-in agent wins. `AR_MAIN_AGENT` selects both the top-level main-agent definition and the agent-type-specific notes for that top-level agent. Subagents use their own `name` as the agent type for agent-type notes.
 

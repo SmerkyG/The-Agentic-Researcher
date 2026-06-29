@@ -118,10 +118,10 @@ def seed_org_remote(tmp_path: Path) -> Path:
         "org-notes",
         {
             "agent-notes/all-agents/always-injected.md": "# Org Notes\n\nOrg body.\n",
-            "agent-notes/all-agents/triton.md": "# Triton\n\n",
-            "agent-notes/all-agents/pytorch.md": "# PyTorch\n\n",
+            "agent-notes/all-agents/triton.md": "# Triton\n\nUse Triton-specific launch checks.\n",
+            "agent-notes/all-agents/pytorch.md": "# PyTorch\n\nUse PyTorch-specific launch checks.\n",
             "agent-notes/gpu-kernel-engineer/always-injected.md": "# Agent Type Notes\n\nAgent Type body.\n",
-            "agent-notes/gpu-kernel-engineer/kernel-optimization.md": "# Kernel Optimization\n\n",
+            "agent-notes/gpu-kernel-engineer/kernel-optimization.md": "# Kernel Optimization\n\nUse occupancy checks.\n",
         },
     )
 
@@ -143,7 +143,7 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
         "# Project Notes\n\nProject body.\n", encoding="utf-8"
     )
     (state / ".agentic" / "agent-notes" / "all-agents" / "evaluation.md").write_text(
-        "# Evaluation\n\n", encoding="utf-8"
+        "# Evaluation\n\nUse the fixed evaluation command.\n", encoding="utf-8"
     )
     project_agent = state / ".agentic" / "agent-notes" / "gpu-kernel-engineer"
     project_agent.mkdir(parents=True, exist_ok=True)
@@ -151,7 +151,9 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
         "# Project GPU Agent Type Notes\n\nProject agent type body.\n",
         encoding="utf-8",
     )
-    (project_agent / "benchmarking.md").write_text("# Project Benchmarking\n\n", encoding="utf-8")
+    (project_agent / "benchmarking.md").write_text(
+        "# Project Benchmarking\n\nUse project benchmark scripts.\n", encoding="utf-8"
+    )
     git(
         state,
         "add",
@@ -185,16 +187,63 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     assert "Agent Type body." in text
     assert "Project body." in text
     assert "Project agent type body." in text
-    assert "Org agent notes: all-agents" in text
-    assert "Org agent notes: gpu-kernel-engineer" in text
-    assert "Project agent notes: all-agents" in text
-    assert "Project agent notes: gpu-kernel-engineer" in text
-    assert "  - triton.md" in text
-    assert "  - pytorch.md" in text
-    assert "  - kernel-optimization.md" in text
-    assert "  - evaluation.md" in text
-    assert "  - benchmarking.md" in text
-    assert "  - always-injected.md" not in text
+    assert "Source:" not in text
+    assert "Directory:" not in text
+    assert "(none)" not in text
+    assert "### Available On-Demand Note Topics" in text
+    assert "--agent-type gpu-kernel-engineer TOPIC" in text
+    assert "- `triton`" in text
+    assert "- `pytorch`" in text
+    assert "- `kernel-optimization`" in text
+    assert "- `evaluation`" in text
+    assert "- `benchmarking`" in text
+    assert "- `always-injected`" not in text
+
+    rendered_note = run(
+        [
+            str(AR_NOTES),
+            "read-note",
+            "--project-dir",
+            str(project),
+            "--agent-type",
+            "gpu-kernel-engineer",
+            "benchmarking",
+        ],
+        env=env,
+    ).stdout
+    assert "# Agentic Note: benchmarking" in rendered_note
+    assert "## Project: gpu-kernel-engineer" in rendered_note
+    assert "Use project benchmark scripts." in rendered_note
+    assert "# Project Benchmarking" not in rendered_note
+    assert "Source:" not in rendered_note
+
+
+def test_generate_instruction_skips_title_only_placeholder_notes(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path)
+
+    run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
+    (project / "AGENTS.md").write_text("# Existing Materialized File\n", encoding="utf-8")
+
+    run(
+        [
+            str(AR_NOTES),
+            "generate-instructions",
+            "--project-dir",
+            str(project),
+            "--agent-type",
+            "research-coordinator",
+            "--tool",
+            "codex",
+        ],
+        env=env,
+    )
+
+    text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "### Always-Injected Notes" not in text
+    assert "Project All Agents Notes" not in text
+    assert "### Available On-Demand Note Topics" not in text
 
 
 def test_render_sections_batches_multiple_agent_note_sections(tmp_path: Path) -> None:
@@ -227,9 +276,83 @@ def test_render_sections_batches_multiple_agent_note_sections(tmp_path: Path) ->
     coordinator_text = (output_dir / "research-coordinator.md").read_text(encoding="utf-8")
     assert "Org body." in gpu_text
     assert "Agent Type body." in gpu_text
-    assert "Org agent notes: gpu-kernel-engineer" in gpu_text
+    assert "#### Organization: gpu-kernel-engineer" in gpu_text
     assert "Org body." in coordinator_text
-    assert "Org agent notes: research-coordinator" in coordinator_text
+    assert "Organization: research-coordinator" not in coordinator_text
+
+
+def test_read_note_combines_all_scoped_note_parts(tmp_path: Path) -> None:
+    org_remote = seed_org_remote(tmp_path)
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path, org_remote)
+
+    run([str(AR_NOTES), "init-org-notes", "--repo", str(org_remote)], env=env)
+    run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
+
+    org = org_checkout(env)
+    configure_git(org)
+    (org / "agent-notes" / "gpu-kernel-engineer" / "triton.md").write_text(
+        "# Org GPU Triton\n\nOrg agent type body.\n",
+        encoding="utf-8",
+    )
+    git(org, "add", "agent-notes/gpu-kernel-engineer/triton.md")
+    git(org, "commit", "-m", "seed org agent triton")
+
+    state = state_checkout(env)
+    (state / ".agentic" / "agent-notes" / "all-agents" / "triton.md").write_text(
+        "# Project Triton\n\nProject all agents body.\n",
+        encoding="utf-8",
+    )
+    project_agent = state / ".agentic" / "agent-notes" / "gpu-kernel-engineer"
+    project_agent.mkdir(parents=True, exist_ok=True)
+    (project_agent / "triton.md").write_text(
+        "# Project GPU Triton\n\nProject agent type body.\n",
+        encoding="utf-8",
+    )
+    git(
+        state,
+        "add",
+        ".agentic/agent-notes/all-agents/triton.md",
+        ".agentic/agent-notes/gpu-kernel-engineer/triton.md",
+    )
+    git(state, "commit", "-m", "seed project triton")
+
+    result = run(
+        [
+            str(AR_NOTES),
+            "read-note",
+            "--project-dir",
+            str(project),
+            "--agent-type",
+            "gpu-kernel-engineer",
+            "triton",
+        ],
+        env=env,
+    )
+
+    rendered = result.stdout
+    expected_order = [
+        "## Organization: all agents",
+        "Use Triton-specific launch checks.",
+        "## Organization: gpu-kernel-engineer",
+        "Org agent type body.",
+        "## Project: all agents",
+        "Project all agents body.",
+        "## Project: gpu-kernel-engineer",
+        "Project agent type body.",
+    ]
+    positions = [rendered.index(item) for item in expected_order]
+    assert positions == sorted(positions)
+    assert "Org agent type body." in rendered
+    assert "Project all agents body." in rendered
+    assert "Project agent type body." in rendered
+    assert "# Triton" not in rendered
+    assert "# Org GPU Triton" not in rendered
+    assert "# Project Triton" not in rendered
+    assert "# Project GPU Triton" not in rendered
+    assert "Source:" not in rendered
+    assert "Directory:" not in rendered
 
 
 def test_refresh_loop_pulls_org_notes_while_heartbeat_is_active(tmp_path: Path) -> None:
@@ -354,7 +477,7 @@ def test_replace_project_agent_note_updates_shared_state_and_rendered_instructio
     assert not (state / "AGENTS.md").exists()
     assert "**Goal:** Draft a sparse transformer paper." in rendered
     assert "validation loss" in stored
-    assert "Project Agent Notes: research-coordinator" in rendered
+    assert "#### Project: research-coordinator" in rendered
     assert "Directory:" in listed.stdout
 
 
@@ -540,7 +663,9 @@ def test_project_state_initialization_creates_required_layout(tmp_path: Path) ->
     run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
 
     state = state_checkout(env)
-    assert (state / ".agentic" / "agent-notes" / "all-agents" / "always-injected.md").exists()
+    always_injected = state / ".agentic" / "agent-notes" / "all-agents" / "always-injected.md"
+    assert always_injected.exists()
+    assert always_injected.read_text(encoding="utf-8") == ""
     assert (state / ".agentic" / "experiment-log" / "COUNTER.yaml").exists()
     assert (state / ".agentic" / "experiment-log" / "SUMMARY.md").exists()
     assert (state / ".agentic" / "experiment-log" / "experiments").is_dir()
@@ -635,6 +760,17 @@ def test_init_org_notes_treats_scp_style_repo_as_remote(tmp_path: Path) -> None:
 
     assert checkout_calls == [remote]
     assert not (tmp_path / remote).exists()
+
+
+def test_init_org_notes_creates_empty_always_injected_placeholder(tmp_path: Path) -> None:
+    org_repo = tmp_path / "org-notes"
+    env = base_env(tmp_path)
+
+    run([str(AR_NOTES), "init-org-notes", "--repo", str(org_repo)], env=env)
+
+    note = org_repo / "agent-notes" / "all-agents" / "always-injected.md"
+    assert note.exists()
+    assert note.read_text(encoding="utf-8") == ""
 
 
 def test_update_note_refresh_parent_locks_org_and_parent_project(tmp_path: Path) -> None:

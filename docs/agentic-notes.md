@@ -25,7 +25,7 @@ agent-notes/
     benchmarking.md
 ```
 
-Agent-type notes live inside the optional org notes repo at `agent-notes/<agent_type>/`. Use the predefined `all-agents` agent type for notes every agent should receive or see listed. `always-injected.md` is injected for agents running that agent type; other notes are listed for on-demand reading. For top-level launches, the agent type is the selected `AR_MAIN_AGENT` value, which defaults to `research-coordinator`. For subagents, the agent type is the subagent `name`.
+Agent-type notes live inside the optional org notes repo at `agent-notes/<agent_type>/`. Use the predefined `all-agents` agent type for notes every agent should receive or see listed. `always-injected.md` is injected for agents running that agent type; other notes are listed as on-demand topics. For top-level launches, the agent type is the selected `AR_MAIN_AGENT` value, which defaults to `research-coordinator`. For subagents, the agent type is the subagent `name`.
 
 Org-provided agents live at `agents/*.md` in the org repo. They use the same neutral Markdown format as built-in AR agents. `kind: main` agents are selectable with `AR_MAIN_AGENT`; `kind: subagent` agents are rendered into the selected CLI's subagent directory. AR loads built-in agents first and org agents second, so an org agent with the same `name` as a built-in agent overrides the built-in definition.
 
@@ -81,14 +81,14 @@ In container mode, the launcher mounts the AR install read-only at `/opt/agentic
 
 ## Instruction Generation
 
-The launcher starts from the shared `INSTRUCTIONS.md` base, inserts the selected `kind: main` agent section, and writes the invocation-specific top-level instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) when needed. It appends a managed "Agentic Notes" section that injects the full text of available `always-injected.md` files:
+The launcher starts from the shared `INSTRUCTIONS.md` base, inserts the selected `kind: main` agent section, and writes the invocation-specific top-level instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) when needed. It appends a managed "Agentic Notes" section that injects the rendered `always-injected.md` note for the invocation. The rendered note combines available portions in this order:
 
 - org `agent-notes/all-agents/always-injected.md`, when `AR_ORG_NOTES_REPO` is configured
 - org `agent-notes/$AR_MAIN_AGENT/always-injected.md`, when `AR_ORG_NOTES_REPO` is configured
 - project `.agentic/agent-notes/all-agents/always-injected.md`
 - project `.agentic/agent-notes/$AR_MAIN_AGENT/always-injected.md`
 
-Other notes are not injected. They are listed by source directory and filename, excluding `always-injected.md`, so the working agent can read only the notes relevant to the current task. Agents should not open source `always-injected.md` note files directly; their contents are already injected when available.
+Other notes are not injected. The generated section lists on-demand note topics, excluding `always-injected`, without exposing storage directories. When a working agent needs a topic, it should run the generated `read-note` command. `read-note` dynamically renders one final note by combining available portions in the same org all-agents, org agent-type, project all-agents, project agent-type order. Agents should not open source `always-injected.md` note files directly; their contents are already injected when available.
 
 The launcher also renders a managed compaction hook for the selected CLI. The hook pulls the org notes and project `agentic/state` checkouts under local locks, rematerializes the invocation-specific instruction file in the worktree, tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary for note-reading rules, and asks the model to read the refreshed file before resuming the interrupted task. This gives post-compaction sessions a concrete refresh path without relying on a vague instruction to remember injected context.
 
@@ -144,6 +144,7 @@ Inside launched agents, `$AR_NOTES_CLI` points at the invocation's Agentic Notes
 init-org-notes --repo PATH_OR_URL
 refresh --project-dir PATH
 generate-instructions --project-dir PATH --agent-type AGENT_TYPE --tool TOOL
+read-note --project-dir PATH --agent-type AGENT_TYPE TOPIC
 list-notes --scope org|project --agent-type AGENT_TYPE
 update-note --request REQUEST.yaml
 replace-note --scope org|project --agent-type AGENT_TYPE --note-name NAME --note-file FILE

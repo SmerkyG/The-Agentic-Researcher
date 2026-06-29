@@ -548,6 +548,59 @@ def test_launcher_project_id_flag_overrides_missing_env(
     assert (Path(env["HOME"]) / ".cache" / "agentic-researcher" / "projects" / "flag-project" / "agentic-state").exists()
 
 
+def test_launcher_resume_followed_by_existing_directory_sets_workspace(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "treeattention"
+    workspace.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
+            "--debug-launch",
+            "--resume",
+            str(workspace),
+        ],
+        base_env,
+    )
+
+    assert result.returncode == 0
+    assert f"Workspace:      {workspace}" in result.stdout
+    tool_args_line = next(line for line in result.stdout.splitlines() if "Tool args:" in line)
+    assert tool_args_line == "  Tool args:      resume"
+
+
+def test_launcher_codex_continue_translates_to_resume_last(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-codex-continue"
+    workspace.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
+            "--debug-launch",
+            "--continue",
+            str(workspace),
+        ],
+        base_env,
+    )
+
+    assert result.returncode == 0
+    tool_args_line = next(line for line in result.stdout.splitlines() if "Tool args:" in line)
+    assert tool_args_line == "  Tool args:      resume --last"
+
+
 def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:

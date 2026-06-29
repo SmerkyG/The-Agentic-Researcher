@@ -529,8 +529,13 @@ parse_arguments() {
                 ;;
             --resume|-r)
                 if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
-                    TOOL_ARGS+=("--resume" "$2")
-                    shift 2
+                    if [[ -z "$WORKSPACE_DIR" && -d "$2" ]]; then
+                        TOOL_ARGS+=("--resume")
+                        shift
+                    else
+                        TOOL_ARGS+=("--resume" "$2")
+                        shift 2
+                    fi
                 else
                     TOOL_ARGS+=("--resume")
                     shift

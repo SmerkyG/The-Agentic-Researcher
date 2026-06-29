@@ -90,11 +90,11 @@ run sequentially within one job or on the same local device.
 
 Do this every session or after context compaction:
 
-1. Use any injected `Project Agent Notes: research-coordinator` text below as
-   the authoritative project-specific research guidance.
-2. Use any Agentic Notes text below as active guidance. Do not open source
-   `always-injected.md` note files. Identify listed on-demand notes that may be
-   relevant to the current work.
+1. Use any injected Agentic Notes text below as active guidance. Do not open
+   source `always-injected.md` note files.
+2. Identify listed on-demand note topics that may be relevant to the current
+   work. When you need one, use the generated `read-note` command so you read
+   the rendered note for this project and agent type.
 3. If the Agentic Researcher experiment log is available, read its
    `SUMMARY.md` first; open individual experiment YAML files only when needed.
 4. Read `report.tex` for branch-local narrative analysis, derivations, and

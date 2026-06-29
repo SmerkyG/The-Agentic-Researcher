@@ -368,7 +368,7 @@ def init_org_notes(args: argparse.Namespace) -> None:
         notes_dir.mkdir(parents=True, exist_ok=True)
         always_injected = notes_dir / ALWAYS_INJECTED_NOTE
         if not always_injected.exists():
-            always_injected.write_text("# All Agents Notes\n\n", encoding="utf-8")
+            always_injected.write_text("", encoding="utf-8")
         commit_if_changed(repo_arg, "agentic: initialize org notes")
     checkout = ensure_org_checkout(args.repo)
     if checkout is not None:
@@ -437,7 +437,7 @@ def ensure_project_state_files(repo: Path) -> list[Path]:
 
     always_injected = notes_dir / ALWAYS_INJECTED_NOTE
     if not always_injected.exists():
-        always_injected.write_text("# Project All Agents Notes\n\n", encoding="utf-8")
+        always_injected.write_text("", encoding="utf-8")
         changed_paths.append(always_injected)
 
     counter = repo / ".agentic" / "experiment-log" / "COUNTER.yaml"
@@ -566,32 +566,46 @@ def refresh_loop(args: argparse.Namespace) -> None:
                 print(f"ar-notes refresh-loop: {exc}", file=sys.stderr)
 
 
+def note_text_has_body(text: str) -> bool:
+    body_lines = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not re.match(r"^\s{0,3}#{1,6}\s+", line)
+    ]
+    return bool(body_lines)
+
+
+def note_file_has_body(path: Path) -> bool:
+    if not path.exists():
+        return False
+    return note_text_has_body(path.read_text(encoding="utf-8"))
+
+
+def strip_leading_note_title(text: str) -> str:
+    return re.sub(r"^\s*#\s+[^\n]*\n(?:[ \t]*\n)?", "", text).rstrip()
+
+
 def note_names(directory: Path) -> list[str]:
     if not directory.exists():
         return []
-    return sorted(p.name for p in directory.glob("*.md") if p.name != ALWAYS_INJECTED_NOTE)
+    return sorted(
+        p.name
+        for p in directory.glob("*.md")
+        if p.name != ALWAYS_INJECTED_NOTE and note_file_has_body(p)
+    )
+
+
+def note_topics(directory: Path) -> set[str]:
+    return {name.removesuffix(".md") for name in note_names(directory)}
 
 
 def read_text_if_exists(path: Path) -> str | None:
     if not path.exists():
         return None
-    return path.read_text(encoding="utf-8").rstrip()
-
-
-def append_injected_note(lines: list[str], label: str, path: Path) -> None:
-    text = read_text_if_exists(path)
-    if text is None:
-        return
-    lines.extend(
-        [
-            f"### {label}",
-            "",
-            f"Source: `{path}`",
-            "",
-            text,
-            "",
-        ]
-    )
+    text = path.read_text(encoding="utf-8").rstrip()
+    if not note_text_has_body(text):
+        return None
+    return strip_leading_note_title(text)
 
 
 def agent_notes_dir(repo: Path, scope: str, agent_type_value: str) -> Path:
@@ -602,13 +616,75 @@ def agent_notes_dir(repo: Path, scope: str, agent_type_value: str) -> Path:
     raise ArNotesError("scope must be org or project")
 
 
-def build_notes_section(project_dir: Path, agent_type_value: str, *, markers: bool = True) -> str:
+def scoped_note_sources(project_dir: Path, agent_type_value: str, note_name: str) -> list[tuple[str, Path]]:
     project_repo = project_state_path(project_dir)
     org_repo = org_checkout_path()
-    org_all_notes = agent_notes_dir(org_repo, "org", ALL_AGENTS_TYPE)
-    org_agent_notes = agent_notes_dir(org_repo, "org", agent_type_value)
-    project_all_notes = agent_notes_dir(project_repo, "project", ALL_AGENTS_TYPE)
-    project_agent_notes = agent_notes_dir(project_repo, "project", agent_type_value)
+    normalized_note = normalize_note_name(note_name)
+    note_file = f"{normalized_note}.md"
+
+    sources = [
+        ("Organization: all agents", agent_notes_dir(org_repo, "org", ALL_AGENTS_TYPE) / note_file),
+    ]
+    if agent_type_value != ALL_AGENTS_TYPE:
+        sources.append(
+            (
+                f"Organization: {agent_type_value}",
+                agent_notes_dir(org_repo, "org", agent_type_value) / note_file,
+            )
+        )
+    sources.append(
+        ("Project: all agents", agent_notes_dir(project_repo, "project", ALL_AGENTS_TYPE) / note_file)
+    )
+    if agent_type_value != ALL_AGENTS_TYPE:
+        sources.append(
+            (
+                f"Project: {agent_type_value}",
+                agent_notes_dir(project_repo, "project", agent_type_value) / note_file,
+            )
+        )
+    return sources
+
+
+def compose_scoped_note(project_dir: Path, agent_type_value: str, note_name: str) -> list[tuple[str, str]]:
+    parts: list[tuple[str, str]] = []
+    for label, path in scoped_note_sources(project_dir, agent_type_value, note_name):
+        text = read_text_if_exists(path)
+        if text is not None:
+            parts.append((label, text))
+    return parts
+
+
+def append_composed_note(lines: list[str], title: str, parts: list[tuple[str, str]]) -> None:
+    if not parts:
+        return
+    lines.extend([f"### {title}", ""])
+    for label, text in parts:
+        lines.extend([f"#### {label}", "", text, ""])
+
+
+def scoped_on_demand_topics(project_dir: Path, agent_type_value: str) -> list[str]:
+    project_repo = project_state_path(project_dir)
+    org_repo = org_checkout_path()
+    directories = [
+        agent_notes_dir(org_repo, "org", ALL_AGENTS_TYPE),
+        agent_notes_dir(project_repo, "project", ALL_AGENTS_TYPE),
+    ]
+    if agent_type_value != ALL_AGENTS_TYPE:
+        directories.extend(
+            [
+                agent_notes_dir(org_repo, "org", agent_type_value),
+                agent_notes_dir(project_repo, "project", agent_type_value),
+            ]
+        )
+    topics: set[str] = set()
+    for directory in directories:
+        topics.update(note_topics(directory))
+    return sorted(topics)
+
+
+def build_notes_section(project_dir: Path, agent_type_value: str, *, markers: bool = True) -> str:
+    always_parts = compose_scoped_note(project_dir, agent_type_value, ALWAYS_INJECTED_NOTE_STEM)
+    topics = scoped_on_demand_topics(project_dir, agent_type_value)
 
     lines: list[str] = []
     if markers:
@@ -618,41 +694,22 @@ def build_notes_section(project_dir: Path, agent_type_value: str, *, markers: bo
         [
             "## Agentic Notes",
             "",
-            "The following Git-backed note files contain helpful knowledge about packages, tools, architectures, project conventions, and agent-type-specific work.",
+            "Git-backed Agentic Notes contain helpful knowledge about packages, tools, architectures, project conventions, and agent-type-specific work.",
             "",
-            "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed on-demand note files, read the relevant note file if you have not read it since the last compaction.",
+            "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed on-demand note topics, read the rendered note with `\"${AR_NOTES_CLI:-scripts/ar-notes}\" read-note --project-dir . --agent-type "
+            f"{agent_type_value} TOPIC` if you have not read it since the last compaction. That command dynamically combines all available org/project and all-agents/agent-type portions for this project and agent type.",
             "",
             "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies across every agent in the organization, update org `all-agents` `always-injected.md`. If it applies across this agent type in the organization, update org agent-type `always-injected.md`. If it applies to every agent in this project, update project `all-agents` `always-injected.md`. If it applies only to this agent type within this project, update project agent-type `always-injected.md`.",
             "",
         ]
     )
 
-    append_injected_note(lines, "Org Agent Notes: all-agents", org_all_notes / ALWAYS_INJECTED_NOTE)
-    if agent_type_value != ALL_AGENTS_TYPE:
-        append_injected_note(lines, f"Org Agent Notes: {agent_type_value}", org_agent_notes / ALWAYS_INJECTED_NOTE)
-    append_injected_note(lines, "Project Agent Notes: all-agents", project_all_notes / ALWAYS_INJECTED_NOTE)
-    if agent_type_value != ALL_AGENTS_TYPE:
-        append_injected_note(lines, f"Project Agent Notes: {agent_type_value}", project_agent_notes / ALWAYS_INJECTED_NOTE)
+    append_composed_note(lines, "Always-Injected Notes", always_parts)
 
-    lines.extend(["### Available On-Demand Notes", ""])
-    lines.extend(["Org agent notes: all-agents", f"  Directory: {org_all_notes}/"])
-    org_all_specific = note_names(org_all_notes)
-    lines.extend([f"  - {name}" for name in org_all_specific] or ["  (none)"])
-    lines.append("")
-    if agent_type_value != ALL_AGENTS_TYPE:
-        lines.extend([f"Org agent notes: {agent_type_value}", f"  Directory: {org_agent_notes}/"])
-        org_agent_specific = note_names(org_agent_notes)
-        lines.extend([f"  - {name}" for name in org_agent_specific] or ["  (none)"])
+    if topics:
+        lines.extend(["### Available On-Demand Note Topics", ""])
+        lines.extend([f"- `{topic}`" for topic in topics])
         lines.append("")
-    lines.extend(["Project agent notes: all-agents", f"  Directory: {project_all_notes}/"])
-    project_all_specific = note_names(project_all_notes)
-    lines.extend([f"  - {name}" for name in project_all_specific] or ["  (none)"])
-    lines.append("")
-    if agent_type_value != ALL_AGENTS_TYPE:
-        lines.extend([f"Project agent notes: {agent_type_value}", f"  Directory: {project_agent_notes}/"])
-        project_agent_specific = note_names(project_agent_notes)
-        lines.extend([f"  - {name}" for name in project_agent_specific] or ["  (none)"])
-    lines.append("")
 
     if markers:
         lines.append(NOTES_END)
@@ -725,6 +782,29 @@ def render_sections(args: argparse.Namespace) -> None:
             build_notes_section(project_dir, active_agent_type, markers=False),
             encoding="utf-8",
         )
+
+
+def read_note(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    active_agent_type = agent_type(args.agent_type)
+    note_name = normalize_note_name(args.note_name)
+    parts = compose_scoped_note(project_dir, active_agent_type, note_name)
+    if not parts:
+        raise ArNotesError(
+            f"no rendered note found for topic {note_name!r} and agent type {active_agent_type!r}"
+        )
+
+    lines = [
+        f"# Agentic Note: {note_name}",
+        "",
+        f"Agent type: `{active_agent_type}`",
+        "",
+        "This rendered note combines every available portion for the current project and agent type.",
+        "",
+    ]
+    for label, text in parts:
+        lines.extend([f"## {label}", "", text, ""])
+    print("\n".join(lines).rstrip())
 
 
 def list_notes(args: argparse.Namespace) -> None:
@@ -1137,6 +1217,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--agent-type", action="append", required=True)
     p.set_defaults(func=render_sections)
 
+    p = sub.add_parser("read-note")
+    p.add_argument("note_name")
+    p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
+    p.add_argument("--agent-type", default=None)
+    p.set_defaults(func=read_note)
+
     p = sub.add_parser("list-notes")
     p.add_argument("--scope", required=True, choices=["org", "project"])
     p.add_argument("--project-dir", default=".")
@@ -1213,7 +1299,7 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
         add_project_lock(None)
     elif command == "init-org-notes":
         add_org_lock()
-    elif command in {"generate-instructions", "render-section", "render-sections"}:
+    elif command in {"generate-instructions", "render-section", "render-sections", "read-note"}:
         if os.environ.get("AR_ORG_NOTES_REPO"):
             add_org_lock()
         add_project_lock(None)
