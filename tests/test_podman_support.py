@@ -16,11 +16,25 @@ INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install.sh"
 FIRST_SETUP_SCRIPT = REPO_ROOT / "scripts" / "first-setup.sh"
 CLEANUP_SCRIPT = REPO_ROOT / "scripts" / "cleanup.sh"
 CLI_ADAPTER_DIR = REPO_ROOT / "scripts" / "lib" / "cli"
+REAL_GIT = shutil.which("git")
 
 
 def make_executable(path: Path, content: str) -> None:
     path.write_text(content)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def init_topic_workspace(path: Path, topic: str = "kernel-search") -> None:
+    if REAL_GIT is None:
+        raise RuntimeError("git is required for tests")
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run([REAL_GIT, "init", str(path)], check=True, capture_output=True, text=True)
+    subprocess.run([REAL_GIT, "-C", str(path), "config", "user.name", "Test User"], check=True)
+    subprocess.run([REAL_GIT, "-C", str(path), "config", "user.email", "test@example.com"], check=True)
+    (path / "README.md").write_text("# Test Workspace\n")
+    subprocess.run([REAL_GIT, "-C", str(path), "add", "README.md"], check=True)
+    subprocess.run([REAL_GIT, "-C", str(path), "commit", "-m", "init"], check=True, capture_output=True, text=True)
+    subprocess.run([REAL_GIT, "-C", str(path), "checkout", "-B", f"agent/{topic}"], check=True, capture_output=True, text=True)
 
 
 @pytest.fixture
@@ -46,12 +60,6 @@ def fake_bin(tmp_path: Path) -> Path:
     make_executable(
         bin_dir / "git",
         "#!/bin/sh\n"
-        "for arg in \"$@\"; do\n"
-        "  if [ \"$arg\" = rev-parse ]; then\n"
-        "    printf 'deadbeef\\n'\n"
-        "    exit 0\n"
-        "  fi\n"
-        "done\n"
         f"exec {shlex_quote(real_git)} \"$@\"\n",
     )
     return bin_dir
@@ -69,6 +77,7 @@ def base_env(fake_bin: Path, tmp_path: Path) -> dict[str, str]:
     env["FAKE_DOCKER_LOG"] = str(tmp_path / "docker.log")
     env["HOME"] = str(tmp_path / "home")
     env["AR_PROJECT_ID"] = "test-project"
+    env["AR_AGENT_TOPIC"] = "kernel-search"
     Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
     return env
 
@@ -169,7 +178,7 @@ def test_claude_workspace_guard_lives_in_claude_adapter() -> None:
 
 def test_claude_rejects_own_config_as_workspace(base_env: dict[str, str]) -> None:
     workspace = Path(base_env["HOME"]) / ".claude"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
 
     result = run(
         [str(AGENTIC_RESEARCHER), "--sandbox", "none", "--tool", "claude", str(workspace)],
@@ -184,7 +193,7 @@ def test_non_claude_cli_does_not_inherit_claude_workspace_guard(base_env: dict[s
     fake_bin = Path(base_env["PATH"].split(":", maxsplit=1)[0])
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     workspace = Path(base_env["HOME"]) / ".claude"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
 
     result = run(
         [str(AGENTIC_RESEARCHER), "--sandbox", "none", "--tool", "codex", str(workspace)],
@@ -311,7 +320,7 @@ def test_launcher_auto_builds_missing_podman_image(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-auto-build"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(
         fake_bin / "podman",
         "#!/bin/sh\n"
@@ -340,7 +349,7 @@ def test_launcher_native_runs_host_tool_without_container(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-none"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     tool_log = tmp_path / "codex-none.log"
     make_executable(
         fake_bin / "codex",
@@ -403,7 +412,7 @@ def test_launcher_native_codex_yolo_uses_current_codex_flag(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-codex-yolo"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     tool_log = tmp_path / "codex-yolo.log"
     make_executable(
         fake_bin / "codex",
@@ -434,7 +443,7 @@ def test_launcher_falls_back_when_python3_on_path_is_not_executable(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-python-fallback"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     make_executable(
         fake_bin / "python3",
@@ -464,7 +473,7 @@ def test_launcher_requires_project_id_for_launch(
     base_env: dict[str, str], tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-missing-project-id"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     env = {**base_env}
     env.pop("AR_PROJECT_ID", None)
 
@@ -489,9 +498,9 @@ def test_launcher_infers_project_id_from_git_remote(
 ) -> None:
     workspace = tmp_path / "ws-remote-project"
     remote = tmp_path / "project.git"
-    run(["git", "init", "--bare", str(remote)], base_env)
-    run(["git", "init", str(workspace)], base_env)
-    run(["git", "-C", str(workspace), "remote", "add", "origin", str(remote)], base_env)
+    subprocess.run([REAL_GIT, "init", "--bare", str(remote)], check=True, capture_output=True, text=True)
+    init_topic_workspace(workspace)
+    subprocess.run([REAL_GIT, "-C", str(workspace), "remote", "add", "origin", str(remote)], check=True)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = {**base_env}
     env.pop("AR_PROJECT_ID", None)
@@ -526,7 +535,7 @@ def test_launcher_project_id_flag_overrides_missing_env(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-project-id-flag"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = {**base_env}
     env.pop("AR_PROJECT_ID", None)
@@ -552,7 +561,7 @@ def test_launcher_resume_followed_by_existing_directory_sets_workspace(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "treeattention"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
 
     result = run(
@@ -579,7 +588,7 @@ def test_launcher_codex_continue_translates_to_resume_last(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-codex-continue"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
 
     result = run(
@@ -605,7 +614,7 @@ def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-existing-hooks"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     (workspace / ".codex").mkdir()
     (workspace / ".codex" / "hooks.json").write_text(
         json.dumps({
@@ -659,7 +668,7 @@ def test_launcher_native_test_checks_rocm_when_nvidia_unavailable(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-rocm"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     make_executable(fake_bin / "nvidia-smi", "#!/bin/sh\nexit 1\n")
     make_executable(fake_bin / "rocm-smi", "#!/bin/sh\necho 'ROCm GPU'; exit 0\n")
@@ -684,7 +693,7 @@ def test_native_cluster_run_backend_renders_project_skill(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-cluster"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     make_executable(
         fake_bin / "cluster-run",
@@ -727,7 +736,7 @@ def test_native_cluster_run_backend_renders_project_skill(
 
 def test_gpu_backend_flag_is_removed(base_env: dict[str, str], tmp_path: Path) -> None:
     workspace = tmp_path / "ws-removed-gpu-backend"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
 
     result = run(
         [
@@ -748,7 +757,7 @@ def test_remote_run_optional_skill_checks_its_own_sandbox_requirement(
     base_env: dict[str, str], tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-remote-run-preflight"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
 
     result = run(
         [
@@ -770,7 +779,7 @@ def test_native_optional_skill_renders_skill_and_instruction_overlay(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-optional-skill"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     make_executable(fake_bin / "cluster-run", "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nexit 0\n")
 
@@ -798,7 +807,7 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-claude-cluster"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(fake_bin / "claude", "#!/bin/sh\nexit 0\n")
     make_executable(fake_bin / "cluster-run", "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nexit 0\n")
 
@@ -841,7 +850,7 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-gemini-cluster"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(fake_bin / "gemini", "#!/bin/sh\nexit 0\n")
     make_executable(fake_bin / "cluster-run", "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nexit 0\n")
 
@@ -887,7 +896,7 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-opencode-cluster"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
     make_executable(fake_bin / "opencode", "#!/bin/sh\nexit 0\n")
     make_executable(fake_bin / "cluster-run", "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nexit 0\n")
 
@@ -990,7 +999,7 @@ def test_install_script_accepts_native_runtime(base_env: dict[str, str], tmp_pat
 
 def test_launcher_podman_runs_pi_tool(base_env: dict[str, str], tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
 
     result = run(
         [str(AGENTIC_RESEARCHER), "--sandbox", "podman", "--tool", "pi", str(workspace)],
@@ -1027,7 +1036,7 @@ def test_pi_translates_resume_to_session_and_warns_on_yolo(
     base_env: dict[str, str], tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws"
-    workspace.mkdir()
+    init_topic_workspace(workspace)
 
     result = run(
         [

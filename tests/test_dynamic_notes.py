@@ -72,6 +72,7 @@ def clone_project(tmp_path: Path, remote: Path, name: str = "project") -> Path:
     project = tmp_path / name
     run(["git", "clone", str(remote), str(project)])
     configure_git(project)
+    git(project, "checkout", "-b", "agent/kernel-search")
     return project
 
 
@@ -81,6 +82,7 @@ def base_env(tmp_path: Path, org_remote: Path | None = None) -> dict[str, str]:
         {
             "AR_STATE_ROOT": str(tmp_path / "state"),
             "AR_MAIN_AGENT": "research-coordinator",
+            "AR_AGENT_TOPIC": "kernel-search",
             "AR_USER_ID": "alice",
             "AR_PROJECT_ID": "sparse-transformer-2026",
             "AR_AGENTIC_STATE_BRANCH": "agentic/state",
@@ -106,6 +108,14 @@ def make_request(tmp_path: Path, data: dict) -> Path:
 
 def state_checkout(env: dict[str, str], project_id: str = "sparse-transformer-2026") -> Path:
     return Path(env["AR_STATE_ROOT"]) / "projects" / project_id / "agentic-state"
+
+
+def topic_log(env: dict[str, str], project_id: str = "sparse-transformer-2026", topic: str = "kernel-search") -> Path:
+    return state_checkout(env, project_id) / ".agentic" / "topics" / topic / "experiment-log"
+
+
+def local_experiment_id(ref: str) -> str:
+    return ref.split("/", 1)[1] if "/" in ref else ref
 
 
 def org_checkout(env: dict[str, str]) -> Path:
@@ -666,10 +676,8 @@ def test_project_state_initialization_creates_required_layout(tmp_path: Path) ->
     always_injected = state / ".agentic" / "agent-notes" / "all-agents" / "always-injected.md"
     assert always_injected.exists()
     assert always_injected.read_text(encoding="utf-8") == ""
-    assert (state / ".agentic" / "experiment-log" / "COUNTER.yaml").exists()
-    assert (state / ".agentic" / "experiment-log" / "SUMMARY.md").exists()
-    assert (state / ".agentic" / "experiment-log" / "experiments").is_dir()
-    assert not (state / ".agentic" / "experiment-log" / "corrections").exists()
+    assert (state / ".agentic" / "topics").is_dir()
+    assert not (state / ".agentic" / "experiment-log").exists()
     assert not (state / "README.md").exists()
     head_with_parents = git(state, "rev-list", "--parents", "-n", "1", "HEAD").stdout.split()
     assert len(head_with_parents) == 1
@@ -715,6 +723,90 @@ def test_project_state_infers_project_id_from_git_remote(tmp_path: Path) -> None
         / "all-agents"
         / "always-injected.md"
     ).exists()
+
+
+def test_topic_lease_blocks_same_topic_but_not_other_topics(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path)
+
+    first = run(
+        [
+            str(AR_NOTES),
+            "acquire-topic",
+            "--project-dir",
+            str(project),
+            "--topic",
+            "kernel-search",
+            "--session-id",
+            "session-one",
+        ],
+        env=env,
+    )
+    blocked = run(
+        [
+            str(AR_NOTES),
+            "acquire-topic",
+            "--project-dir",
+            str(project),
+            "--topic",
+            "kernel-search",
+            "--session-id",
+            "session-two",
+        ],
+        env=env,
+        check=False,
+    )
+    other = run(
+        [
+            str(AR_NOTES),
+            "acquire-topic",
+            "--project-dir",
+            str(project),
+            "--topic",
+            "paper-draft",
+            "--session-id",
+            "session-three",
+        ],
+        env=env,
+    )
+    run(
+        [
+            str(AR_NOTES),
+            "release-topic",
+            "--project-dir",
+            str(project),
+            "--topic",
+            "kernel-search",
+            "--session-id",
+            "session-one",
+        ],
+        env=env,
+    )
+    reacquired = run(
+        [
+            str(AR_NOTES),
+            "acquire-topic",
+            "--project-dir",
+            str(project),
+            "--topic",
+            "kernel-search",
+            "--session-id",
+            "session-two",
+        ],
+        env=env,
+    )
+
+    state = state_checkout(env)
+    kernel_active = yaml.safe_load((state / ".agentic" / "topics" / "kernel-search" / "ACTIVE.yaml").read_text())
+    paper_active = yaml.safe_load((state / ".agentic" / "topics" / "paper-draft" / "ACTIVE.yaml").read_text())
+    assert first.stdout.strip() == "kernel-search"
+    assert blocked.returncode == 1
+    assert "already active" in blocked.stderr
+    assert other.stdout.strip() == "paper-draft"
+    assert reacquired.stdout.strip() == "kernel-search"
+    assert kernel_active["session_id"] == "session-two"
+    assert paper_active["session_id"] == "session-three"
 
 
 def test_project_remote_name_uses_repo_basename() -> None:
@@ -870,18 +962,20 @@ def test_experiment_logger_creates_counter_ids_and_appends_summary(tmp_path: Pat
         env=env,
     ).stdout.strip()
 
-    state = state_checkout(env)
-    assert first == "E0001_alice_triton-power-of-two-shape-test"
-    assert second == "E0002_alice_attention-odd-seq-benchmark"
-    assert (state / ".agentic" / "experiment-log" / "experiments" / f"{first}.yaml").exists()
-    assert (state / ".agentic" / "experiment-log" / "experiments" / f"{second}.yaml").exists()
-    counter = yaml.safe_load((state / ".agentic" / "experiment-log" / "COUNTER.yaml").read_text())
+    log_dir = topic_log(env)
+    first_id = local_experiment_id(first)
+    second_id = local_experiment_id(second)
+    assert first == "kernel-search/E0001_triton-power-of-two-shape-test"
+    assert second == "kernel-search/E0002_attention-odd-seq-benchmark"
+    assert (log_dir / "experiments" / f"{first_id}.yaml").exists()
+    assert (log_dir / "experiments" / f"{second_id}.yaml").exists()
+    counter = yaml.safe_load((log_dir / "COUNTER.yaml").read_text())
     assert counter["next_experiment_number"] == 3
     assert "next_correction_number" not in counter
-    summary = (state / ".agentic" / "experiment-log" / "SUMMARY.md").read_text()
+    summary = (log_dir / "SUMMARY.md").read_text()
     assert len(summary_rows(summary)) == 2
-    assert first in summary
-    assert second in summary
+    assert first_id in summary
+    assert second_id in summary
 
 
 def test_summary_is_append_only_and_existing_experiment_files_are_unchanged(tmp_path: Path) -> None:
@@ -899,11 +993,13 @@ def test_summary_is_append_only_and_existing_experiment_files_are_unchanged(tmp_
         ],
         env=env,
     ).stdout.strip()
-    state = state_checkout(env)
-    first_file = state / ".agentic" / "experiment-log" / "experiments" / f"{first}.yaml"
+    log_dir = topic_log(env)
+    first_id = local_experiment_id(first)
+    first_file = log_dir / "experiments" / f"{first_id}.yaml"
     first_content = first_file.read_text(encoding="utf-8")
-    hidden = state / ".agentic" / "experiment-log" / "experiments" / "E9999_alice_hidden.yaml"
-    hidden.write_text("kind: experiment_result\nexperiment_id: E9999_alice_hidden\n", encoding="utf-8")
+    hidden = log_dir / "experiments" / "E9999_hidden.yaml"
+    hidden.write_text("kind: experiment_result\nexperiment_id: E9999_hidden\n", encoding="utf-8")
+    state = state_checkout(env)
     git(state, "add", str(hidden.relative_to(state)))
     git(state, "commit", "-m", "add hidden experiment")
     git(state, "push")
@@ -920,10 +1016,10 @@ def test_summary_is_append_only_and_existing_experiment_files_are_unchanged(tmp_
         env=env,
     ).stdout.strip()
 
-    summary = (state / ".agentic" / "experiment-log" / "SUMMARY.md").read_text()
+    summary = (log_dir / "SUMMARY.md").read_text()
     assert first_file.read_text(encoding="utf-8") == first_content
-    assert second in summary
-    assert "E9999_alice_hidden" not in summary
+    assert local_experiment_id(second) in summary
+    assert "E9999_hidden" not in summary
 
 
 def test_push_conflict_retries_with_next_counter_number(tmp_path: Path) -> None:
@@ -984,8 +1080,8 @@ def test_push_conflict_retries_with_next_counter_number(tmp_path: Path) -> None:
     stdout, stderr = proc_two.communicate(timeout=30)
     assert proc_two.returncode == 0, stderr
     loser = stdout.strip()
-    assert winner.startswith("E0001_")
-    assert loser.startswith("E0002_")
+    assert winner.startswith("kernel-search/E0001_")
+    assert loser.startswith("kernel-search/E0002_")
 
 
 def test_same_installation_multiple_actor_worktrees_serialize_project_log_updates(tmp_path: Path) -> None:
@@ -1050,9 +1146,9 @@ def test_same_installation_multiple_actor_worktrees_serialize_project_log_update
     stdout_two, stderr_two = proc_two.communicate(timeout=30)
     assert proc_one.returncode == 0, stderr_one
     assert proc_two.returncode == 0, stderr_two
-    assert stdout_one.strip().startswith("E0001_")
-    assert stdout_two.strip().startswith("E0002_")
-    summary = (state / ".agentic" / "experiment-log" / "SUMMARY.md").read_text()
+    assert stdout_one.strip().startswith("kernel-search/E0001_")
+    assert stdout_two.strip().startswith("kernel-search/E0002_")
+    summary = (topic_log(env, "shared-worktree-project") / "SUMMARY.md").read_text()
     assert len(summary_rows(summary)) == 2
 
 
@@ -1115,26 +1211,85 @@ def test_correction_logging_appends_to_experiment_file_and_summary_row(tmp_path:
         env=env,
     ).stdout.strip()
 
-    state = state_checkout(env)
-    experiment_path = state / ".agentic" / "experiment-log" / "experiments" / f"{experiment_id}.yaml"
+    log_dir = topic_log(env)
+    local_id = local_experiment_id(experiment_id)
+    experiment_path = log_dir / "experiments" / f"{local_id}.yaml"
     experiment_doc = yaml.safe_load(experiment_path.read_text())
-    assert correction_id == "E0001_R001"
-    assert second_correction_id == "E0001_R002"
+    assert correction_id == "kernel-search/E0001_R001"
+    assert second_correction_id == "kernel-search/E0001_R002"
     assert [entry["correction_id"] for entry in experiment_doc["corrections"]] == [
-        correction_id,
-        second_correction_id,
+        "E0001_R001",
+        "E0001_R002",
     ]
     assert experiment_doc["corrections"][0]["correction"] == "Use the fixed validation split."
-    assert not (state / ".agentic" / "experiment-log" / "corrections").exists()
-    summary = (state / ".agentic" / "experiment-log" / "SUMMARY.md").read_text()
-    assert correction_id in summary
-    assert second_correction_id in summary
-    assert f"experiments/{experiment_id}.yaml" in summary
+    assert not (log_dir / "corrections").exists()
+    summary = (log_dir / "SUMMARY.md").read_text()
+    assert "E0001_R001" in summary
+    assert "E0001_R002" in summary
+    assert f"experiments/{local_id}.yaml" in summary
 
 
 def make_executable(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def test_launcher_infers_agent_topic_from_topic_branch(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = base_env(tmp_path)
+    env.pop("AR_AGENT_TOPIC", None)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
+            str(project),
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Agent topic:    kernel-search" in result.stdout
+    instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "<!-- AGENTIC-RESEARCHER-TOPIC-START topic=kernel-search -->" in instruction_text
+    assert "agent/kernel-search/exp/<experiment-name>" in instruction_text
+
+
+def test_launcher_refuses_protected_branch_for_agent_topic(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    git(project, "switch", "main")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = base_env(tmp_path)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
+            "--agent-topic",
+            "kernel-search",
+            str(project),
+        ],
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Refusing to launch an agent topic on protected branch 'main'" in result.stdout
 
 
 def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path) -> None:
@@ -1311,7 +1466,7 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_agent_notes(tmp
     project_remote = seed_project_remote(tmp_path)
     coordinator = clone_project(tmp_path, project_remote, name="project-coordinator")
     paper = tmp_path / "project-paper"
-    run(["git", "-C", str(coordinator), "worktree", "add", "-b", "paper-draft", str(paper), "HEAD"])
+    run(["git", "-C", str(coordinator), "worktree", "add", "-b", "agent/paper-draft", str(paper), "HEAD"])
     configure_git(paper)
 
     env = base_env(tmp_path, org_remote)
@@ -1376,6 +1531,8 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_agent_notes(tmp
             "codex",
             "--main-agent",
             "research-paper-author",
+            "--agent-topic",
+            "paper-draft",
             str(paper),
         ],
         env=env,

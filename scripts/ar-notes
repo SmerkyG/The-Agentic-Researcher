@@ -12,6 +12,7 @@ from contextlib import ExitStack, contextmanager
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -86,6 +87,14 @@ def agent_type(value: str | None = None) -> str:
 
 def user_id(value: str | None = None) -> str:
     return value or os.environ.get("AR_USER_ID") or os.environ.get("USER") or "user"
+
+
+def agent_topic(value: str | None = None) -> str:
+    raw = value or os.environ.get("AR_AGENT_TOPIC") or ""
+    topic = slugify(raw, default="")
+    if not topic:
+        raise ArNotesError("agent topic is required; pass --agent-topic to agentic-researcher or set AR_AGENT_TOPIC")
+    return topic
 
 
 def safe_load_yaml(path: Path) -> dict[str, Any]:
@@ -422,7 +431,7 @@ def ensure_project_checkout(project_dir: Path, explicit_project_id: str | None =
 def initial_summary() -> str:
     return (
         "# Experiment Summary\n\n"
-        "Read this first. Open individual experiment files only when needed.\n\n"
+        "Read this topic-local summary first. Open individual experiment files only when needed.\n\n"
         "| ID | User | Status | Description | Key Result | Commit |\n"
         "|---|---|---|---|---|---|\n"
     )
@@ -431,36 +440,59 @@ def initial_summary() -> str:
 def ensure_project_state_files(repo: Path) -> list[Path]:
     changed_paths: list[Path] = []
     notes_dir = repo / ".agentic" / "agent-notes" / ALL_AGENTS_TYPE
-    experiments_dir = repo / ".agentic" / "experiment-log" / "experiments"
+    topics_dir = repo / ".agentic" / "topics"
     notes_dir.mkdir(parents=True, exist_ok=True)
-    experiments_dir.mkdir(parents=True, exist_ok=True)
+    topics_dir.mkdir(parents=True, exist_ok=True)
 
     always_injected = notes_dir / ALWAYS_INJECTED_NOTE
     if not always_injected.exists():
         always_injected.write_text("", encoding="utf-8")
         changed_paths.append(always_injected)
 
-    counter = repo / ".agentic" / "experiment-log" / "COUNTER.yaml"
+    for directory in (notes_dir, topics_dir):
+        keep = directory / ".gitkeep"
+        if not any(p.name != ".gitkeep" for p in directory.iterdir()):
+            keep.touch()
+            changed_paths.append(keep)
+
+    return changed_paths
+
+
+def topic_dir(repo: Path, topic: str) -> Path:
+    return repo / ".agentic" / "topics" / agent_topic(topic)
+
+
+def experiment_log_dir(repo: Path, topic: str) -> Path:
+    return topic_dir(repo, topic) / "experiment-log"
+
+
+def ensure_topic_state_files(repo: Path, topic: str) -> list[Path]:
+    changed_paths: list[Path] = []
+    log_dir = experiment_log_dir(repo, topic)
+    experiments_dir = log_dir / "experiments"
+    experiments_dir.mkdir(parents=True, exist_ok=True)
+
+    counter = log_dir / "COUNTER.yaml"
     if not counter.exists():
         write_yaml(
             counter,
             {
                 "schema_version": 1,
+                "topic": agent_topic(topic),
                 "next_experiment_number": 1,
             },
         )
         changed_paths.append(counter)
 
-    summary = repo / ".agentic" / "experiment-log" / "SUMMARY.md"
+    summary = log_dir / "SUMMARY.md"
     if not summary.exists():
         summary.write_text(initial_summary(), encoding="utf-8")
         changed_paths.append(summary)
 
-    for directory in (notes_dir, experiments_dir):
-        keep = directory / ".gitkeep"
-        if not any(p.name != ".gitkeep" for p in directory.iterdir()):
-            keep.touch()
-            changed_paths.append(keep)
+    keep = experiments_dir / ".gitkeep"
+    if not any(p.name != ".gitkeep" for p in experiments_dir.iterdir()):
+        keep.touch()
+        changed_paths.append(keep)
 
     return changed_paths
 
@@ -993,16 +1025,33 @@ def replace_note(args: argparse.Namespace) -> None:
     print(f"Updated {note_path}")
 
 
-def load_counter(repo: Path) -> dict[str, Any]:
-    counter_path = repo / ".agentic" / "experiment-log" / "COUNTER.yaml"
+def load_counter(log_dir: Path) -> dict[str, Any]:
+    counter_path = log_dir / "COUNTER.yaml"
     data = safe_load_yaml(counter_path)
     data.setdefault("schema_version", 1)
     data.setdefault("next_experiment_number", 1)
     return data
 
 
-def experiment_log_dir(repo: Path) -> Path:
-    return repo / ".agentic" / "experiment-log"
+def qualified_experiment_ref(topic: str, experiment_id: str) -> str:
+    return f"{agent_topic(topic)}/{experiment_id}"
+
+
+def split_experiment_ref(raw_ref: str, current_topic: str) -> tuple[str, str]:
+    ref = str(raw_ref or "").strip()
+    if not ref:
+        raise ArNotesError("experiment reference cannot be empty")
+    if "\\" in ref or ref in {".", ".."}:
+        raise ArNotesError(f"invalid experiment reference: {ref}")
+    if "/" in ref:
+        raw_topic, experiment_id = ref.split("/", 1)
+        topic = agent_topic(raw_topic)
+    else:
+        topic = agent_topic(current_topic)
+        experiment_id = ref
+    if "/" in experiment_id or experiment_id in {"", ".", ".."}:
+        raise ArNotesError(f"invalid experiment id: {experiment_id}")
+    return topic, experiment_id
 
 
 def append_summary_row(summary_path: Path, row: str) -> None:
@@ -1026,11 +1075,12 @@ def summary_cell(value: Any) -> str:
     return text.replace("|", "\\|")
 
 
-def final_experiment_doc(request: dict[str, Any], experiment_id: str) -> dict[str, Any]:
+def final_experiment_doc(request: dict[str, Any], topic: str, experiment_id: str) -> dict[str, Any]:
     fields = {
         "schema_version": 1,
         "kind": "experiment_result",
         "experiment_id": experiment_id,
+        "topic": agent_topic(topic),
         "title": request.get("title") or request.get("short_description") or experiment_id,
         "created_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "user_id": request.get("user_id") or user_id(),
@@ -1047,18 +1097,19 @@ def final_experiment_doc(request: dict[str, Any], experiment_id: str) -> dict[st
     return fields
 
 
-def log_experiment_once(request: dict[str, Any], project_dir: Path) -> tuple[Path, str]:
+def log_experiment_once(request: dict[str, Any], project_dir: Path, topic: str) -> tuple[Path, str]:
+    topic = agent_topic(topic)
     repo = ensure_project_state(project_dir)
-    log_dir = experiment_log_dir(repo)
-    counter = load_counter(repo)
+    ensure_topic_state_files(repo, topic)
+    log_dir = experiment_log_dir(repo, topic)
+    counter = load_counter(log_dir)
     number = int(counter.get("next_experiment_number") or 1)
-    user_slug = slugify(str(request.get("user_id") or user_id()), default="user", max_len=32)
     description = str(request.get("short_description") or request.get("title") or "experiment")
-    experiment_id = f"E{number:04d}_{user_slug}_{slugify(description, default='experiment')}"
+    experiment_id = f"E{number:04d}_{slugify(description, default='experiment')}"
     experiment_path = log_dir / "experiments" / f"{experiment_id}.yaml"
     if experiment_path.exists():
         raise ArNotesError(f"experiment file already exists: {experiment_path}")
-    write_yaml(experiment_path, final_experiment_doc(request, experiment_id))
+    write_yaml(experiment_path, final_experiment_doc(request, topic, experiment_id))
     counter["next_experiment_number"] = number + 1
     write_yaml(log_dir / "COUNTER.yaml", counter)
     commit = short_commit(request)
@@ -1074,17 +1125,17 @@ def log_experiment_once(request: dict[str, Any], project_dir: Path) -> tuple[Pat
     append_summary_row(log_dir / "SUMMARY.md", row)
     commit_if_changed(
         repo,
-        f"experiment: log {experiment_id}",
+        f"experiment: log {topic}/{experiment_id}",
         [experiment_path, log_dir / "COUNTER.yaml", log_dir / "SUMMARY.md"],
     )
-    return repo, experiment_id
+    return repo, qualified_experiment_ref(topic, experiment_id)
 
 
-def retry_generated_log(operation: str, func: Any, request: dict[str, Any], project_dir: Path) -> None:
+def retry_generated_log(operation: str, func: Any, request: dict[str, Any], project_dir: Path, topic: str) -> None:
     repo: Path | None = None
     generated_id = ""
     for attempt in range(2):
-        repo, generated_id = func(request, project_dir)
+        repo, generated_id = func(request, project_dir, topic)
         if push(repo, state_branch()):
             print(generated_id)
             return
@@ -1098,7 +1149,7 @@ def log_experiment(args: argparse.Namespace) -> None:
     request = safe_load_yaml(Path(args.request))
     if request.get("kind") != "experiment_result_request":
         raise ArNotesError("request kind must be experiment_result_request")
-    retry_generated_log("experiment", log_experiment_once, request, Path(args.project_dir).resolve())
+    retry_generated_log("experiment", log_experiment_once, request, Path(args.project_dir).resolve(), agent_topic(args.topic or request.get("topic")))
 
 
 def experiment_path_for_id(log_dir: Path, experiment_id: str) -> Path:
@@ -1138,12 +1189,14 @@ def final_correction_doc(request: dict[str, Any], correction_id: str) -> dict[st
     }
 
 
-def log_correction_once(request: dict[str, Any], project_dir: Path) -> tuple[Path, str]:
-    experiment_id = str(request.get("experiment_id") or "").strip()
-    if not experiment_id:
+def log_correction_once(request: dict[str, Any], project_dir: Path, topic: str) -> tuple[Path, str]:
+    experiment_ref = str(request.get("experiment_id") or "").strip()
+    if not experiment_ref:
         raise ArNotesError("correction request requires experiment_id")
+    topic, experiment_id = split_experiment_ref(experiment_ref, topic)
     repo = ensure_project_state(project_dir)
-    log_dir = experiment_log_dir(repo)
+    ensure_topic_state_files(repo, topic)
+    log_dir = experiment_log_dir(repo, topic)
     experiment_path = experiment_path_for_id(log_dir, experiment_id)
     if not experiment_path.exists():
         raise ArNotesError(f"experiment file does not exist: {experiment_path}")
@@ -1172,17 +1225,114 @@ def log_correction_once(request: dict[str, Any], project_dir: Path) -> tuple[Pat
     append_summary_row(log_dir / "SUMMARY.md", row)
     commit_if_changed(
         repo,
-        f"experiment: correct {experiment_id} ({correction_id})",
+        f"experiment: correct {topic}/{experiment_id} ({correction_id})",
         [experiment_path, log_dir / "SUMMARY.md"],
     )
-    return repo, correction_id
+    return repo, qualified_experiment_ref(topic, correction_id)
 
 
 def log_correction(args: argparse.Namespace) -> None:
     request = safe_load_yaml(Path(args.request))
     if request.get("kind") not in {"experiment_correction_request", "correction_request"}:
         raise ArNotesError("request kind must be experiment_correction_request")
-    retry_generated_log("correction", log_correction_once, request, Path(args.project_dir).resolve())
+    topic_value = args.topic
+    experiment_ref = str(request.get("experiment_id") or "")
+    if not topic_value and "/" in experiment_ref:
+        topic_value = experiment_ref.split("/", 1)[0]
+    retry_generated_log("correction", log_correction_once, request, Path(args.project_dir).resolve(), agent_topic(topic_value))
+
+
+def utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+
+
+def format_utc(value: dt.datetime) -> str:
+    return value.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_utc(value: Any) -> dt.datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return dt.datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
+    except ValueError:
+        return None
+
+
+def lease_is_active(lease: dict[str, Any], now: dt.datetime) -> bool:
+    if lease.get("status") != "active":
+        return False
+    expires_at = parse_utc(lease.get("expires_at"))
+    return expires_at is None or expires_at > now
+
+
+def lease_path(repo: Path, topic: str) -> Path:
+    return topic_dir(repo, topic) / "ACTIVE.yaml"
+
+
+def acquire_topic(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    topic = agent_topic(args.topic)
+    session_id = str(args.session_id or "").strip()
+    if not session_id:
+        raise ArNotesError("acquire-topic requires --session-id")
+    repo = ensure_project_state(project_dir)
+    changed_paths = ensure_topic_state_files(repo, topic)
+    path = lease_path(repo, topic)
+    existing = safe_load_yaml(path)
+    now = utc_now()
+    existing_session = str(existing.get("session_id") or "")
+    if lease_is_active(existing, now) and existing_session and existing_session != session_id:
+        raise ArNotesError(
+            f"topic '{topic}' is already active for session {existing_session} "
+            f"started by {existing.get('user_id') or 'unknown'} at {existing.get('started_at') or 'unknown time'}"
+        )
+    expires_at = now + dt.timedelta(seconds=max(60, int(args.lease_seconds)))
+    write_yaml(
+        path,
+        {
+            "schema_version": 1,
+            "topic": topic,
+            "status": "active",
+            "session_id": session_id,
+            "main_agent": args.main_agent or os.environ.get("AR_MAIN_AGENT") or "research-coordinator",
+            "user_id": args.user_id or user_id(),
+            "host": socket.gethostname(),
+            "workspace": str(project_dir),
+            "branch": args.branch or "",
+            "started_at": format_utc(now),
+            "heartbeat_at": format_utc(now),
+            "expires_at": format_utc(expires_at),
+        },
+    )
+    changed_paths.append(path)
+    commit_if_changed(repo, f"topic: acquire {topic}", changed_paths)
+    if not push(repo, state_branch()):
+        raise ArNotesError(f"topic '{topic}' lease push was rejected")
+    print(topic)
+
+
+def release_topic(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    topic = agent_topic(args.topic)
+    session_id = str(args.session_id or "").strip()
+    if not session_id:
+        raise ArNotesError("release-topic requires --session-id")
+    repo = ensure_project_state(project_dir)
+    path = lease_path(repo, topic)
+    existing = safe_load_yaml(path)
+    if not existing:
+        return
+    if str(existing.get("session_id") or "") != session_id:
+        return
+    now = utc_now()
+    existing["status"] = "released"
+    existing["released_at"] = format_utc(now)
+    existing["heartbeat_at"] = format_utc(now)
+    write_yaml(path, existing)
+    if commit_if_changed(repo, f"topic: release {topic}", [path]) and not push(repo, state_branch()):
+        raise ArNotesError(f"topic '{topic}' lease release push was rejected")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1261,12 +1411,30 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("log-experiment")
     p.add_argument("--request", required=True)
     p.add_argument("--project-dir", required=True)
+    p.add_argument("--topic", default=os.environ.get("AR_AGENT_TOPIC"))
     p.set_defaults(func=log_experiment)
 
     p = sub.add_parser("log-correction")
     p.add_argument("--request", required=True)
     p.add_argument("--project-dir", required=True)
+    p.add_argument("--topic", default=os.environ.get("AR_AGENT_TOPIC"))
     p.set_defaults(func=log_correction)
+
+    p = sub.add_parser("acquire-topic")
+    p.add_argument("--project-dir", required=True)
+    p.add_argument("--topic", default=os.environ.get("AR_AGENT_TOPIC"))
+    p.add_argument("--main-agent", default=os.environ.get("AR_MAIN_AGENT", "research-coordinator"))
+    p.add_argument("--user-id", default=os.environ.get("AR_USER_ID"))
+    p.add_argument("--branch", default="")
+    p.add_argument("--session-id", default=os.environ.get("AR_SESSION_ID"))
+    p.add_argument("--lease-seconds", type=int, default=7 * 24 * 60 * 60)
+    p.set_defaults(func=acquire_topic)
+
+    p = sub.add_parser("release-topic")
+    p.add_argument("--project-dir", required=True)
+    p.add_argument("--topic", default=os.environ.get("AR_AGENT_TOPIC"))
+    p.add_argument("--session-id", default=os.environ.get("AR_SESSION_ID"))
+    p.set_defaults(func=release_topic)
 
     return parser
 
@@ -1279,6 +1447,28 @@ def request_target(request_path: str | None) -> dict[str, Any]:
     return target if isinstance(target, dict) else {}
 
 
+def correction_topic_for_lock(args: argparse.Namespace) -> str | None:
+    request_path = getattr(args, "request", None)
+    if not request_path:
+        return getattr(args, "topic", None)
+    request = safe_load_yaml(Path(request_path))
+    experiment_ref = str(request.get("experiment_id") or "")
+    if "/" in experiment_ref:
+        return experiment_ref.split("/", 1)[0]
+    return getattr(args, "topic", None)
+
+
+def experiment_topic_for_lock(args: argparse.Namespace) -> str | None:
+    topic_value = getattr(args, "topic", None)
+    if topic_value:
+        return topic_value
+    request_path = getattr(args, "request", None)
+    if not request_path:
+        return None
+    request = safe_load_yaml(Path(request_path))
+    return str(request.get("topic") or "") or None
+
+
 def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
     command = getattr(args, "command", "")
     project_dir = Path(getattr(args, "project_dir", ".")).resolve()
@@ -1288,11 +1478,21 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
         pid = project_id(project_dir, explicit_project_id)
         paths.append(lock_file_for(f"project-{pid}"))
 
+    def add_topic_lock(topic_value: str | None = None) -> None:
+        pid = project_id(project_dir, None)
+        paths.append(lock_file_for(f"project-{pid}-topic-{agent_topic(topic_value)}"))
+
     def add_org_lock() -> None:
         paths.append(lock_file_for("org-agentic-notes"))
 
-    if command in {"ensure-project-state", "log-experiment", "log-correction"}:
+    if command == "ensure-project-state":
         add_project_lock(None)
+    elif command == "log-correction":
+        add_topic_lock(correction_topic_for_lock(args))
+    elif command == "log-experiment":
+        add_topic_lock(experiment_topic_for_lock(args))
+    elif command in {"acquire-topic", "release-topic"}:
+        add_topic_lock(getattr(args, "topic", None))
     elif command == "refresh":
         if os.environ.get("AR_ORG_NOTES_REPO"):
             add_org_lock()

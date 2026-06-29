@@ -26,6 +26,9 @@ sandbox_none_setup_environment() {
     export AR_STATE_ROOT="$STATE_ROOT"
     export AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
     export AR_MAIN_AGENT="${AR_MAIN_AGENT:-research-coordinator}"
+    export AR_AGENT_TOPIC="${AR_AGENT_TOPIC:-}"
+    export AR_AGENT_BRANCH_PREFIX="${AR_AGENT_BRANCH_PREFIX:-}"
+    export AR_SESSION_ID="${AR_SESSION_ID:-}"
     export AR_USER_ID="${AR_USER_ID:-$USER}"
     export AR_PROJECT_ID="${AR_PROJECT_ID:-}"
     export AR_AGENTIC_STATE_BRANCH="${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
@@ -165,5 +168,5 @@ sandbox_none_launch() {
     fi
 
     cd "$WORKSPACE_DIR"
-    exec "$tool_cmd" "${TOOL_ARGS[@]}"
+    "$tool_cmd" "${TOOL_ARGS[@]}"
 }

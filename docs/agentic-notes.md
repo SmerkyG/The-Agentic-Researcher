@@ -29,7 +29,7 @@ Agent-type notes live inside the optional org notes repo at `agent-notes/<agent_
 
 Org-provided agents live at `agents/*.md` in the org repo. They use the same neutral Markdown format as built-in AR agents. `kind: main` agents are selectable with `AR_MAIN_AGENT`; `kind: subagent` agents are rendered into the selected CLI's subagent directory. AR loads built-in agents first and org agents second, so an org agent with the same `name` as a built-in agent overrides the built-in definition.
 
-Project notes and experiment logs live on the project `agentic/state` branch, cached at `$AR_STATE_ROOT/projects/<project-id>/agentic-state/`:
+Project notes, topic leases, and topic-local experiment logs live on the project `agentic/state` branch, cached at `$AR_STATE_ROOT/projects/<project-id>/agentic-state/`:
 
 ```text
 .agentic/
@@ -44,11 +44,14 @@ Project notes and experiment logs live on the project `agentic/state` branch, ca
       evaluation-policy.md
     research-paper-author/
       always-injected.md
-  experiment-log/
-    COUNTER.yaml
-    SUMMARY.md
-    experiments/
-      E0001_alice_triton-power2-shape-test.yaml
+  topics/
+    kernel-search/
+      ACTIVE.yaml
+      experiment-log/
+        COUNTER.yaml
+        SUMMARY.md
+        experiments/
+          E0001_triton-power2-shape-test.yaml
 ```
 
 Project notes under `.agentic/agent-notes/all-agents/` apply to every agent in the project. Project agent-type notes under `.agentic/agent-notes/<agent_type>/` apply only to that agent type in this project. The worktree instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) is only a materialized view that combines the shared AR base, the selected main agent, active optional skill instructions, and injected Agentic Notes.
@@ -57,25 +60,26 @@ AR derives `<project-id>` from the project Git `origin` repo name by default. Co
 
 ## Project Setup and Multiple Worktrees
 
-For shared project notes and experiment logs, the project should be an ordinary Git repository with a remote. AR uses the remote to create and push the `agentic/state` branch from the cached state checkout. The agent's normal project worktree remains on its code branch; AR does not switch it to `agentic/state`.
+For shared project notes and topic experiment logs, the project should be an ordinary Git repository with a remote. AR uses the remote to create and push the `agentic/state` branch from the cached state checkout. The agent's normal project worktree remains on its code branch; AR does not switch it to `agentic/state`.
 
-When AR creates `agentic/state` for the first time, it uses an orphan branch with no parent commit and an empty starting fileset. The first state commit contains only the `.agentic/` notes and experiment-log layout. It does not include the current code tree or any files from the agent's code branch. If `agentic/state` already exists, AR checks out that existing branch and updates it.
+When AR creates `agentic/state` for the first time, it uses an orphan branch with no parent commit and an empty starting fileset. The first state commit contains only the `.agentic/` notes/topic layout. It does not include the current code tree or any files from the agent's code branch. If `agentic/state` already exists, AR checks out that existing branch and updates it.
 
-Launch AR from the project worktree. Worktrees whose `origin` remotes have the same repo name share notes and experiment logs automatically:
+Launch AR from the project worktree on a branch named `agent/<topic>` or a child branch such as `agent/<topic>/exp/<experiment>`. Worktrees whose `origin` remotes have the same repo name share notes and topic state automatically:
 
 ```bash
+git switch -c agent/kernel-search
 agentic-researcher .
 ```
 
 Multiple projects are supported in one AR installation. They are separated by resolved project id under `$AR_STATE_ROOT/projects/`. Projects without a Git remote must pass `--project-id` or set `AR_PROJECT_ID`; this prevents directory-name differences from silently defining project identity.
 
-Multiple top-level agents may work in separate Git worktrees of the same project as long as they share the same resolved project id. Code changes and rendered instruction files stay isolated in each agent worktree. Project note updates, project agent-type note updates, and experiment logging go through the shared cached project state checkout and are serialized with local state locks before pulling, committing, and pushing.
+Multiple top-level agents may work in separate Git worktrees of the same project as long as they share the same resolved project id and use different topics. There must be only one active top-level agent per topic. Code changes and rendered instruction files stay isolated in each agent worktree. Project note updates and project agent-type note updates go through the shared cached project state checkout and are serialized with local state locks before pulling, committing, and pushing. Experiment logging is serialized by topic, so different topics do not block each other.
 
 Run the relevant setup flow to create or revise the project agent-type note for that main agent. For the default coordinator, `setup_research_plan` writes `.agentic/agent-notes/research-coordinator/always-injected.md`. Additional top-level agents can join by launching AR from their own Git worktrees with the desired `--main-agent`; their worktree instruction file is regenerated for that invocation from the selected main agent plus the matching project agent-type notes.
 
 The project `agentic/state` branch does not store `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`. Those files are per-worktree materialized views.
 
-Subagents inherit the parent launch's project id and rendered note list. They do not need separate project-state configuration unless they are launched as independent top-level agents.
+Subagents inherit the parent launch's project id, topic, and rendered note list. They do not need separate project-state configuration unless they are launched as independent top-level agents.
 
 In container mode, the launcher mounts the AR install read-only at `/opt/agentic-researcher` and mounts `$AR_STATE_ROOT` read-write. The org notes checkout and each project's cached `agentic/state` checkout live under that writable state root, not inside the read-only install mount.
 
@@ -106,20 +110,26 @@ Use `agent-notes/all-agents/<topic>.md` for package-specific lessons, architectu
 
 ## Experiment Logs
 
-Project experiments are one YAML file per experiment on the `agentic/state` branch. The `experiment-logger` subagent assigns counter-based IDs:
+Project experiments are one YAML file per experiment under the active topic on the `agentic/state` branch. The `experiment-logger` subagent assigns topic-local counter-based IDs:
 
 ```text
-E0001_<user_id>_<short-description-slug>
-E0002_<user_id>_<short-description-slug>
+E0001_<short-description-slug>
+E0002_<short-description-slug>
 ```
 
-Agent metadata, including `source.actor_id`, invocation IDs, branch names, commits, commands, metrics, and artifacts, lives inside the YAML file.
+Use slash-qualified references outside the current topic:
+
+```text
+kernel-search/E0001_triton-power2-shape-test
+```
+
+Agent and user metadata, including topic, `user_id`, `source.actor_id`, invocation IDs, branch names, commits, commands, metrics, and artifacts, lives inside the YAML file.
 
 Working agents do not write experiment-log state directly. When a completed meaningful experiment should be recorded, they spawn the `experiment-logger` subagent with an `experiment_result_request`. For corrections, they spawn the same subagent with an `experiment_correction_request`.
 
-`COUNTER.yaml` tracks `next_experiment_number`. When logging an experiment, the experiment logger pulls latest, reads the counter, writes one YAML file, increments the counter, appends one row to `SUMMARY.md`, commits, and pushes.
+`COUNTER.yaml` tracks `next_experiment_number` for one topic. When logging an experiment, the experiment logger pulls latest, reads the topic counter, writes one YAML file, increments the counter, appends one row to the topic `SUMMARY.md`, commits, and pushes.
 
-`SUMMARY.md` is append-maintained during normal logging. It is not regenerated from all experiment files. Agents should read `SUMMARY.md` first and open detailed experiment YAML files only when needed.
+`SUMMARY.md` is append-maintained during normal logging. It is not regenerated from all experiment files. Agents should read the active topic's `SUMMARY.md` first and open detailed experiment YAML files only when needed.
 
 Corrections append entries to the original experiment YAML file under `corrections:` with IDs such as:
 
@@ -127,14 +137,15 @@ Corrections append entries to the original experiment YAML file under `correctio
 E0001_R001
 ```
 
-The experiment logger also appends one correction row to `SUMMARY.md` that links back to the corrected experiment file. Existing experiment fields are left intact; only the append-only `corrections:` list is extended.
+The experiment logger also appends one correction row to the topic `SUMMARY.md` that links back to the corrected experiment file. Existing experiment fields are left intact; only the append-only `corrections:` list is extended.
 
-`SUMMARY.md` and the per-experiment YAML files are the shared cross-agent
-experiment history. `report.tex` and `TODO.md` remain ordinary files in the
-project code worktree. They are useful for branch-local narrative analysis,
-derivations, verification details, and local checklists, but AR does not lock
-them and they should not be treated as a shared multi-agent queue or canonical
-experiment index.
+The active topic's `SUMMARY.md` and per-experiment YAML files are the durable
+experiment history for that work lane. `report.tex` and `TODO.md` remain
+ordinary files in the project code worktree. They are useful for branch-local
+narrative analysis, derivations, verification details, and local checklists, but
+AR does not lock them and they should not be treated as a shared multi-agent
+queue or canonical experiment index. A project-wide aggregate can be derived
+later from the topic logs.
 
 ## Commands
 
@@ -149,8 +160,10 @@ list-notes --scope org|project --agent-type AGENT_TYPE
 update-note --request REQUEST.yaml
 replace-note --scope org|project --agent-type AGENT_TYPE --note-name NAME --note-file FILE
 ensure-project-state --project-dir PATH
-log-experiment --request REQUEST.yaml --project-dir PATH
-log-correction --request REQUEST.yaml --project-dir PATH
+acquire-topic --project-dir PATH --topic TOPIC --session-id SESSION
+release-topic --project-dir PATH --topic TOPIC --session-id SESSION
+log-experiment --request REQUEST.yaml --project-dir PATH --topic TOPIC
+log-correction --request REQUEST.yaml --project-dir PATH --topic TOPIC
 ```
 
 These are low-level helper commands used by generated subagents and hooks. Working agents normally route note updates through `note-updater` and experiment log writes through `experiment-logger`.

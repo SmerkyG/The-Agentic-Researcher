@@ -95,8 +95,9 @@ Do this every session or after context compaction:
 2. Identify listed on-demand note topics that may be relevant to the current
    work. When you need one, use the generated `read-note` command so you read
    the rendered note for this project and agent type.
-3. If the Agentic Researcher experiment log is available, read its
-   `SUMMARY.md` first; open individual experiment YAML files only when needed.
+3. If the active topic's Agentic Researcher experiment log is available, read
+   its `SUMMARY.md` first; open individual experiment YAML files only when
+   needed.
 4. Read `report.tex` for branch-local narrative analysis, derivations, and
    detailed results.
 5. Read `TODO.md` for branch-local open questions and deferred work.
@@ -119,8 +120,8 @@ Do this every session or after context compaction:
 3. **Implement** minimal, focused changes. Keep diffs small.
 4. **Evaluate** using the three-tier strategy from the shared commitments.
 5. **Analyze** honestly. Write a hypothesis for why it worked or did not.
-6. **Record** the completed meaningful experiment in the shared experiment log
-   when available by launching the `experiment-logger` subagent with an
+6. **Record** the completed meaningful experiment in the active topic's
+   experiment log when available by launching the `experiment-logger` subagent with an
    `experiment_result_request`. Add or update `report.tex` analysis for
    methods, derivations, figures, verification, and interpretation that should
    live with the branch.
@@ -141,15 +142,17 @@ Do this every session or after context compaction:
 
 ## 3. Experiment Logging and Research Record
 
-The shared Agentic Researcher experiment log is the cross-agent experiment
-ledger when available. It lives on the project state branch, not in the normal
-code worktree. Log completed meaningful experiments by launching the
-`experiment-logger` subagent with an `experiment_result_request`; for
-corrections, launch it with an `experiment_correction_request`. The subagent
-uses the provided helper so the project-local counter, per-experiment YAML file,
-and shared `SUMMARY.md` row are updated under the project lock. Do not
-regenerate `SUMMARY.md`, manually edit the state checkout, or manually alter
-existing experiment fields.
+The active topic's Agentic Researcher experiment log is the durable experiment
+ledger when available. It lives under `.agentic/topics/$AR_AGENT_TOPIC/` on the
+project state branch, not in the normal code worktree. Log completed meaningful
+experiments by launching the `experiment-logger` subagent with an
+`experiment_result_request`; for corrections, launch it with an
+`experiment_correction_request`. The subagent uses the provided helper so the
+topic-local counter, per-experiment YAML file, and topic `SUMMARY.md` row are
+updated under the topic lock. Do not regenerate `SUMMARY.md`, manually edit the
+state checkout, or manually alter existing experiment fields. Experiment IDs
+are local to the topic; use slash-qualified references like
+`$AR_AGENT_TOPIC/E0001_short-description` when referring across topics.
 
 `report.tex` is the branch-local narrative research record. It is for
 derivations, methods, detailed analysis, figures, verification blocks, and
@@ -235,7 +238,9 @@ Include in `report.tex`:
 
 - Commit completed work, not WIP. One idea per commit.
 - Format: `exp(EXXX): <description> -- <metric>=<value> (<delta> vs baseline)`
-- Branches: `exp/<experiment-name>` for each experiment line
+- Work only on `agent/$AR_AGENT_TOPIC` or child branches such as
+  `agent/$AR_AGENT_TOPIC/exp/<experiment-name>`.
+- Never commit to `main` or `master` unless the user explicitly asks.
 - Tag successes: `git tag exp-EXXX-success`
 - Clean state before new experiments: `git checkout .` or `git stash`
 - Never force-push or rewrite shared history
@@ -249,7 +254,7 @@ Include in `report.tex`:
 
 | Location | Purpose |
 |----------|---------|
-| Agentic experiment log | Shared experiment ledger and summary table on the project state branch |
+| Agentic experiment log | Topic-local experiment ledger and summary table on the project state branch |
 | `report.tex` | Branch-local derivations, methods, detailed analysis, verification, selected result tables |
 | `TODO.md` | Branch-local checklist for open questions, unverified claims, deferred work |
 | `REVISION.md` | Agent improvement notes from `/retro`, append-only |

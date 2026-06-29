@@ -306,9 +306,11 @@ echo "Next steps:"
 if [[ "$SANDBOX" == "none" ]]; then
     echo "  1. Configure defaults:  agentic-researcher --setup"
     echo "  2. Make sure your selected CLI tool is installed on PATH"
-    echo "  3. Start the agent:     agentic-researcher ~/your-project"
+    echo "  3. In your project repo: git switch -c agent/my-topic"
+    echo "  4. Start the agent:     agentic-researcher ~/your-project"
 else
     echo "  1. Configure defaults:  agentic-researcher --setup"
-    echo "  2. Start the agent:     agentic-researcher ~/your-project"
+    echo "  2. In your project repo: git switch -c agent/my-topic"
+    echo "  3. Start the agent:     agentic-researcher ~/your-project"
     echo "     The container image builds automatically on first launch."
 fi

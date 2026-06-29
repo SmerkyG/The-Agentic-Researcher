@@ -46,22 +46,23 @@ The storage layout is simple enough that you can add or edit note files directly
 agentic-researcher --setup
 ```
 
-The installer adds the `agentic-researcher` launcher. The setup wizard creates local configuration, asks whether to use an org notes repo, and asks which main agent to use. Keep the default `research-coordinator` unless the AR install or org notes repo provides another `kind: main` agent. Org notes are optional. Without them, AR still maintains project notes and the shared experiment log on the project's `agentic/state` branch. See [Org Notes](#org-notes) for the repo layout and when to use it.
+The installer adds the `agentic-researcher` launcher. The setup wizard creates local configuration, asks whether to use an org notes repo, and asks which main agent to use. Keep the default `research-coordinator` unless the AR install or org notes repo provides another `kind: main` agent. Org notes are optional. Without them, AR still maintains project notes and topic-local experiment logs on the project's `agentic/state` branch. See [Org Notes](#org-notes) for the repo layout and when to use it.
 
 ## Workflow
 
 ### Starting a New Project
 
 1. **Start from a normal project Git checkout.** The checkout should usually have an `origin` remote so AR can derive the project identity from the repo name automatically.
-2. **Run AR from that checkout:** `cd ~/my-project && agentic-researcher .`. For auto-approved agent permissions, add `--yolo`.
-3. **For a new research effort, ask the default `research-coordinator` main agent to use the `setup_research_plan` skill.** This starts an interactive dialogue about your research goal, evaluation metrics, constraints, and compute budget.
-4. The agent writes agent-type-specific project instructions to project agent-type notes on the project `agentic/state` branch. AR injects those notes into the worktree instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) and creates branch-local research files such as `report.tex` and `TODO.md`.
+2. **Create or enter a topic branch:** `git switch -c agent/my-topic` for a new topic, or `git switch agent/my-topic` to resume one. Use child branches such as `agent/my-topic/exp/idea-name` for focused experiments.
+3. **Run AR from that checkout:** `cd ~/my-project && agentic-researcher .`. AR infers topic `my-topic` from the current `agent/my-topic` branch or any child branch under it. For auto-approved agent permissions, add `--yolo`.
+4. **For a new research effort, ask the default `research-coordinator` main agent to use the `setup_research_plan` skill.** This starts an interactive dialogue about your research goal, evaluation metrics, constraints, and compute budget.
+5. The agent writes agent-type-specific project instructions to project agent-type notes on the project `agentic/state` branch. AR injects those notes into the worktree instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) and creates branch-local research files such as `report.tex` and `TODO.md`.
 
-If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID` so repeated launches use the same notes and experiment-log state.
+If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID` so repeated launches use the same notes and topic state.
 
 ### Resuming a Session
 
-Relaunch AR from the same project Git checkout or another worktree with the same resolved project identity. The rendered instructions tell the agent to use the injected project agent-type notes, shared experiment summary, branch-local `report.tex`, and `TODO.md` before continuing. Use `setup_research_plan` on resume only when you want a structured recap or to revise the coordinator project agent-type note.
+Relaunch AR from the same project Git checkout or another worktree with the same resolved project identity and topic branch. The rendered instructions tell the agent to use the injected project agent-type notes, active topic experiment summary, branch-local `report.tex`, and `TODO.md` before continuing. Use `setup_research_plan` on resume only when you want a structured recap or to revise the coordinator project agent-type note.
 
 ## Sandbox
 
@@ -87,6 +88,7 @@ Run `agentic-researcher --setup` to create a configuration file at `${XDG_CONFIG
 - **Custom API endpoint** — point Claude at an Anthropic-compatible proxy or gateway
 - **Org notes repo** (`AR_ORG_NOTES_REPO`) — optional shared Git repo for organization-wide and agent-type-specific notes
 - **Main agent** (`AR_MAIN_AGENT`) — top-level agent definition to render into the workspace instruction file. Defaults to `research-coordinator`
+- **Agent topic** (`AR_AGENT_TOPIC` or `--agent-topic`) — work lane for one active top-level agent. AR normally infers this from the current `agent/<topic>` branch. The matching branch must be `agent/<topic>` or a child branch such as `agent/<topic>/exp/<experiment>`
 - **State/cache directory** (`AR_STATE_ROOT`) — where caches, container `/tmp`, and tool state are stored. Defaults to `~/.cache/agentic-researcher`. On HPC systems with Apptainer, set this to a path with sufficient space (e.g. on a scratch filesystem) to avoid hitting the default 64 MB overlay limit
 - **Extra environment variables** (`AR_EXTRA_ENV`) — pipe-separated `KEY=VALUE` pairs forwarded into the container (e.g. `HF_TOKEN=hf_...|WANDB_API_KEY=...`)
 - **Network proxy** — HTTP/HTTPS proxy settings for use inside the container
@@ -122,6 +124,9 @@ agentic-researcher --project-id my-project-2026 ~/my-project
 
 # Use a different top-level agent for this launch
 agentic-researcher --main-agent research-paper-author ~/my-project
+
+# Override the inferred topic only when needed
+agentic-researcher --agent-topic my-topic .
 ```
 
 ### Project Git and Agentic Notes State
@@ -136,31 +141,34 @@ agentic-researcher .
 
 Organization-wide and agent-type-specific notes are optional; configure `AR_ORG_NOTES_REPO` only when you want that shared scope.
 
-On launch, AR creates a cached checkout at `$AR_STATE_ROOT/projects/<project-id>/agentic-state/` if needed and renders instructions from the local cached state. By default, one project-scoped background loop refreshes org and project Agentic Notes every 120 seconds while any agent for that project is running, so multiple agents do not multiply remote Git checks. Writes such as note updates and experiment logging still perform synchronous locked refresh/push operations.
+On launch, AR creates a cached checkout at `$AR_STATE_ROOT/projects/<project-id>/agentic-state/` if needed and renders instructions from the local cached state. By default, one project-scoped background loop refreshes org and project Agentic Notes every 120 seconds while any agent for that project is running, so multiple agents do not multiply remote Git checks. Note updates still perform synchronous locked refresh/push operations. Experiment logging is locked per topic, so different topics do not block one another.
 
 The project `agentic/state` branch stores:
 
 ```text
 .agentic/agent-notes/all-agents/always-injected.md
 .agentic/agent-notes/<agent_type>/always-injected.md
-.agentic/experiment-log/COUNTER.yaml
-.agentic/experiment-log/SUMMARY.md
-.agentic/experiment-log/experiments/
+.agentic/topics/<topic>/ACTIVE.yaml
+.agentic/topics/<topic>/experiment-log/COUNTER.yaml
+.agentic/topics/<topic>/experiment-log/SUMMARY.md
+.agentic/topics/<topic>/experiment-log/experiments/
 ```
 
 When AR creates `agentic/state` for the first time, it creates an orphan branch with an empty starting fileset and commits only the `.agentic/` state files. It does not copy the current code tree, branch contents, datasets, or generated files into `agentic/state`. If `agentic/state` already exists on the remote, AR checks out and updates that existing state branch instead of recreating it.
 
 If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID`. The project state checkout is then local to that AR installation and cannot be shared or pushed unless the project later gets a remote.
 
-Multiple projects are supported within one AR installation. Each project gets a separate cache directory keyed by the resolved project id. AR does not infer project identity from the directory name. For multi-worktree or multi-agent projects, use worktrees whose `origin` remotes have the same repo name, or pass the same `--project-id` or set the same `AR_PROJECT_ID` in every launch so all agents share the same notes and experiment log.
+Multiple projects are supported within one AR installation. Each project gets a separate cache directory keyed by the resolved project id. AR does not infer project identity from the directory name. For multi-worktree or multi-agent projects, use worktrees whose `origin` remotes have the same repo name, or pass the same `--project-id` or set the same `AR_PROJECT_ID` in every launch so all agents share the same notes and topic state.
 
-Multiple top-level agents should work in separate Git worktrees of the same project repo. Their code branches and materialized instruction files stay independent, while project notes, project agent-type notes, and experiment-log operations are serialized through the shared cached `agentic/state` checkout. Subagents rendered by a top-level launch use the same project id and state checkout as their parent agent.
+Each top-level agent works in one topic at a time. There must be only one active top-level agent per topic; split collaboration into separate topics rather than running multiple top-level agents in one topic. A topic branch is named `agent/<topic>`, with optional child branches such as `agent/<topic>/exp/<experiment-name>`. AR refuses normal launches from `main`, `master`, detached HEAD, or a branch that does not match the selected topic.
+
+Multiple top-level agents should work in separate Git worktrees of the same project repo. Their code branches and materialized instruction files stay independent, while project notes and project agent-type notes are serialized through the shared cached `agentic/state` checkout. Experiment logs are scoped and locked per topic under `.agentic/topics/<topic>/experiment-log/`. Subagents rendered by a top-level launch inherit the same project id, topic, and state checkout as their parent agent.
 
 Example with a coordinator and a paper author sharing one project:
 
 ```bash
-git worktree add ../my-project-coordinator main
-git worktree add ../my-project-paper paper-draft
+git worktree add -b agent/kernel-search ../my-project-coordinator main
+git worktree add -b agent/paper-draft ../my-project-paper main
 
 agentic-researcher --main-agent research-coordinator ../my-project-coordinator
 agentic-researcher --main-agent research-paper-author ../my-project-paper
@@ -170,9 +178,9 @@ Run the `research-coordinator` project setup flow once to create or revise `.age
 
 Each worktree gets its own generated `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` based on the selected main agent. Those files are materialized views and should not be treated as canonical shared state. Shared project guidance for all agents lives in `.agentic/agent-notes/all-agents/always-injected.md`; agent-type-specific project guidance lives in `.agentic/agent-notes/<agent_type>/always-injected.md`.
 
-The `agentic/state` branch does not store `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`. It stores Agentic Notes and the experiment log; each worktree rematerializes its own instruction file on launch or refresh.
+The `agentic/state` branch does not store `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`. It stores Agentic Notes, topic leases, and topic-local experiment logs; each worktree rematerializes its own instruction file on launch or refresh.
 
-`report.tex` and `TODO.md` remain normal files in the project worktree. AR does not lock them, so they should be treated as branch-local narrative and checklist files rather than a shared multi-agent queue or canonical experiment index. The shared cross-agent experiment history is the locked experiment log on `agentic/state`.
+`report.tex` and `TODO.md` remain normal files in the project worktree. AR does not lock them, so they should be treated as branch-local narrative and checklist files rather than a shared multi-agent queue or canonical experiment index. The durable experiment history is the active topic's locked experiment log on `agentic/state`; a project-wide aggregate can be derived later from topic logs.
 
 See [docs/agentic-notes.md](docs/agentic-notes.md) for the notes repo layout, agent-type notes, note-updater flow, experiment-logger flow, and experiment log format.
 

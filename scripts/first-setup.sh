@@ -338,13 +338,16 @@ echo ""
 echo "Next steps:"
 if [[ "$AR_SANDBOX" == "none" ]]; then
     echo "  1. Make sure '$AR_CLI_TOOL' is installed on PATH"
-    echo "  2. Launch: agentic-researcher ~/your-project"
+    echo "  2. In your project repo, switch to a topic branch: git switch -c agent/my-topic"
+    echo "  3. Launch: agentic-researcher ~/your-project"
 elif [[ "$AR_CLI_TOOL" == "claude" ]]; then
-    echo "  1. Launch: agentic-researcher ~/your-project  (will prompt for OAuth login)"
+    echo "  1. In your project repo, switch to a topic branch: git switch -c agent/my-topic"
+    echo "  2. Launch: agentic-researcher ~/your-project  (will prompt for OAuth login)"
     echo "     The container image builds automatically on first launch."
 else
-    echo "  1. Launch: agentic-researcher ~/your-project"
+    echo "  1. In your project repo, switch to a topic branch: git switch -c agent/my-topic"
+    echo "  2. Launch: agentic-researcher ~/your-project"
     echo "     The container image builds automatically on first launch."
-    echo "  2. If needed, export the tool's standard API key env var before launch"
+    echo "  3. If needed, export the tool's standard API key env var before launch"
 fi
 echo "════════════════════════════════════════════════════════════════"

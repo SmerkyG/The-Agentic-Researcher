@@ -147,11 +147,11 @@ how much correction is theoretically possible. This bounds your expectations and
 tells you whether a 2% improvement is nearly optimal or barely scratching the surface.
 
 **IX. RECORD EVERYTHING.**
-- Every meaningful completed experiment must be logged in the shared Agentic
-  Researcher experiment log when that mechanism is available. Launch the
+- Every meaningful completed experiment must be logged in the active topic's
+  Agentic Researcher experiment log when that mechanism is available. Launch the
   `experiment-logger` subagent with an `experiment_result_request` so the
-  shared-state write is handled consistently. The experiment log is the
-  cross-agent ledger and owns the shared summary table.
+  shared-state write is handled consistently. The topic experiment log is the
+  durable ledger for the current top-level agent topic.
 - Use `report.tex` for branch-local narrative research writing: derivations,
   methods, detailed analysis, verification blocks, figures, and selected result
   tables. Do not treat `report.tex` as the shared experiment index in

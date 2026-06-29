@@ -285,6 +285,7 @@ capture_env_overrides() {
         AR_OPTIONAL_SKILLS
         AR_ORG_NOTES_REPO
         AR_MAIN_AGENT
+        AR_AGENT_TOPIC
         AR_USER_ID
         AR_PROJECT_ID
         AR_AGENTIC_STATE_BRANCH
@@ -342,6 +343,7 @@ apply_env_overrides() {
         AR_OPTIONAL_SKILLS
         AR_ORG_NOTES_REPO
         AR_MAIN_AGENT
+        AR_AGENT_TOPIC
         AR_USER_ID
         AR_PROJECT_ID
         AR_AGENTIC_STATE_BRANCH
@@ -386,6 +388,9 @@ apply_env_overrides() {
     if [[ -n "${AR_MAIN_AGENT_OVERRIDE:-}" ]]; then
         AR_MAIN_AGENT="$AR_MAIN_AGENT_OVERRIDE"
     fi
+    if [[ -n "${AR_AGENT_TOPIC_OVERRIDE:-}" ]]; then
+        AR_AGENT_TOPIC="$AR_AGENT_TOPIC_OVERRIDE"
+    fi
     if [[ -n "${AR_CLI_TOOL_OVERRIDE:-}" ]]; then
         AR_CLI_TOOL="$AR_CLI_TOOL_OVERRIDE"
     fi
@@ -419,6 +424,7 @@ apply_defaults() {
     AR_OPTIONAL_SKILLS="${AR_OPTIONAL_SKILLS:-}"
     AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
     AR_MAIN_AGENT="${AR_MAIN_AGENT:-research-coordinator}"
+    AR_AGENT_TOPIC="${AR_AGENT_TOPIC:-}"
     AR_USER_ID="${AR_USER_ID:-$USER}"
     AR_PROJECT_ID="${AR_PROJECT_ID:-}"
     AR_AGENTIC_STATE_BRANCH="${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
@@ -438,6 +444,8 @@ TOOL_ARGS=()
 SELECTED_OPTIONAL_SKILLS=()
 OPTIONAL_SKILL_BINDS=()
 OPTIONAL_SKILL_ENV=()
+TOPIC_LEASE_ACQUIRED=false
+OPTIONAL_CLEANUP_ENABLED=false
 
 append_optional_skill_override() {
     local skill_name="$1"
@@ -517,6 +525,14 @@ parse_arguments() {
                     exit 1
                 fi
                 AR_MAIN_AGENT_OVERRIDE="$2"
+                shift 2
+                ;;
+            --agent-topic)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --agent-topic requires a value"
+                    exit 1
+                fi
+                AR_AGENT_TOPIC_OVERRIDE="$2"
                 shift 2
                 ;;
             --yolo)
@@ -599,6 +615,7 @@ Options:
                       Install an optional skill from optional-skills/ (repeatable)
   --project-id ID     Override inferred project id for notes and experiment state
   --main-agent NAME   Override top-level main agent for this invocation
+  --agent-topic TOPIC Override inferred topic/work lane for this top-level agent
   --debug-launch      Print extra launcher details and enable tool startup logs where supported
   --tool TOOL         Select CLI tool ($cli_options)
   --yolo              Auto-approve tool permissions where supported
@@ -613,6 +630,7 @@ Examples:
   agentic-researcher --optional-skill cluster-run
   agentic-researcher --sandbox apptainer --optional-skill remote-run
   agentic-researcher --sandbox apptainer --optional-skill remote-run --test
+  agentic-researcher
   agentic-researcher --main-agent research-paper-author
   agentic-researcher --setup                      # Setup wizard
   agentic-researcher --clean                      # Interactive cleanup of local state
@@ -620,12 +638,13 @@ Examples:
   agentic-researcher --clean --yes --include-config
   agentic-researcher --test
   agentic-researcher --tool opencode --debug-launch
-  agentic-researcher                         # Current directory
+  agentic-researcher                              # Current directory; topic inferred from agent/<topic>
   agentic-researcher ~/my-project
   agentic-researcher --yolo
   agentic-researcher --tool gemini
   agentic-researcher --tool codex ~/project
   agentic-researcher --yolo --model opus
+  agentic-researcher --agent-topic kernel-search  # Explicit topic override when needed
 
 What's Sandboxed:
   The agent can write your project directory and AR_STATE_ROOT.
@@ -743,6 +762,87 @@ validate_project_id() {
     echo ""
     echo "Use the same id for all worktrees and agents that should share notes and experiment logs."
     exit 1
+}
+
+slugify_agent_topic() {
+    slugify_project_id "$1"
+}
+
+current_workspace_git_branch() {
+    git -C "$WORKSPACE_DIR" branch --show-current 2>/dev/null || true
+}
+
+workspace_is_git_worktree() {
+    [[ "$(git -C "$WORKSPACE_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" == "true" ]]
+}
+
+infer_agent_topic_from_branch() {
+    local branch="$1" rest topic
+    [[ "$branch" == agent/* ]] || return 1
+    rest="${branch#agent/}"
+    topic="${rest%%/*}"
+    [[ -n "$topic" ]] || return 1
+    slugify_agent_topic "$topic"
+}
+
+validate_agent_topic() {
+    local branch inferred expected_prefix
+
+    [[ "$TEST_MODE" == "true" ]] && return 0
+
+    if ! workspace_is_git_worktree; then
+        echo "Error: Agentic Researcher topics require launching from a Git worktree."
+        echo ""
+        echo "Create or enter a branch named agent/<topic>, then relaunch:"
+        echo "  git switch -c agent/my-topic"
+        echo "  agentic-researcher $WORKSPACE_DIR"
+        exit 1
+    fi
+
+    branch="$(current_workspace_git_branch)"
+    if [[ -z "$branch" ]]; then
+        echo "Error: Agentic Researcher topics require a named Git branch, but this worktree is detached."
+        exit 1
+    fi
+
+    if [[ -n "${AR_AGENT_TOPIC:-}" ]]; then
+        AR_AGENT_TOPIC="$(slugify_agent_topic "$AR_AGENT_TOPIC")"
+    elif inferred="$(infer_agent_topic_from_branch "$branch")" && [[ -n "$inferred" ]]; then
+        AR_AGENT_TOPIC="$inferred"
+    else
+        echo "Error: Agentic Researcher needs an agent topic for this top-level agent."
+        echo ""
+        echo "Create or switch to a topic branch so AR can infer the topic:"
+        echo "  git switch -c agent/my-topic"
+        echo "  agentic-researcher $WORKSPACE_DIR"
+        exit 1
+    fi
+
+    expected_prefix="agent/$AR_AGENT_TOPIC"
+    case "$branch" in
+        main|master)
+            echo "Error: Refusing to launch an agent topic on protected branch '$branch'."
+            echo ""
+            echo "Create a topic branch first:"
+            echo "  git switch -c $expected_prefix"
+            echo "  agentic-researcher $WORKSPACE_DIR"
+            exit 1
+            ;;
+    esac
+
+    if [[ "$branch" != "$expected_prefix" && "$branch" != "$expected_prefix"/* ]]; then
+        echo "Error: Agent topic '$AR_AGENT_TOPIC' must run on branch '$expected_prefix' or a child branch under it."
+        echo "Current branch: $branch"
+        echo ""
+        echo "Switch to the topic branch, then relaunch:"
+        echo "  git switch $expected_prefix"
+        echo "  agentic-researcher $WORKSPACE_DIR"
+        exit 1
+    fi
+
+    WORKSPACE_GIT_BRANCH="$branch"
+    AR_AGENT_BRANCH_PREFIX="$expected_prefix"
+    export AR_AGENT_TOPIC AR_AGENT_BRANCH_PREFIX
 }
 
 validate_api_key() {
@@ -1050,6 +1150,33 @@ setup_main_agent_instruction_block() {
         printf '<!-- Generated by agentic-researcher. Edit the source main agent definition or select a different AR_MAIN_AGENT to change this section. -->\n\n'
         strip_frontmatter "$source_path"
         printf '\n<!-- AGENTIC-RESEARCHER-MAIN-AGENT-END -->\n'
+    } >> "$temp_path"
+    mv "$temp_path" "$instruction_path"
+}
+
+setup_agent_topic_instruction_block() {
+    local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
+    local temp_path
+
+    [[ "$TEST_MODE" == "true" ]] && return 0
+    [[ -f "$instruction_path" ]] || return 0
+    [[ -n "${AR_AGENT_TOPIC:-}" ]] || return 0
+
+    temp_path="${instruction_path}.tmp"
+    awk '
+        /^<!-- AGENTIC-RESEARCHER-TOPIC-START / { skip=1; next }
+        /^<!-- AGENTIC-RESEARCHER-TOPIC-END -->/ { skip=0; next }
+        skip != 1 { print }
+    ' "$instruction_path" > "$temp_path"
+    {
+        printf '\n<!-- AGENTIC-RESEARCHER-TOPIC-START topic=%s -->\n\n' "$AR_AGENT_TOPIC"
+        printf '<!-- Generated by agentic-researcher for this top-level agent invocation. -->\n\n'
+        printf '## Agent Topic\n\n'
+        printf 'This top-level agent invocation owns topic `%s`.\n\n' "$AR_AGENT_TOPIC"
+        printf 'Work only on Git branch `%s` or child branches such as `%s/exp/<experiment-name>`. Do not commit to `main` or `master` unless the user explicitly asks.\n\n' "$AR_AGENT_BRANCH_PREFIX" "$AR_AGENT_BRANCH_PREFIX"
+        printf 'Only one top-level agent may work on this topic at a time. Subagents inherit this topic from their parent and should not acquire separate topic ownership.\n\n'
+        printf 'The topic-local experiment log lives on the project `%s` state branch at `.agentic/topics/%s/experiment-log/`. Use the `experiment-logger` subagent for log writes. Within this topic, experiment IDs are local, such as `E0001_block-sparse-baseline`; from other topics, refer to them as `%s/E0001_block-sparse-baseline`.\n\n' "${AR_AGENTIC_STATE_BRANCH:-agentic/state}" "$AR_AGENT_TOPIC" "$AR_AGENT_TOPIC"
+        printf '<!-- AGENTIC-RESEARCHER-TOPIC-END -->\n'
     } >> "$temp_path"
     mv "$temp_path" "$instruction_path"
 }
@@ -1681,7 +1808,7 @@ setup_skill_instruction_blocks() {
 setup_agentic_notes_state() {
     [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
 
-    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_USER_ID AR_PROJECT_ID
+    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_AGENT_TOPIC AR_USER_ID AR_PROJECT_ID
     export AR_AGENTIC_STATE_BRANCH AR_NOTES_AUTO_REFRESH AR_NOTES_REFRESH_MODE AR_NOTES_REFRESH_INTERVAL_SECONDS
     export AR_RESOLVER_GIT_NAME AR_RESOLVER_GIT_EMAIL AR_NOTES_GIT_NAME AR_NOTES_GIT_EMAIL
 
@@ -1714,6 +1841,51 @@ setup_agentic_notes_state() {
             esac
             ;;
     esac
+}
+
+setup_agent_topic_lease() {
+    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
+    [[ "$TEST_MODE" == "true" ]] && return 0
+    [[ -n "${AR_AGENT_TOPIC:-}" ]] || return 0
+
+    AR_SESSION_ID="${AR_SESSION_ID:-$AR_PROJECT_ID-$AR_AGENT_TOPIC-$$-$(date +%s)}"
+    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_AGENT_TOPIC AR_USER_ID AR_PROJECT_ID AR_SESSION_ID
+    export AR_AGENTIC_STATE_BRANCH AR_RESOLVER_GIT_NAME AR_RESOLVER_GIT_EMAIL AR_NOTES_GIT_NAME AR_NOTES_GIT_EMAIL
+
+    if ! "$SCRIPT_DIR/scripts/ar-notes" acquire-topic \
+        --project-dir "$WORKSPACE_DIR" \
+        --topic "$AR_AGENT_TOPIC" \
+        --main-agent "${AR_MAIN_AGENT:-research-coordinator}" \
+        --user-id "${AR_USER_ID:-$USER}" \
+        --branch "${WORKSPACE_GIT_BRANCH:-}" \
+        --session-id "$AR_SESSION_ID" >/dev/null; then
+        echo "Error: Could not acquire topic lease for '$AR_AGENT_TOPIC'."
+        echo "Only one top-level agent may work on a topic at a time."
+        exit 1
+    fi
+    TOPIC_LEASE_ACQUIRED=true
+}
+
+release_agent_topic_lease() {
+    [[ "$TOPIC_LEASE_ACQUIRED" == "true" ]] || return 0
+    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
+    [[ -n "${AR_AGENT_TOPIC:-}" && -n "${AR_SESSION_ID:-}" ]] || return 0
+
+    "$SCRIPT_DIR/scripts/ar-notes" release-topic \
+        --project-dir "$WORKSPACE_DIR" \
+        --topic "$AR_AGENT_TOPIC" \
+        --session-id "$AR_SESSION_ID" >/dev/null || \
+        echo "Warning: Could not release topic lease for '$AR_AGENT_TOPIC'." >&2
+}
+
+launcher_cleanup() {
+    local status=$?
+    trap - EXIT
+    if [[ "$OPTIONAL_CLEANUP_ENABLED" == "true" ]]; then
+        run_optional_skill_hooks cleanup || true
+    fi
+    release_agent_topic_lease || true
+    return "$status"
 }
 
 setup_agentic_notes_refresh_loop() {
@@ -1776,7 +1948,7 @@ setup_agentic_notes_instruction() {
     [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
     [[ -n "${INSTRUCTION_TARGET:-}" ]] || return 0
 
-    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_USER_ID AR_PROJECT_ID
+    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_AGENT_TOPIC AR_USER_ID AR_PROJECT_ID
     export AR_AGENTIC_STATE_BRANCH AR_NOTES_AUTO_REFRESH AR_SANDBOX
 
     if ! "$SCRIPT_DIR/scripts/ar-notes" generate-instructions \
@@ -2075,6 +2247,9 @@ build_env_args() {
         --env "AR_STATE_ROOT=$STATE_ROOT"
         --env "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
         --env "AR_MAIN_AGENT=${AR_MAIN_AGENT:-research-coordinator}"
+        --env "AR_AGENT_TOPIC=${AR_AGENT_TOPIC:-}"
+        --env "AR_AGENT_BRANCH_PREFIX=${AR_AGENT_BRANCH_PREFIX:-}"
+        --env "AR_SESSION_ID=${AR_SESSION_ID:-}"
         --env "AR_USER_ID=${AR_USER_ID:-$USER}"
         --env "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
         --env "AR_AGENTIC_STATE_BRANCH=${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
@@ -2112,6 +2287,8 @@ print_debug_launch() {
     echo "Launch debug:"
     echo "  Sandbox:        $AR_SANDBOX"
     echo "  Tool:           $AR_CLI_TOOL"
+    echo "  Agent topic:    ${AR_AGENT_TOPIC:-none}"
+    echo "  Topic branch:   ${AR_AGENT_BRANCH_PREFIX:-none}"
     echo "  Job backend:    ${JOB_BACKEND:-none}"
     echo "  Workspace:      $WORKSPACE_DIR"
     echo "  State root:     $STATE_ROOT"
@@ -2153,6 +2330,7 @@ main() {
     profile_step "validate_workspace" validate_workspace
     profile_step "validate_cli_workspace" validate_cli_workspace
     profile_step "validate_project_id" validate_project_id
+    profile_step "validate_agent_topic" validate_agent_topic
     profile_step "validate_api_key" validate_api_key
     profile_step "resolve_optional_skills" resolve_optional_skills
     profile_step "validate_optional_skills" validate_optional_skills
@@ -2161,8 +2339,11 @@ main() {
     profile_step "validate_container" validate_container
     profile_step "setup_storage" setup_storage
     profile_step "setup_agentic_notes_state" setup_agentic_notes_state
+    profile_step "setup_agent_topic_lease" setup_agent_topic_lease
+    trap launcher_cleanup EXIT
     profile_step "setup_instruction_file" setup_instruction_file
     profile_step "setup_main_agent_block" setup_main_agent_instruction_block
+    profile_step "setup_agent_topic_block" setup_agent_topic_instruction_block
     profile_step "setup_skill_instruction_blocks" setup_skill_instruction_blocks
     profile_step "setup_agentic_notes_instruction" setup_agentic_notes_instruction
     profile_step "setup_compaction_hooks" setup_compaction_hooks
@@ -2209,6 +2390,10 @@ main() {
     fi
 
     echo "Workspace:      $WORKSPACE_DIR"
+    if [[ -n "${AR_AGENT_TOPIC:-}" ]]; then
+        echo "Agent topic:    $AR_AGENT_TOPIC"
+        echo "Topic branch:   ${AR_AGENT_BRANCH_PREFIX:-agent/$AR_AGENT_TOPIC}"
+    fi
     if [[ "$AR_SANDBOX" == "none" ]]; then
         echo "Sandboxed:      No (sandbox none; full host filesystem access)"
     else
@@ -2232,7 +2417,7 @@ main() {
     fi
 
     if run_optional_skill_hooks start true; then
-        trap 'run_optional_skill_hooks cleanup' EXIT
+        OPTIONAL_CLEANUP_ENABLED=true
     fi
 
     echo "Starting $tool_display..."
