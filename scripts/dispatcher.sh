@@ -16,6 +16,7 @@ CONFIG_FILE="${1:?Usage: dispatcher.sh <dispatch-config-file>}"
 
 # Load config (written by the launcher)
 source "$CONFIG_FILE"
+AR_SANDBOX_HOME="${AR_SANDBOX_HOME:-/agent-home}"
 
 JOBS_DIR="$DISPATCH_DIR/jobs"
 mkdir -p "$JOBS_DIR"
@@ -34,13 +35,13 @@ log "Head node: $HEAD_NODE"
 log "Container: $CONTAINER_IMAGE"
 
 # Build the base apptainer bind-mount arguments for remote containers.
-# Remote containers need workspace, scratch, and caches — but NOT Claude config,
+# Remote containers need workspace, scratch, and caches, but not CLI auth/config,
 # SSH keys, or the dispatch directory itself.
 build_apptainer_args() {
     local args=(
         --nv
         --no-mount home
-        --home /claude-home
+        --home "$AR_SANDBOX_HOME"
         --bind "$WORKSPACE_HOST:/workspace"
         --bind "$AR_INSTALL_HOST:$AR_INSTALL_CONTAINER:ro"
         --bind "$UV_CACHE_DIR:/uv-cache"
@@ -52,6 +53,7 @@ build_apptainer_args() {
         --env UV_PYTHON_INSTALL_DIR=/uv-python
         --env UV_TOOL_DIR=/uv-tools
         --env UV_LINK_MODE=symlink
+        --env "AR_SANDBOX_HOME=$AR_SANDBOX_HOME"
         --env "HF_HOME=$HF_HOME"
         --env "TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
         --env "WANDB_DIR=$WANDB_DIR"

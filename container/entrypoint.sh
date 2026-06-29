@@ -5,6 +5,8 @@
 #
 
 set -euo pipefail
+CONTAINER_HOME="${AR_SANDBOX_HOME:-${HOME:-/agent-home}}"
+export AR_SANDBOX_HOME="$CONTAINER_HOME"
 
 is_valid_linux_name() {
     [[ "$1" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]
@@ -14,25 +16,25 @@ prepare_home_layout_for_user() {
     local host_uid="$1"
     local host_gid="$2"
     local writable_dirs=(
-        /claude-home
-        /claude-home/.config
-        /claude-home/.cache
-        /claude-home/.local
-        /claude-home/.local/bin
-        /claude-home/.local/share
-        /claude-home/.local/state
-        /claude-home/.claude
-        /claude-home/.gemini
-        /claude-home/.gemini/skills
-        /claude-home/.gemini/agents
-        /claude-home/.gemini/history
-        /claude-home/.gemini/tmp
-        /claude-home/.gemini/tmp/bin
-        /claude-home/.codex
-        /claude-home/.pi
-        /claude-home/.pi/agent
-        /claude-home/.opencode
-        /claude-home/.opencode/bin
+        "$CONTAINER_HOME"
+        "$CONTAINER_HOME/.config"
+        "$CONTAINER_HOME/.cache"
+        "$CONTAINER_HOME/.local"
+        "$CONTAINER_HOME/.local/bin"
+        "$CONTAINER_HOME/.local/share"
+        "$CONTAINER_HOME/.local/state"
+        "$CONTAINER_HOME/.claude"
+        "$CONTAINER_HOME/.gemini"
+        "$CONTAINER_HOME/.gemini/skills"
+        "$CONTAINER_HOME/.gemini/agents"
+        "$CONTAINER_HOME/.gemini/history"
+        "$CONTAINER_HOME/.gemini/tmp"
+        "$CONTAINER_HOME/.gemini/tmp/bin"
+        "$CONTAINER_HOME/.codex"
+        "$CONTAINER_HOME/.pi"
+        "$CONTAINER_HOME/.pi/agent"
+        "$CONTAINER_HOME/.opencode"
+        "$CONTAINER_HOME/.opencode/bin"
     )
 
     mkdir -p "${writable_dirs[@]}"
@@ -71,16 +73,16 @@ setup_container_user() {
         container_user="$(getent passwd "$host_uid" | cut -d: -f1)"
     elif is_valid_linux_name "$requested_user" && getent passwd "$requested_user" >/dev/null 2>&1; then
         container_user="hostuser-${host_uid}"
-        useradd -l -u "$host_uid" -g "$host_gid" -d /claude-home -M -N -s /bin/bash "$container_user"
+        useradd -l -u "$host_uid" -g "$host_gid" -d "$CONTAINER_HOME" -M -N -s /bin/bash "$container_user"
     else
-        useradd -l -u "$host_uid" -g "$host_gid" -d /claude-home -M -N -s /bin/bash "$container_user"
+        useradd -l -u "$host_uid" -g "$host_gid" -d "$CONTAINER_HOME" -M -N -s /bin/bash "$container_user"
     fi
 
-    # Docker may auto-create bind-mount parents under /claude-home as root.
+    # Docker may auto-create bind-mount parents under the synthetic home as root.
     # Pre-create and chown the writable home layout before dropping privileges.
     prepare_home_layout_for_user "$host_uid" "$host_gid"
 
-    export HOME=/claude-home
+    export HOME="$CONTAINER_HOME"
     export USER="$container_user"
     export LOGNAME="$container_user"
     export AR_USER_READY=1

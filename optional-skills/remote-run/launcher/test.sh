@@ -15,7 +15,7 @@ done
 
 echo ""
 echo "Testing container on head node..."
-apptainer exec --nv --no-mount home --home /claude-home \
+apptainer exec --nv --no-mount home --home "$AR_SANDBOX_HOME" \
     --bind "$WORKSPACE_DIR:/workspace" \
     --bind "$SCRIPT_DIR:$AR_INSTALL_CONTAINER_DIR:ro" \
     --bind "$CONTAINER_TMP:/tmp" \
@@ -30,7 +30,7 @@ scontrol show hostnames "$REMOTE_RUN_NODELIST" | while read -r node; do
     echo -n "  $node: "
     srun --overlap --nodes=1 --ntasks=1 --nodelist="$node" \
         --gres="gpu:$REMOTE_RUN_GPUS_PER_NODE" --cpu-bind=none \
-        apptainer exec --nv --no-mount home --home /claude-home \
+        apptainer exec --nv --no-mount home --home "$AR_SANDBOX_HOME" \
             --bind "$WORKSPACE_DIR:/workspace" \
             --bind "$SCRIPT_DIR:$AR_INSTALL_CONTAINER_DIR:ro" \
             --bind "$STATE_ROOT:$STATE_ROOT" \

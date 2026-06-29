@@ -81,8 +81,9 @@ RUN npm install -g \
 ENV PATH="/opt/node/bin:/usr/local/bin:$PATH"
 
 # Create home directory for container
-RUN mkdir -p /claude-home
-ENV HOME=/claude-home
+RUN mkdir -p /agent-home
+ENV HOME=/agent-home
+ENV AR_SANDBOX_HOME=/agent-home
 
 WORKDIR /workspace
 

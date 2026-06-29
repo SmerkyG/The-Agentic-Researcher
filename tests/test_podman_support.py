@@ -14,6 +14,7 @@ BUILD_SCRIPT = REPO_ROOT / "container" / "build.sh"
 INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install.sh"
 FIRST_SETUP_SCRIPT = REPO_ROOT / "scripts" / "first-setup.sh"
 CLEANUP_SCRIPT = REPO_ROOT / "scripts" / "cleanup.sh"
+CLI_ADAPTER_DIR = REPO_ROOT / "scripts" / "lib" / "cli"
 
 
 def make_executable(path: Path, content: str) -> None:
@@ -137,21 +138,60 @@ def test_launcher_apply_defaults_keeps_real_auth_defaults(base_env: dict[str, st
     )
 
     assert result.returncode == 0
-    launcher_text = AGENTIC_RESEARCHER.read_text()
-    assert 'AR_AUTH_MODE="${AR_AUTH_MODE:-oauth}"' in launcher_text
-    assert 'AR_API_KEY_ENV="${AR_API_KEY_ENV:-ANTHROPIC_API_KEY}"' in launcher_text
-    assert 'AR_AUTH_MODE="${AR_AUTH_MODE:-tool}"' in launcher_text
+    claude_adapter = (CLI_ADAPTER_DIR / "claude.sh").read_text()
+    opencode_adapter = (CLI_ADAPTER_DIR / "opencode.sh").read_text()
+    assert 'AR_AUTH_MODE="${AR_AUTH_MODE:-oauth}"' in claude_adapter
+    assert 'AR_API_KEY_ENV="${AR_API_KEY_ENV:-ANTHROPIC_API_KEY}"' in claude_adapter
+    assert 'AR_AUTH_MODE="${AR_AUTH_MODE:-tool}"' in opencode_adapter
 
 
 def test_setup_opencode_reads_api_key_from_configured_env_var(base_env: dict[str, str], tmp_path: Path) -> None:
-    launcher_text = AGENTIC_RESEARCHER.read_text()
-    assert 'local api_key_var="${AR_API_KEY_ENV:-OPENAI_API_KEY}"' in launcher_text
-    assert 'local api_key="${!api_key_var:-}"' in launcher_text
+    opencode_adapter = (CLI_ADAPTER_DIR / "opencode.sh").read_text()
+    assert 'local api_key_var="${AR_API_KEY_ENV:-OPENAI_API_KEY}"' in opencode_adapter
+    assert 'local api_key="${!api_key_var:-}"' in opencode_adapter
 
 
-def test_build_env_args_uses_env_args_for_apptainer_key_forwarding(base_env: dict[str, str]) -> None:
+def test_claude_adapter_handles_apptainer_key_forwarding(base_env: dict[str, str]) -> None:
     launcher_text = AGENTIC_RESEARCHER.read_text()
-    assert 'ENV_ARGS+=(--env "${anthropic_key_name}=${!_ar_key_var}")' in launcher_text
+    claude_adapter = (CLI_ADAPTER_DIR / "claude.sh").read_text()
+    assert "append_env_arg_from_host_as" in launcher_text
+    assert 'append_env_arg_from_host_as "ANTHROPIC_API_KEY" "${AR_API_KEY_ENV:-ANTHROPIC_API_KEY}"' in claude_adapter
+
+
+def test_claude_workspace_guard_lives_in_claude_adapter() -> None:
+    launcher_text = AGENTIC_RESEARCHER.read_text()
+    claude_adapter = (CLI_ADAPTER_DIR / "claude.sh").read_text()
+
+    assert "Cannot sandbox Claude config directories" not in launcher_text
+    assert "Cannot sandbox Claude config directories" in claude_adapter
+
+
+def test_claude_rejects_own_config_as_workspace(base_env: dict[str, str]) -> None:
+    workspace = Path(base_env["HOME"]) / ".claude"
+    workspace.mkdir()
+
+    result = run(
+        [str(AGENTIC_RESEARCHER), "--sandbox", "none", "--tool", "claude", str(workspace)],
+        base_env,
+    )
+
+    assert result.returncode != 0
+    assert "Cannot sandbox Claude config directories" in result.stdout + result.stderr
+
+
+def test_non_claude_cli_does_not_inherit_claude_workspace_guard(base_env: dict[str, str]) -> None:
+    fake_bin = Path(base_env["PATH"].split(":", maxsplit=1)[0])
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    workspace = Path(base_env["HOME"]) / ".claude"
+    workspace.mkdir()
+
+    result = run(
+        [str(AGENTIC_RESEARCHER), "--sandbox", "none", "--tool", "codex", str(workspace)],
+        base_env,
+    )
+
+    assert "Cannot sandbox Claude config directories" not in result.stdout + result.stderr
+    assert result.returncode == 0
 
 
 def test_install_help_mentions_xdg_config_path(base_env: dict[str, str]) -> None:
@@ -257,7 +297,7 @@ def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str]
     assert "run --rm" in podman_log
     assert "-it" not in podman_log
     assert "--userns keep-id" in podman_log
-    assert ":/claude-home" in podman_log
+    assert ":/agent-home" in podman_log
     assert f"{REPO_ROOT}:/opt/agentic-researcher:ro" in podman_log
     assert "AR_SANDBOX=podman" in podman_log
     assert "AR_INSTALL_DIR=/opt/agentic-researcher" in podman_log
@@ -901,13 +941,14 @@ def test_pi_translates_resume_to_session_and_warns_on_yolo(
 
 def test_pi_apptainer_bind_and_config_store_wiring() -> None:
     launcher_text = AGENTIC_RESEARCHER.read_text()
+    pi_adapter = (CLI_ADAPTER_DIR / "pi.sh").read_text()
     # Apptainer path binds the host pi config dir (~/.pi) into the sandbox.
-    assert 'BIND_ARGS+=(--bind "$PI_STATE_DIR:/claude-home/.pi")' in launcher_text
-    assert 'PI_STATE_DIR="$HOME/.pi"' in launcher_text
+    assert 'BIND_ARGS+=(--bind "$PI_STATE_DIR:$AR_SANDBOX_HOME/.pi")' in pi_adapter
+    assert 'PI_STATE_DIR="$HOME/.pi"' in pi_adapter
     # Docker/Podman path seeds the per-tool dir inside the single config store.
-    assert '"$AR_CONFIG_STORE/.pi/agent"' in launcher_text
+    assert '"$AR_CONFIG_STORE/.pi/agent"' in pi_adapter
     # pi uses AGENTS.md as its instruction file.
-    assert "opencode|codex|pi)" in launcher_text
+    assert 'printf \'%s\\n\' "AGENTS.md"' in pi_adapter
     # pi shares the generated project-skill setup.
     assert "setup_project_skills" in launcher_text
 

@@ -26,7 +26,7 @@ project-specific guidance for this agent type in this project.
 | Path | Access | Contents |
 |------|--------|----------|
 | `/workspace` or the launch working directory | read-write | Your project |
-| `/claude-home` | isolated, container mode only | Container home directory |
+| `/agent-home` | isolated, container mode only | Container home directory |
 | launcher-provided writable dirs | read-write | Optional cache/data locations exposed by the launcher or environment |
 
 In container mode, host paths outside mounted workspace/cache locations are

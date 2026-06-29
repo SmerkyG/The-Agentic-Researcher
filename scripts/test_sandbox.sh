@@ -61,10 +61,10 @@ else
     fail "/workspace is not writable"
 fi
 
-if [[ "$HOME" == "/claude-home" ]]; then
-    pass "HOME is /claude-home"
+if [[ "$HOME" == "/agent-home" ]]; then
+    pass "HOME is /agent-home"
 else
-    fail "HOME is '$HOME' (expected /claude-home)"
+    fail "HOME is '$HOME' (expected /agent-home)"
 fi
 
 TMPFILE="/tmp/.sandbox_test_$$"

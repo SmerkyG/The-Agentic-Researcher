@@ -87,6 +87,7 @@ From: ubuntu:22.04
     export PATH="/opt/node/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
     export LC_ALL=C.UTF-8
     export LANG=C.UTF-8
+    export AR_SANDBOX_HOME="${AR_SANDBOX_HOME:-/agent-home}"
 
 %runscript
     # Create symlinks at runtime so tools find their binaries at the "native" install paths.
