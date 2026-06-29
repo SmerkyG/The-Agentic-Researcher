@@ -94,6 +94,8 @@ Run `agentic-researcher --setup` to create a configuration file at `${XDG_CONFIG
 - **Auto-build** (`AR_AUTO_BUILD`) — whether missing container images should be built automatically on first launch
 - **Optional skills** (`AR_OPTIONAL_SKILLS`) — comma-separated selectable skills from `optional-skills/`
 - **Project identity override** (`AR_PROJECT_ID` or `--project-id`) — optional stable id for projects without a Git remote, forks that should share state, or other custom grouping
+- **Agentic Notes refresh** (`AR_NOTES_REFRESH_MODE`, `AR_NOTES_REFRESH_INTERVAL_SECONDS`) — defaults to periodic background refresh every 120 seconds while at least one agent for the project is running; set mode to `foreground` for synchronous launch refresh or `manual` to disable periodic refresh
+- **Startup profiling** (`AR_PROFILE_STARTUP=true`) — print per-phase launcher setup timings to stderr before the selected CLI starts
 
 You can re-run `--setup` at any time to update your configuration.
 
@@ -134,7 +136,9 @@ agentic-researcher .
 
 Organization-wide and agent-type-specific notes are optional; configure `AR_ORG_NOTES_REPO` only when you want that shared scope.
 
-On launch, AR creates or updates a cached checkout at `$AR_STATE_ROOT/projects/<project-id>/agentic-state/` and uses the project `agentic/state` branch for:
+On launch, AR creates a cached checkout at `$AR_STATE_ROOT/projects/<project-id>/agentic-state/` if needed and renders instructions from the local cached state. By default, one project-scoped background loop refreshes org and project Agentic Notes every 120 seconds while any agent for that project is running, so multiple agents do not multiply remote Git checks. Writes such as note updates and experiment logging still perform synchronous locked refresh/push operations.
+
+The project `agentic/state` branch stores:
 
 ```text
 .agentic/agent-notes/all-agents/always-injected.md

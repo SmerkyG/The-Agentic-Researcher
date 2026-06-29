@@ -197,6 +197,104 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     assert "  - always-injected.md" not in text
 
 
+def test_render_sections_batches_multiple_agent_note_sections(tmp_path: Path) -> None:
+    org_remote = seed_org_remote(tmp_path)
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path, org_remote)
+
+    run([str(AR_NOTES), "init-org-notes", "--repo", str(org_remote)], env=env)
+    run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
+    output_dir = tmp_path / "rendered-notes"
+
+    run(
+        [
+            str(AR_NOTES),
+            "render-sections",
+            "--project-dir",
+            str(project),
+            "--output-dir",
+            str(output_dir),
+            "--agent-type",
+            "gpu-kernel-engineer",
+            "--agent-type",
+            "research-coordinator",
+        ],
+        env=env,
+    )
+
+    gpu_text = (output_dir / "gpu-kernel-engineer.md").read_text(encoding="utf-8")
+    coordinator_text = (output_dir / "research-coordinator.md").read_text(encoding="utf-8")
+    assert "Org body." in gpu_text
+    assert "Agent Type body." in gpu_text
+    assert "Org agent notes: gpu-kernel-engineer" in gpu_text
+    assert "Org body." in coordinator_text
+    assert "Org agent notes: research-coordinator" in coordinator_text
+
+
+def test_refresh_loop_pulls_org_notes_while_heartbeat_is_active(tmp_path: Path) -> None:
+    org_remote = seed_org_remote(tmp_path)
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path, org_remote)
+
+    run([str(AR_NOTES), "init-org-notes", "--repo", str(org_remote)], env=env)
+    run([str(AR_NOTES), "ensure-project-state", "--project-dir", str(project)], env=env)
+
+    org_update = tmp_path / "org-update"
+    run(["git", "clone", str(org_remote), str(org_update)])
+    configure_git(org_update)
+    (org_update / "agent-notes" / "all-agents" / "always-injected.md").write_text(
+        "# Org Notes\n\nPulled by refresh loop.\n",
+        encoding="utf-8",
+    )
+    git(org_update, "add", "agent-notes/all-agents/always-injected.md")
+    git(org_update, "commit", "-m", "update org notes")
+    git(org_update, "push")
+
+    heartbeat_dir = tmp_path / "heartbeats"
+    heartbeat_dir.mkdir()
+    heartbeat = heartbeat_dir / "agent.heartbeat"
+    heartbeat.touch()
+    proc = subprocess.Popen(
+        [
+            str(AR_NOTES),
+            "refresh-loop",
+            "--project-dir",
+            str(project),
+            "--heartbeat-dir",
+            str(heartbeat_dir),
+            "--interval-seconds",
+            "1",
+            "--stale-seconds",
+            "3",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        note_path = org_checkout(env) / "agent-notes" / "all-agents" / "always-injected.md"
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            heartbeat.touch()
+            if "Pulled by refresh loop." in note_path.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.25)
+        else:
+            stdout, stderr = proc.communicate(timeout=1)
+            raise AssertionError(f"refresh loop did not pull org update\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}")
+    finally:
+        heartbeat.unlink(missing_ok=True)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+
 def test_replace_project_agent_note_updates_shared_state_and_rendered_instructions(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)

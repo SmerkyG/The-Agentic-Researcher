@@ -14,10 +14,11 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -197,6 +198,34 @@ def state_lock(lock_path: Path):
             time.sleep(0.1)
     try:
         yield
+    finally:
+        shutil.rmtree(lock_dir, ignore_errors=True)
+
+
+@contextmanager
+def nonblocking_state_lock(lock_path: Path):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if fcntl is not None:
+        with lock_path.open("w", encoding="utf-8") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return
+
+    lock_dir = lock_path.with_suffix(lock_path.suffix + ".dir")
+    try:  # pragma: no cover - exercised only without fcntl
+        lock_dir.mkdir()
+    except FileExistsError:
+        yield False
+        return
+    try:
+        yield True
     finally:
         shutil.rmtree(lock_dir, ignore_errors=True)
 
@@ -452,14 +481,89 @@ def ensure_project_state(
     return repo
 
 
+def run_parallel_refresh(tasks: list[tuple[str, Callable[[], None]]]) -> None:
+    errors: list[tuple[str, Exception]] = []
+    error_lock = threading.Lock()
+
+    def worker(label: str, func: Callable[[], None]) -> None:
+        try:
+            func()
+        except Exception as exc:  # pragma: no cover - exercised through caller failures
+            with error_lock:
+                errors.append((label, exc))
+
+    threads = [threading.Thread(target=worker, args=(label, func)) for label, func in tasks]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    if errors:
+        label, exc = errors[0]
+        raise ArNotesError(f"{label} refresh failed: {exc}") from exc
+
+
 def refresh(args: argparse.Namespace) -> None:
     org = ensure_org_checkout()
-    if org is not None:
-        pull_ff(org)
     project_dir = Path(args.project_dir).resolve()
     project_repo = ensure_project_checkout(project_dir)
-    pull_ff(project_repo, state_branch(), missing_ok=True)
+
+    refresh_tasks: list[tuple[str, Callable[[], None]]] = [
+        ("project", lambda: pull_ff(project_repo, state_branch(), missing_ok=True)),
+    ]
+    if org is not None:
+        refresh_tasks.append(("org", lambda: pull_ff(org)))
+    run_parallel_refresh(refresh_tasks)
     ensure_project_state(project_dir, pull_remote=False)
+
+
+def active_heartbeat_count(heartbeat_dir: Path, stale_seconds: int) -> int:
+    if not heartbeat_dir.exists():
+        return 0
+    now = time.time()
+    active = 0
+    for heartbeat in heartbeat_dir.glob("*.heartbeat"):
+        try:
+            age = now - heartbeat.stat().st_mtime
+        except FileNotFoundError:
+            continue
+        if age <= stale_seconds:
+            active += 1
+        else:
+            heartbeat.unlink(missing_ok=True)
+    return active
+
+
+def wait_for_refresh_interval(heartbeat_dir: Path, interval_seconds: int, stale_seconds: int) -> bool:
+    deadline = time.time() + interval_seconds
+    while time.time() < deadline:
+        if active_heartbeat_count(heartbeat_dir, stale_seconds) == 0:
+            return False
+        time.sleep(min(2.0, max(0.1, deadline - time.time())))
+    return active_heartbeat_count(heartbeat_dir, stale_seconds) > 0
+
+
+def refresh_loop(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    interval_seconds = max(1, int(args.interval_seconds))
+    stale_seconds = max(interval_seconds * 2, int(args.stale_seconds))
+    heartbeat_dir = Path(args.heartbeat_dir).resolve()
+    loop_lock = lock_file_for(f"refresh-loop-{project_id(project_dir)}")
+
+    with nonblocking_state_lock(loop_lock) as acquired:
+        if not acquired:
+            return
+        while wait_for_refresh_interval(heartbeat_dir, interval_seconds, stale_seconds):
+            try:
+                refresh_locks = [lock_file_for(f"project-{project_id(project_dir)}")]
+                if os.environ.get("AR_ORG_NOTES_REPO"):
+                    refresh_locks.append(lock_file_for("org-agentic-notes"))
+                with ExitStack() as stack:
+                    for lock_path in sorted(refresh_locks):
+                        stack.enter_context(state_lock(lock_path))
+                    refresh(argparse.Namespace(project_dir=str(project_dir)))
+            except ArNotesError as exc:
+                print(f"ar-notes refresh-loop: {exc}", file=sys.stderr)
 
 
 def note_names(directory: Path) -> list[str]:
@@ -602,6 +706,25 @@ def generate_instructions(args: argparse.Namespace) -> None:
 def render_section(args: argparse.Namespace) -> None:
     project_dir = Path(args.project_dir).resolve()
     print(build_notes_section(project_dir, agent_type(args.agent_type), markers=False))
+
+
+def render_sections(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+
+    for raw_agent_type in args.agent_type:
+        active_agent_type = agent_type(raw_agent_type)
+        if active_agent_type in seen:
+            continue
+        if not re.match(r"^[A-Za-z0-9._-]+$", active_agent_type):
+            raise ArNotesError(f"invalid agent type: {active_agent_type}")
+        seen.add(active_agent_type)
+        (output_dir / f"{active_agent_type}.md").write_text(
+            build_notes_section(project_dir, active_agent_type, markers=False),
+            encoding="utf-8",
+        )
 
 
 def list_notes(args: argparse.Namespace) -> None:
@@ -994,12 +1117,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project-dir", required=True)
     p.set_defaults(func=refresh)
 
+    p = sub.add_parser("refresh-loop")
+    p.add_argument("--project-dir", required=True)
+    p.add_argument("--interval-seconds", type=int, default=120)
+    p.add_argument("--stale-seconds", type=int, default=300)
+    p.add_argument("--heartbeat-dir", required=True)
+    p.set_defaults(func=refresh_loop)
+
     p = sub.add_parser("generate-instructions")
     p.add_argument("--project-dir", required=True)
     p.add_argument("--agent-type", default=None)
     p.add_argument("--tool", required=True, choices=["claude", "gemini", "opencode", "codex", "pi"])
     p.add_argument("--skip-ensure-project-state", action="store_true")
     p.set_defaults(func=generate_instructions)
+
+    p = sub.add_parser("render-sections")
+    p.add_argument("--project-dir", required=True)
+    p.add_argument("--output-dir", required=True)
+    p.add_argument("--agent-type", action="append", required=True)
+    p.set_defaults(func=render_sections)
 
     p = sub.add_parser("list-notes")
     p.add_argument("--scope", required=True, choices=["org", "project"])
@@ -1026,7 +1162,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("ensure-project-state")
     p.add_argument("--project-dir", required=True)
-    p.set_defaults(func=lambda args: print(ensure_project_state(Path(args.project_dir).resolve())))
+    p.add_argument("--skip-pull", action="store_true")
+    p.set_defaults(
+        func=lambda args: print(
+            ensure_project_state(
+                Path(args.project_dir).resolve(),
+                pull_remote=not args.skip_pull,
+            )
+        )
+    )
 
     p = sub.add_parser("log-experiment")
     p.add_argument("--request", required=True)
@@ -1069,7 +1213,7 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
         add_project_lock(None)
     elif command == "init-org-notes":
         add_org_lock()
-    elif command in {"generate-instructions", "render-section"}:
+    elif command in {"generate-instructions", "render-section", "render-sections"}:
         if os.environ.get("AR_ORG_NOTES_REPO"):
             add_org_lock()
         add_project_lock(None)
