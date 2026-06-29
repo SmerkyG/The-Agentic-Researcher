@@ -504,6 +504,39 @@ def test_project_remote_name_uses_repo_basename() -> None:
     assert ar_notes.project_remote_name("https://github.com/SmerkyG/abctest") == "abctest"
     assert ar_notes.project_remote_name("git@github.com:SmerkyG/abctest.git") == "abctest"
     assert ar_notes.project_remote_name("/tmp/abctest.git") == "abctest"
+    assert ar_notes.is_remote_repo_spec("dan-git@localhost:org-agentic-state.git")
+    assert ar_notes.is_remote_repo_spec("git@github.com:SmerkyG/abctest.git")
+    assert not ar_notes.is_remote_repo_spec("/tmp/abctest.git")
+
+
+def test_init_org_notes_treats_scp_style_repo_as_remote(tmp_path: Path) -> None:
+    loader = SourceFileLoader("ar_notes_scp_org_remote_test", str(AR_NOTES))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
+    ar_notes = importlib.util.module_from_spec(spec)
+    loader.exec_module(ar_notes)
+
+    remote = "dan-git@localhost:org-agentic-state.git"
+    checkout_calls = []
+
+    def fail_local_repo(repo: Path, branch: str) -> Path:
+        raise AssertionError(f"scp-style remote was treated as a local path: {repo}")
+
+    def fake_checkout(repo_url: str | None = None) -> None:
+        checkout_calls.append(repo_url)
+        return None
+
+    ar_notes.ensure_local_git_repo = fail_local_repo
+    ar_notes.ensure_org_checkout = fake_checkout
+    old_cwd = Path.cwd()
+    os.chdir(tmp_path)
+    try:
+        ar_notes.init_org_notes(SimpleNamespace(repo=remote))
+    finally:
+        os.chdir(old_cwd)
+
+    assert checkout_calls == [remote]
+    assert not (tmp_path / remote).exists()
 
 
 def test_update_note_refresh_parent_locks_org_and_parent_project(tmp_path: Path) -> None:

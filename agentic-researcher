@@ -1198,8 +1198,99 @@ shell_quote() {
     printf "'"
 }
 
+AR_PYTHON_CMD=()
+
+resolve_python_cmd() {
+    if [[ ${#AR_PYTHON_CMD[@]} -gt 0 ]]; then
+        return 0
+    fi
+
+    local configured="${AR_PYTHON:-}"
+    if [[ -n "$configured" ]]; then
+        # AR_PYTHON may be a command plus fixed args, e.g. "uv run --no-project python".
+        read -r -a AR_PYTHON_CMD <<< "$configured"
+        if "${AR_PYTHON_CMD[@]}" -c 'import json, pathlib, sys' >/dev/null 2>&1; then
+            return 0
+        fi
+        AR_PYTHON_CMD=()
+    fi
+
+    local candidate candidate_path
+    for candidate in python3 python; do
+        candidate_path="$(command -v "$candidate" 2>/dev/null || true)"
+        if [[ -n "$candidate_path" ]] && \
+            "$candidate_path" -c 'import json, pathlib, sys' >/dev/null 2>&1; then
+            AR_PYTHON_CMD=("$candidate_path")
+            return 0
+        fi
+    done
+
+    if command -v uv >/dev/null 2>&1; then
+        local uv_cmd
+        uv_cmd="$(command -v uv)"
+        local uv_python
+        uv_python="$("$uv_cmd" python find 3.12 2>/dev/null || "$uv_cmd" python find 2>/dev/null || true)"
+        if [[ -n "$uv_python" ]] && "$uv_python" -c 'import json, pathlib, sys' >/dev/null 2>&1; then
+            AR_PYTHON_CMD=("$uv_python")
+            return 0
+        fi
+        if "$uv_cmd" run --no-project python -c 'import json, pathlib, sys' >/dev/null 2>&1; then
+            AR_PYTHON_CMD=("$uv_cmd" run --no-project python)
+            return 0
+        fi
+    fi
+
+    echo "Error: Could not find a usable Python interpreter. Set AR_PYTHON to a runnable Python command." >&2
+    return 1
+}
+
+python_command_string() {
+    resolve_python_cmd || return 1
+    local part first=true
+    for part in "${AR_PYTHON_CMD[@]}"; do
+        if [[ "$first" == "true" ]]; then
+            first=false
+        else
+            printf ' '
+        fi
+        shell_quote "$part"
+    done
+}
+
+python_command_json_array() {
+    resolve_python_cmd || return 1
+    local part first=true
+    printf '['
+    for part in "${AR_PYTHON_CMD[@]}"; do
+        if [[ "$first" == "true" ]]; then
+            first=false
+        else
+            printf ', '
+        fi
+        json_string "$part"
+    done
+    printf ']'
+}
+
+python_runtime_command_string() {
+    if [[ "$AR_SANDBOX" == "none" ]]; then
+        python_command_string
+    else
+        printf '%s\n' "python3"
+    fi
+}
+
+python_runtime_command_json_array() {
+    if [[ "$AR_SANDBOX" == "none" ]]; then
+        python_command_json_array
+    else
+        printf '%s\n' '["python3"]'
+    fi
+}
+
 json_string() {
-    python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$1"
+    resolve_python_cmd || return 1
+    "${AR_PYTHON_CMD[@]}" -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$1"
 }
 
 workspace_runtime_path() {
@@ -1477,13 +1568,12 @@ setup_agentic_notes_state() {
         fi
     fi
 
-    if ! "$SCRIPT_DIR/scripts/ar-notes" ensure-project-state --project-dir "$WORKSPACE_DIR" >/dev/null; then
-        echo "Warning: Could not initialize project agentic/state checkout."
-        return 0
-    fi
-
     case "${AR_NOTES_AUTO_REFRESH:-true}" in
         0|false|False|FALSE|no|No|NO|off|Off|OFF)
+            if ! "$SCRIPT_DIR/scripts/ar-notes" ensure-project-state --project-dir "$WORKSPACE_DIR" >/dev/null; then
+                echo "Warning: Could not initialize project agentic/state checkout."
+                return 0
+            fi
             ;;
         *)
             if ! "$SCRIPT_DIR/scripts/ar-notes" refresh --project-dir "$WORKSPACE_DIR" >/dev/null; then
@@ -1503,7 +1593,8 @@ setup_agentic_notes_instruction() {
     if ! "$SCRIPT_DIR/scripts/ar-notes" generate-instructions \
         --project-dir "$WORKSPACE_DIR" \
         --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
-        --tool "$AR_CLI_TOOL" >/dev/null; then
+        --tool "$AR_CLI_TOOL" \
+        --skip-ensure-project-state >/dev/null; then
         echo "Warning: Could not update Agentic Notes instruction section."
     fi
 }
@@ -1515,7 +1606,8 @@ merge_managed_hook_json() {
 
     mkdir -p "$(dirname "$target_path")"
 
-    AR_HOOK_PATCH_JSON="$patch_json" python3 - "$target_path" "$marker" <<'PY'
+    resolve_python_cmd || return 1
+    AR_HOOK_PATCH_JSON="$patch_json" "${AR_PYTHON_CMD[@]}" - "$target_path" "$marker" <<'PY'
 import json
 import os
 import sys
@@ -1618,6 +1710,7 @@ def run_refresh(notes_cli: str, project_dir: str, agent_type: str, tool: str) ->
         agent_type,
         "--tool",
         tool,
+        "--skip-ensure-project-state",
     ]
     ok, refresh_output = run_command(refresh_command)
     if not ok:

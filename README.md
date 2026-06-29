@@ -1,8 +1,8 @@
 # Agentic Team
 
-**Sandboxed AI-Assisted Research Agents That Learn From Their Mistakes Across Agents, Projects, and Teams**
+**Sandboxed Research Agents That Learn From Their Mistakes Across Agents, Projects, and Teams**
 
-<center>(Forked and rewritten from original repo: The Agentic Researcher)</center>
+<p align="center">(Forked and rewritten from original repo: The Agentic Researcher)</p>
 
 <p align="center">
   <a href="#problem-statement">Problem Statement</a> &middot;

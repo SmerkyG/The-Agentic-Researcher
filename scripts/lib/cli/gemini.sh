@@ -92,6 +92,7 @@ def run_refresh(notes_cli: str, project_dir: str, agent_type: str, tool: str) ->
         agent_type,
         "--tool",
         tool,
+        "--skip-ensure-project-state",
     ]
     ok, refresh_output = run_command(refresh_command)
     if not ok:
@@ -205,15 +206,16 @@ cli_gemini_setup_compaction_hooks() {
     local script_path="$WORKSPACE_DIR/.gemini/hooks/agentic-researcher-compaction.py"
     render_gemini_compaction_hook_script "$script_path" || return 0
 
-    local script_runtime instruction_runtime notes_cli_runtime project_runtime agent_type_runtime tool_runtime mark_command inject_command patch_json
+    local script_runtime instruction_runtime notes_cli_runtime project_runtime agent_type_runtime tool_runtime python_runtime mark_command inject_command patch_json
     script_runtime="$(workspace_runtime_path ".gemini/hooks/agentic-researcher-compaction.py")"
     instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
     notes_cli_runtime="$(ar_notes_cli_env_path)"
     project_runtime="$(workspace_root_runtime_path)"
     agent_type_runtime="${AR_MAIN_AGENT:-research-coordinator}"
     tool_runtime="$AR_CLI_TOOL"
-    mark_command="python3 $(shell_quote "$script_runtime") mark $(shell_quote "$instruction_runtime") $(shell_quote "$notes_cli_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
-    inject_command="python3 $(shell_quote "$script_runtime") inject $(shell_quote "$instruction_runtime") $(shell_quote "$notes_cli_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
+    python_runtime="$(python_runtime_command_string)"
+    mark_command="$python_runtime $(shell_quote "$script_runtime") mark $(shell_quote "$instruction_runtime") $(shell_quote "$notes_cli_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
+    inject_command="$python_runtime $(shell_quote "$script_runtime") inject $(shell_quote "$instruction_runtime") $(shell_quote "$notes_cli_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
     patch_json=$(cat <<EOF
 {
   "hooks": {

@@ -141,6 +141,15 @@ def project_remote_name(remote: str) -> str:
     return Path(value).name or "project"
 
 
+def is_remote_repo_spec(value: str) -> bool:
+    value = value.strip()
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", value):
+        return True
+    if re.match(r"^[A-Za-z]:[\\/]", value):
+        return False
+    return re.match(r"^(?:[^@/:]+@)?[^/:]+:.+$", value) is not None
+
+
 def project_id(project_dir: Path, explicit: str | None = None) -> str:
     if explicit:
         return slugify(explicit, default="project")
@@ -215,6 +224,8 @@ def current_branch(repo: Path) -> str | None:
 
 
 def local_branch_exists(repo: Path, branch: str) -> bool:
+    if current_branch(repo) == branch:
+        return True
     return git(repo, "rev-parse", "--verify", branch, check=False).returncode == 0
 
 
@@ -264,14 +275,21 @@ def push(repo: Path, branch: str | None = None) -> bool:
     return result.returncode == 0
 
 
-def pull_ff(repo: Path, branch: str | None = None) -> None:
+def pull_ff(repo: Path, branch: str | None = None, *, missing_ok: bool = False) -> None:
     remote = git_remote(repo)
     if not remote:
         return
     branch = branch or current_branch(repo)
-    git(repo, "fetch", "origin")
     if branch:
-        git(repo, "pull", "--ff-only", "origin", branch, check=False)
+        result = git(repo, "fetch", "origin", branch, check=False)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            if missing_ok and "couldn't find remote ref" in detail:
+                return
+            raise ArNotesError(f"git fetch origin {branch} failed: {detail}")
+        git(repo, "merge", "--ff-only", "FETCH_HEAD", check=False)
+    else:
+        git(repo, "fetch", "origin")
 
 
 def ensure_local_git_repo(repo: Path, branch: str) -> Path:
@@ -315,7 +333,7 @@ def ensure_org_checkout(repo_url: str | None = None) -> Path | None:
 
 def init_org_notes(args: argparse.Namespace) -> None:
     repo_arg = Path(args.repo).expanduser()
-    if not re.match(r"^[A-Za-z0-9_.+-]+://", args.repo) and not repo_arg.exists():
+    if not is_remote_repo_spec(args.repo) and not repo_arg.exists():
         ensure_local_git_repo(repo_arg, "main")
         notes_dir = repo_arg / "agent-notes" / ALL_AGENTS_TYPE
         notes_dir.mkdir(parents=True, exist_ok=True)
@@ -347,7 +365,8 @@ def ensure_project_checkout(project_dir: Path, explicit_project_id: str | None =
     if (dest / ".git").exists():
         configure_git_identity(dest)
         if local_branch_exists(dest, branch):
-            git(dest, "checkout", branch)
+            if current_branch(dest) != branch:
+                git(dest, "checkout", branch)
         elif git_remote(dest) and remote_branch_exists(dest, branch):
             git(dest, "fetch", "origin", branch)
             git(dest, "checkout", "-B", branch, f"origin/{branch}")
@@ -417,11 +436,16 @@ def ensure_project_state_files(repo: Path) -> list[Path]:
     return changed_paths
 
 
-def ensure_project_state(project_dir: Path, explicit_project_id: str | None = None) -> Path:
+def ensure_project_state(
+    project_dir: Path,
+    explicit_project_id: str | None = None,
+    *,
+    pull_remote: bool = True,
+) -> Path:
     repo = ensure_project_checkout(project_dir, explicit_project_id)
     branch = state_branch()
-    if git_remote(repo) and remote_branch_exists(repo, branch):
-        pull_ff(repo, branch)
+    if pull_remote and git_remote(repo):
+        pull_ff(repo, branch, missing_ok=True)
     ensure_project_state_files(repo)
     if commit_if_changed(repo, "agentic: initialize project state"):
         push(repo, branch)
@@ -433,8 +457,9 @@ def refresh(args: argparse.Namespace) -> None:
     if org is not None:
         pull_ff(org)
     project_dir = Path(args.project_dir).resolve()
-    project_repo = ensure_project_state(project_dir)
-    pull_ff(project_repo, state_branch())
+    project_repo = ensure_project_checkout(project_dir)
+    pull_ff(project_repo, state_branch(), missing_ok=True)
+    ensure_project_state(project_dir, pull_remote=False)
 
 
 def note_names(directory: Path) -> list[str]:
@@ -568,7 +593,8 @@ def generate_instructions(args: argparse.Namespace) -> None:
     if not target.exists():
         render_instruction_template(target)
     text = strip_notes_section(target.read_text(encoding="utf-8"))
-    ensure_project_state(project_dir)
+    if not getattr(args, "skip_ensure_project_state", False):
+        ensure_project_state(project_dir)
     notes_section = build_notes_section(project_dir, active_agent_type, markers=True)
     target.write_text(text.rstrip() + "\n\n" + notes_section, encoding="utf-8")
 
@@ -820,7 +846,6 @@ def final_experiment_doc(request: dict[str, Any], experiment_id: str) -> dict[st
 
 def log_experiment_once(request: dict[str, Any], project_dir: Path) -> tuple[Path, str]:
     repo = ensure_project_state(project_dir)
-    pull_ff(repo, state_branch())
     log_dir = experiment_log_dir(repo)
     counter = load_counter(repo)
     number = int(counter.get("next_experiment_number") or 1)
@@ -915,7 +940,6 @@ def log_correction_once(request: dict[str, Any], project_dir: Path) -> tuple[Pat
     if not experiment_id:
         raise ArNotesError("correction request requires experiment_id")
     repo = ensure_project_state(project_dir)
-    pull_ff(repo, state_branch())
     log_dir = experiment_log_dir(repo)
     experiment_path = experiment_path_for_id(log_dir, experiment_id)
     if not experiment_path.exists():
@@ -974,6 +998,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project-dir", required=True)
     p.add_argument("--agent-type", default=None)
     p.add_argument("--tool", required=True, choices=["claude", "gemini", "opencode", "codex", "pi"])
+    p.add_argument("--skip-ensure-project-state", action="store_true")
     p.set_defaults(func=generate_instructions)
 
     p = sub.add_parser("list-notes")

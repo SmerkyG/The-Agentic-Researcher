@@ -3,6 +3,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -396,6 +397,67 @@ def test_launcher_native_runs_host_tool_without_container(
     assert str(workspace) in codex_command
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
+
+
+def test_launcher_native_codex_yolo_uses_current_codex_flag(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-codex-yolo"
+    workspace.mkdir()
+    tool_log = tmp_path / "codex-yolo.log"
+    make_executable(
+        fake_bin / "codex",
+        "#!/bin/sh\n"
+        "printf 'args:%s\\n' \"$*\" >> \"${FAKE_CODEX_LOG:?}\"\n",
+    )
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
+            "--yolo",
+            str(workspace),
+        ],
+        {**base_env, "FAKE_CODEX_LOG": str(tool_log)},
+    )
+
+    assert result.returncode == 0
+    log_text = tool_log.read_text()
+    assert "--dangerously-bypass-approvals-and-sandbox" in log_text
+    assert "--full-auto" not in log_text
+
+
+def test_launcher_falls_back_when_python3_on_path_is_not_executable(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-python-fallback"
+    workspace.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    make_executable(
+        fake_bin / "python3",
+        "#!/bin/sh\n"
+        "echo 'python3 blocked' >&2\n"
+        "exit 126\n",
+    )
+    make_executable(
+        fake_bin / "python",
+        "#!/bin/sh\n"
+        f"exec {shlex_quote(sys.executable)} \"$@\"\n",
+    )
+
+    result = run(
+        [str(AGENTIC_RESEARCHER), "--sandbox", "none", "--tool", "codex", str(workspace)],
+        base_env,
+    )
+
+    assert result.returncode == 0
+    assert "Could not update Codex compaction hook settings" not in result.stdout + result.stderr
+    hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
+    command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert "agentic-researcher-compaction.py" in command
 
 
 def test_launcher_requires_project_id_for_launch(

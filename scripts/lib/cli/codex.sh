@@ -60,14 +60,15 @@ cli_codex_setup_compaction_hooks() {
     local script_path="$WORKSPACE_DIR/.codex/hooks/agentic-researcher-compaction.py"
     render_compaction_context_hook_script "$script_path" || return 0
 
-    local script_runtime instruction_runtime notes_cli_runtime project_runtime agent_type_runtime tool_runtime command patch_json
+    local script_runtime instruction_runtime notes_cli_runtime project_runtime agent_type_runtime tool_runtime python_runtime command patch_json
     script_runtime="$(workspace_runtime_path ".codex/hooks/agentic-researcher-compaction.py")"
     instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
     notes_cli_runtime="$(ar_notes_cli_env_path)"
     project_runtime="$(workspace_root_runtime_path)"
     agent_type_runtime="${AR_MAIN_AGENT:-research-coordinator}"
     tool_runtime="$AR_CLI_TOOL"
-    command="python3 $(shell_quote "$script_runtime") $(shell_quote "$instruction_runtime") $(shell_quote "$notes_cli_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
+    python_runtime="$(python_runtime_command_string)"
+    command="$python_runtime $(shell_quote "$script_runtime") $(shell_quote "$instruction_runtime") $(shell_quote "$notes_cli_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
     patch_json=$(cat <<EOF
 {
   "hooks": {
@@ -98,7 +99,7 @@ cli_codex_translate_tool_args() {
         TOOL_ARGS+=("--model" "$AR_DEFAULT_MODEL")
     fi
     if [[ "$YOLO_MODE" == "true" ]]; then
-        TOOL_ARGS+=("--full-auto")
+        TOOL_ARGS+=("--dangerously-bypass-approvals-and-sandbox")
     fi
 }
 
