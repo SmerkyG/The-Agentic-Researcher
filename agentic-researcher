@@ -285,7 +285,10 @@ capture_env_overrides() {
         AR_OPTIONAL_SKILLS
         AR_ORG_NOTES_REPO
         AR_MAIN_AGENT
+        AR_INSTRUCTION_PROVIDERS
+        AR_AGENT_BRANCH
         AR_AGENT_TOPIC
+        AR_BRANCH_OWNERSHIP
         AR_USER_ID
         AR_PROJECT_ID
         AR_AGENTIC_STATE_BRANCH
@@ -343,7 +346,10 @@ apply_env_overrides() {
         AR_OPTIONAL_SKILLS
         AR_ORG_NOTES_REPO
         AR_MAIN_AGENT
+        AR_INSTRUCTION_PROVIDERS
+        AR_AGENT_BRANCH
         AR_AGENT_TOPIC
+        AR_BRANCH_OWNERSHIP
         AR_USER_ID
         AR_PROJECT_ID
         AR_AGENTIC_STATE_BRANCH
@@ -388,8 +394,8 @@ apply_env_overrides() {
     if [[ -n "${AR_MAIN_AGENT_OVERRIDE:-}" ]]; then
         AR_MAIN_AGENT="$AR_MAIN_AGENT_OVERRIDE"
     fi
-    if [[ -n "${AR_AGENT_TOPIC_OVERRIDE:-}" ]]; then
-        AR_AGENT_TOPIC="$AR_AGENT_TOPIC_OVERRIDE"
+    if [[ -n "${AR_AGENT_BRANCH_OVERRIDE:-}" ]]; then
+        AR_AGENT_BRANCH="$AR_AGENT_BRANCH_OVERRIDE"
     fi
     if [[ -n "${AR_CLI_TOOL_OVERRIDE:-}" ]]; then
         AR_CLI_TOOL="$AR_CLI_TOOL_OVERRIDE"
@@ -424,7 +430,10 @@ apply_defaults() {
     AR_OPTIONAL_SKILLS="${AR_OPTIONAL_SKILLS:-}"
     AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
     AR_MAIN_AGENT="${AR_MAIN_AGENT:-research-coordinator}"
+    AR_INSTRUCTION_PROVIDERS="${AR_INSTRUCTION_PROVIDERS:-agentic-notes,experiment-log}"
+    AR_AGENT_BRANCH="${AR_AGENT_BRANCH:-}"
     AR_AGENT_TOPIC="${AR_AGENT_TOPIC:-}"
+    AR_BRANCH_OWNERSHIP="${AR_BRANCH_OWNERSHIP:-}"
     AR_USER_ID="${AR_USER_ID:-$USER}"
     AR_PROJECT_ID="${AR_PROJECT_ID:-}"
     AR_AGENTIC_STATE_BRANCH="${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
@@ -437,15 +446,22 @@ apply_defaults() {
 }
 YOLO_MODE=false
 TEST_MODE=false
+RENDER_ONLY=false
 MODEL_SPECIFIED=false
 DEBUG_LAUNCH=false
+ALLOW_SHARED_BRANCH=false
 WORKSPACE_DIR=""
 TOOL_ARGS=()
 SELECTED_OPTIONAL_SKILLS=()
 OPTIONAL_SKILL_BINDS=()
 OPTIONAL_SKILL_ENV=()
-TOPIC_LEASE_ACQUIRED=false
 OPTIONAL_CLEANUP_ENABLED=false
+INSTRUCTION_FILE_REGENERATED=false
+BRANCH_GUARD_FILE=""
+BRANCH_GUARD_HEARTBEAT_PID=""
+BRANCH_GUARD_OVERRIDE=false
+MAIN_AGENT_SOURCE_PATH=""
+AGENTIC_NOTES_PROVIDER_SETUP=false
 
 append_optional_skill_override() {
     local skill_name="$1"
@@ -477,6 +493,10 @@ parse_arguments() {
                 ;;
             --test)
                 TEST_MODE=true
+                shift
+                ;;
+            --render-only)
+                RENDER_ONLY=true
                 shift
                 ;;
             --debug-launch)
@@ -527,13 +547,21 @@ parse_arguments() {
                 AR_MAIN_AGENT_OVERRIDE="$2"
                 shift 2
                 ;;
-            --agent-topic)
+            --agent-branch)
                 if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --agent-topic requires a value"
+                    echo "Error: --agent-branch requires a value"
                     exit 1
                 fi
-                AR_AGENT_TOPIC_OVERRIDE="$2"
+                AR_AGENT_BRANCH_OVERRIDE="$2"
                 shift 2
+                ;;
+            --agent-topic)
+                echo "Error: --agent-topic has been removed. Use --agent-branch with the Git branch name."
+                exit 1
+                ;;
+            --allow-shared-branch)
+                ALLOW_SHARED_BRANCH=true
+                shift
                 ;;
             --yolo)
                 YOLO_MODE=true
@@ -611,11 +639,14 @@ Options:
   --uninstall         Remove the installed launcher and optional local state
   --sandbox NAME      Sandbox for this invocation ($sandbox_options)
   --test              Quick validation of sandbox environment
+  --render-only       Materialize instruction, skill, and agent files, then exit
   --optional-skill NAME
                       Install an optional skill from optional-skills/ (repeatable)
   --project-id ID     Override inferred project id for notes and experiment state
   --main-agent NAME   Override top-level main agent for this invocation
-  --agent-topic TOPIC Override inferred topic/work lane for this top-level agent
+  --agent-branch NAME Create/switch to this Git branch before launch
+  --allow-shared-branch
+                      Continue on a branch that appears to have another active local writer
   --debug-launch      Print extra launcher details and enable tool startup logs where supported
   --tool TOOL         Select CLI tool ($cli_options)
   --yolo              Auto-approve tool permissions where supported
@@ -637,14 +668,15 @@ Examples:
   agentic-researcher --uninstall                  # Remove installed launcher
   agentic-researcher --clean --yes --include-config
   agentic-researcher --test
+  agentic-researcher --render-only --tool codex
   agentic-researcher --tool opencode --debug-launch
-  agentic-researcher                              # Current directory; topic inferred from agent/<topic>
+  agentic-researcher                              # Current directory; unoccupied agent/* branches start directly
   agentic-researcher ~/my-project
   agentic-researcher --yolo
   agentic-researcher --tool gemini
   agentic-researcher --tool codex ~/project
   agentic-researcher --yolo --model opus
-  agentic-researcher --agent-topic kernel-search  # Explicit topic override when needed
+  agentic-researcher --agent-branch agent/kernel-search
 
 What's Sandboxed:
   The agent can write your project directory and AR_STATE_ROOT.
@@ -764,10 +796,6 @@ validate_project_id() {
     exit 1
 }
 
-slugify_agent_topic() {
-    slugify_project_id "$1"
-}
-
 current_workspace_git_branch() {
     git -C "$WORKSPACE_DIR" branch --show-current 2>/dev/null || true
 }
@@ -776,73 +804,576 @@ workspace_is_git_worktree() {
     [[ "$(git -C "$WORKSPACE_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" == "true" ]]
 }
 
-infer_agent_topic_from_branch() {
-    local branch="$1" rest topic
-    [[ "$branch" == agent/* ]] || return 1
-    rest="${branch#agent/}"
-    topic="${rest%%/*}"
-    [[ -n "$topic" ]] || return 1
-    slugify_agent_topic "$topic"
+branch_name_is_agent_branch() {
+    [[ "$1" == agent/* && "$1" != "agent/" ]]
 }
 
-validate_agent_topic() {
-    local branch inferred expected_prefix
+agent_owner_branch_from_branch() {
+    local branch="$1" rest owner
+    if branch_name_is_agent_branch "$branch"; then
+        rest="${branch#agent/}"
+        owner="${rest%%/*}"
+        printf 'agent/%s\n' "$owner"
+    else
+        printf '%s\n' "$branch"
+    fi
+}
+
+agent_branch_id() {
+    local branch="$1" rest owner
+    if branch_name_is_agent_branch "$branch"; then
+        rest="${branch#agent/}"
+        owner="${rest%%/*}"
+        slugify_project_id "$owner"
+    else
+        slugify_project_id "$branch"
+    fi
+}
+
+git_branch_exists() {
+    git -C "$WORKSPACE_DIR" show-ref --verify --quiet "refs/heads/$1"
+}
+
+valid_git_branch_name() {
+    git -C "$WORKSPACE_DIR" check-ref-format --branch "$1" >/dev/null 2>&1
+}
+
+branch_guard_dir_for() {
+    local branch="$1"
+    printf '%s/branch-guards/%s/%s\n' "$STATE_ROOT" "$AR_PROJECT_ID" "$(slugify_project_id "$branch")"
+}
+
+file_mtime_epoch() {
+    stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || printf '0\n'
+}
+
+branch_guard_is_fresh() {
+    local path="$1" now mtime stale_seconds
+    stale_seconds="${AR_BRANCH_GUARD_STALE_SECONDS:-300}"
+    now="$(date +%s)"
+    mtime="$(file_mtime_epoch "$path")"
+    [[ "$mtime" =~ ^[0-9]+$ ]] || return 1
+    (( now - mtime <= stale_seconds ))
+}
+
+branch_guard_first_active_file() {
+    local branch="$1" guard_dir guard
+    guard_dir="$(branch_guard_dir_for "$branch")"
+    [[ -d "$guard_dir" ]] || return 1
+    for guard in "$guard_dir"/*.guard; do
+        [[ -f "$guard" ]] || continue
+        [[ "$guard" == "${BRANCH_GUARD_FILE:-}" ]] && continue
+        if branch_guard_is_fresh "$guard"; then
+            printf '%s\n' "$guard"
+            return 0
+        fi
+    done
+    return 1
+}
+
+branch_guard_is_occupied() {
+    branch_guard_first_active_file "$1" >/dev/null
+}
+
+branch_guard_summary() {
+    local guard="$1"
+    [[ -f "$guard" ]] || return 0
+    awk -F= '
+        $1 == "session_id" { session=$2 }
+        $1 == "main_agent" { main_agent=$2 }
+        $1 == "pid" { pid=$2 }
+        $1 == "host" { host=$2 }
+        $1 == "workspace" { workspace=$2 }
+        $1 == "started_at" { started_at=$2 }
+        END {
+            if (session) printf "Session: %s\n", session
+            if (main_agent) printf "Main agent: %s\n", main_agent
+            if (pid || host) printf "Process: %s on %s\n", pid, host
+            if (workspace) printf "Workspace: %s\n", workspace
+            if (started_at) printf "Started: %s\n", started_at
+        }
+    ' "$guard"
+}
+
+git_ref_exists() {
+    git -C "$WORKSPACE_DIR" rev-parse --verify --quiet "$1^{commit}" >/dev/null 2>&1
+}
+
+workspace_has_uncommitted_changes() {
+    [[ -n "$(git -C "$WORKSPACE_DIR" status --porcelain 2>/dev/null || true)" ]]
+}
+
+branch_config_get() {
+    local branch="$1" key="$2"
+    git -C "$WORKSPACE_DIR" config --get "branch.$branch.$key" 2>/dev/null || true
+}
+
+record_agent_branch_base() {
+    local branch="$1" base_ref="$2" base_commit
+    [[ -n "$branch" && -n "$base_ref" ]] || return 0
+    git -C "$WORKSPACE_DIR" config "branch.$branch.agentic-base" "$base_ref" || true
+    if base_commit="$(git -C "$WORKSPACE_DIR" rev-parse "$base_ref^{commit}" 2>/dev/null)"; then
+        git -C "$WORKSPACE_DIR" config "branch.$branch.agentic-base-commit" "$base_commit" || true
+    fi
+}
+
+infer_agent_branch_base_ref() {
+    local owner_branch="$1" current_branch="$2" value candidate upstream
+
+    value="$(branch_config_get "$owner_branch" "agentic-base")"
+    if [[ -n "$value" ]] && git_ref_exists "$value"; then
+        printf '%s\n' "$value"
+        return 0
+    fi
+
+    if [[ -n "$current_branch" ]] && ! branch_name_is_agent_branch "$current_branch"; then
+        printf '%s\n' "$current_branch"
+        return 0
+    fi
+
+    upstream="$(git -C "$WORKSPACE_DIR" rev-parse --abbrev-ref "$owner_branch@{upstream}" 2>/dev/null || true)"
+    if [[ -n "$upstream" ]] && git_ref_exists "$upstream"; then
+        printf '%s\n' "$upstream"
+        return 0
+    fi
+
+    candidate="$(git -C "$WORKSPACE_DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    if [[ -n "$candidate" ]] && git_ref_exists "$candidate"; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    for candidate in origin/main origin/master main master dev; do
+        if git_ref_exists "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    printf 'HEAD\n'
+}
+
+unused_agent_branch_candidate() {
+    local base candidate n
+    base="agent/$(slugify_project_id "${AR_USER_ID:-${USER:-agent}}")"
+    candidate="$base"
+    n=2
+    while git_branch_exists "$candidate" || branch_guard_is_occupied "$candidate"; do
+        candidate="$base-$n"
+        n=$((n + 1))
+    done
+    printf '%s\n' "$candidate"
+}
+
+default_agent_worktree_path() {
+    local branch="$1" parent base slug candidate n
+    parent="$(dirname "$WORKSPACE_DIR")"
+    base="$(basename "$WORKSPACE_DIR")"
+    slug="$(slugify_project_id "$branch")"
+    candidate="$parent/$base-$slug"
+    n=2
+    while [[ -e "$candidate" ]]; do
+        candidate="$parent/$base-$slug-$n"
+        n=$((n + 1))
+    done
+    printf '%s\n' "$candidate"
+}
+
+launch_is_interactive() {
+    [[ -t 0 && -t 1 ]]
+}
+
+prompt_menu_choice() {
+    local max="$1" default="$2" answer
+    while true; do
+        read -r -p "Choice [$default]: " answer
+        answer="${answer:-$default}"
+        if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= max )); then
+            printf '%s\n' "$answer"
+            return 0
+        fi
+        echo "Enter a number from 1 to $max."
+    done
+}
+
+prompt_agent_branch_name() {
+    local default_branch="$1" branch
+    read -r -p "Agent branch name [$default_branch]: " branch
+    branch="${branch:-$default_branch}"
+    if [[ "$branch" != agent/* ]]; then
+        branch="agent/$branch"
+    fi
+    printf '%s\n' "$branch"
+}
+
+prompt_worktree_path() {
+    local default_path="$1" path
+    read -r -p "Worktree path [$default_path]: " path
+    printf '%s\n' "${path:-$default_path}"
+}
+
+set_agent_branch_vars() {
+    local owner_branch="$1" current_branch="$2"
+    WORKSPACE_GIT_BRANCH="$current_branch"
+    AR_AGENT_BRANCH="$owner_branch"
+    AR_AGENT_BRANCH_ID="$(agent_branch_id "$owner_branch")"
+    AR_AGENT_BRANCH_PREFIX="$owner_branch"
+    AR_AGENT_TOPIC="$AR_AGENT_BRANCH_ID"
+    export WORKSPACE_GIT_BRANCH AR_AGENT_BRANCH AR_AGENT_BRANCH_ID AR_AGENT_BRANCH_PREFIX AR_AGENT_TOPIC
+}
+
+switch_to_agent_branch() {
+    local target="$1" base_ref="${2:-HEAD}" existed=false
+    if ! valid_git_branch_name "$target"; then
+        echo "Error: Invalid Git branch name: $target"
+        return 1
+    fi
+    if branch_guard_is_occupied "$target"; then
+        echo "Error: Branch '$target' appears to have another active local agent session."
+        branch_guard_summary "$(branch_guard_first_active_file "$target")"
+        return 1
+    fi
+    if git_branch_exists "$target"; then
+        existed=true
+        git -C "$WORKSPACE_DIR" switch "$target"
+    else
+        git -C "$WORKSPACE_DIR" switch -c "$target" "$base_ref"
+    fi
+    if [[ "$existed" != "true" ]]; then
+        record_agent_branch_base "$target" "$base_ref"
+    fi
+}
+
+create_agent_worktree() {
+    local target_branch="$1" base_ref="$2" target_dir="$3" base_commit
+    if ! valid_git_branch_name "$target_branch"; then
+        echo "Error: Invalid Git branch name: $target_branch"
+        return 1
+    fi
+    if branch_guard_is_occupied "$target_branch"; then
+        echo "Error: Branch '$target_branch' appears to have another active local agent session."
+        branch_guard_summary "$(branch_guard_first_active_file "$target_branch")"
+        return 1
+    fi
+    if [[ -e "$target_dir" ]]; then
+        echo "Error: Worktree path already exists: $target_dir"
+        return 1
+    fi
+    if git_branch_exists "$target_branch"; then
+        git -C "$WORKSPACE_DIR" worktree add "$target_dir" "$target_branch"
+    else
+        git -C "$WORKSPACE_DIR" worktree add -b "$target_branch" "$target_dir" "$base_ref"
+        git -C "$target_dir" config "branch.$target_branch.agentic-base" "$base_ref" || true
+        if base_commit="$(git -C "$target_dir" rev-parse "$base_ref^{commit}" 2>/dev/null)"; then
+            git -C "$target_dir" config "branch.$target_branch.agentic-base-commit" "$base_commit" || true
+        fi
+    fi
+    WORKSPACE_DIR="$(resolve_realpath "$target_dir")"
+}
+
+print_branch_decision_context() {
+    local branch="$1" occupied="$2" dirty="$3" base_ref="$4" active_guard="${5:-}"
+    echo "Branch:          $branch"
+    echo "Ownership:       $AR_BRANCH_OWNERSHIP"
+    echo "Another agent:   $occupied"
+    echo "Uncommitted:     $dirty"
+    echo "Base for branch: $base_ref"
+    if [[ -n "$active_guard" ]]; then
+        echo ""
+        echo "Active local agent:"
+        branch_guard_summary "$active_guard"
+    fi
+    echo ""
+}
+
+prepare_agent_branch_interactive() {
+    local branch="$1" owner_branch="$2" occupied="$3" dirty="$4" active_guard="$5"
+    local base_ref candidate choice target_branch target_path max_choice default_choice
+
+    base_ref="$(infer_agent_branch_base_ref "$owner_branch" "$branch")"
+    candidate="$(unused_agent_branch_candidate)"
+
+    echo "Exclusive main agent '$AR_MAIN_AGENT' should normally use its own agent branch."
+    print_branch_decision_context "$branch" "$occupied" "$dirty" "$base_ref" "$active_guard"
+
+    if [[ "$occupied" == "yes" ]]; then
+        echo "Choose how to continue:"
+        echo "  1. Create a new worktree with a new agent branch from $base_ref (recommended)"
+        echo "  2. Use the current branch anyway and allow shared-branch work"
+        echo "  3. Cancel"
+        max_choice=3
+        default_choice=1
+    elif [[ "$dirty" == "yes" ]]; then
+        echo "Choose how to continue:"
+        echo "  1. Create an agent branch in this worktree, carrying current changes (recommended)"
+        echo "  2. Create a new clean worktree with an agent branch from $base_ref"
+        echo "  3. Use the current branch anyway"
+        echo "  4. Cancel"
+        max_choice=4
+        default_choice=1
+    else
+        echo "Choose how to continue:"
+        echo "  1. Create an agent branch in this worktree: $candidate (recommended)"
+        echo "  2. Create a new worktree with an agent branch from $base_ref"
+        echo "  3. Use the current branch anyway"
+        echo "  4. Cancel"
+        max_choice=4
+        default_choice=1
+    fi
+
+    choice="$(prompt_menu_choice "$max_choice" "$default_choice")"
+    case "$choice" in
+        1)
+            target_branch="$(prompt_agent_branch_name "$candidate")"
+            if [[ "$occupied" == "yes" ]]; then
+                target_path="$(prompt_worktree_path "$(default_agent_worktree_path "$target_branch")")"
+                create_agent_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
+            else
+                switch_to_agent_branch "$target_branch" "HEAD" || exit 1
+            fi
+            return 0
+            ;;
+        2)
+            if [[ "$occupied" == "yes" ]]; then
+                BRANCH_GUARD_OVERRIDE=true
+                return 0
+            fi
+            target_branch="$(prompt_agent_branch_name "$candidate")"
+            target_path="$(prompt_worktree_path "$(default_agent_worktree_path "$target_branch")")"
+            create_agent_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
+            return 0
+            ;;
+        3)
+            if [[ "$occupied" == "yes" ]]; then
+                echo "Launch cancelled."
+                exit 1
+            fi
+            BRANCH_GUARD_OVERRIDE=true
+            return 0
+            ;;
+        *)
+            echo "Launch cancelled."
+            exit 1
+            ;;
+    esac
+}
+
+resolve_main_agent_metadata() {
+    local main_agent="${AR_MAIN_AGENT:-research-coordinator}" kind ownership
+
+    if ! valid_agent_name "$main_agent"; then
+        echo "Error: Invalid AR_MAIN_AGENT: $main_agent"
+        exit 1
+    fi
+
+    if ! MAIN_AGENT_SOURCE_PATH="$(find_agent_source_by_name "$main_agent")"; then
+        echo "Error: Main agent definition not found: $main_agent"
+        echo "Add agents/$main_agent.md with frontmatter 'kind: main' to AR or the org notes repo."
+        exit 1
+    fi
+
+    kind="$(agent_kind_for_source "$MAIN_AGENT_SOURCE_PATH")"
+    if [[ "$kind" != "main" ]]; then
+        echo "Error: AR_MAIN_AGENT '$main_agent' resolves to kind '$kind', not kind 'main'."
+        exit 1
+    fi
+
+    ownership="$(frontmatter_value "$MAIN_AGENT_SOURCE_PATH" "branch_ownership")"
+    ownership="${ownership:-exclusive}"
+    case "$ownership" in
+        exclusive|shared|readonly)
+            ;;
+        *)
+            echo "Error: Main agent '$main_agent' has invalid branch_ownership '$ownership'."
+            echo "Allowed values: exclusive, shared, readonly"
+            exit 1
+            ;;
+    esac
+    AR_BRANCH_OWNERSHIP="$ownership"
+    export AR_BRANCH_OWNERSHIP
+}
+
+ensure_branch_session_id() {
+    AR_SESSION_ID="${AR_SESSION_ID:-$AR_PROJECT_ID-${AR_AGENT_BRANCH_ID:-branch}-$$-$(date +%s)}"
+    export AR_SESSION_ID
+}
+
+write_branch_guard_file() {
+    local now
+    [[ -n "${BRANCH_GUARD_FILE:-}" ]] || return 0
+    now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    mkdir -p "$(dirname "$BRANCH_GUARD_FILE")"
+    {
+        printf 'project_id=%s\n' "$AR_PROJECT_ID"
+        printf 'branch=%s\n' "$AR_AGENT_BRANCH"
+        printf 'current_branch=%s\n' "$WORKSPACE_GIT_BRANCH"
+        printf 'branch_ownership=%s\n' "$AR_BRANCH_OWNERSHIP"
+        printf 'override=%s\n' "$BRANCH_GUARD_OVERRIDE"
+        printf 'session_id=%s\n' "$AR_SESSION_ID"
+        printf 'main_agent=%s\n' "${AR_MAIN_AGENT:-research-coordinator}"
+        printf 'user_id=%s\n' "${AR_USER_ID:-${USER:-user}}"
+        printf 'host=%s\n' "$(hostname 2>/dev/null || printf unknown)"
+        printf 'pid=%s\n' "$$"
+        printf 'workspace=%s\n' "$WORKSPACE_DIR"
+        printf 'started_at=%s\n' "${BRANCH_GUARD_STARTED_AT:-$now}"
+        printf 'heartbeat_at=%s\n' "$now"
+    } > "$BRANCH_GUARD_FILE.tmp"
+    mv "$BRANCH_GUARD_FILE.tmp" "$BRANCH_GUARD_FILE"
+}
+
+register_branch_guard() {
+    local guard_dir heartbeat_seconds launcher_pid
+    [[ "$AR_BRANCH_OWNERSHIP" == "exclusive" ]] || return 0
+    [[ "$TEST_MODE" == "true" || "$RENDER_ONLY" == "true" ]] && return 0
+    ensure_branch_session_id
+    guard_dir="$(branch_guard_dir_for "$AR_AGENT_BRANCH")"
+    BRANCH_GUARD_FILE="$guard_dir/$AR_SESSION_ID.guard"
+    BRANCH_GUARD_STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    write_branch_guard_file
+
+    heartbeat_seconds="${AR_BRANCH_GUARD_HEARTBEAT_SECONDS:-30}"
+    if ! [[ "$heartbeat_seconds" =~ ^[0-9]+$ ]] || [[ "$heartbeat_seconds" -lt 1 ]]; then
+        heartbeat_seconds=30
+    fi
+    launcher_pid="$$"
+    (
+        while kill -0 "$launcher_pid" 2>/dev/null; do
+            write_branch_guard_file
+            sleep "$heartbeat_seconds"
+        done
+    ) >/dev/null 2>&1 &
+    BRANCH_GUARD_HEARTBEAT_PID="$!"
+}
+
+cleanup_branch_guard() {
+    if [[ -n "${BRANCH_GUARD_HEARTBEAT_PID:-}" ]]; then
+        kill "$BRANCH_GUARD_HEARTBEAT_PID" >/dev/null 2>&1 || true
+        wait "$BRANCH_GUARD_HEARTBEAT_PID" >/dev/null 2>&1 || true
+        BRANCH_GUARD_HEARTBEAT_PID=""
+    fi
+    if [[ -n "${BRANCH_GUARD_FILE:-}" ]]; then
+        rm -f "$BRANCH_GUARD_FILE"
+        BRANCH_GUARD_FILE=""
+    fi
+}
+
+prepare_agent_branch() {
+    local branch owner_branch active_guard candidate base_ref target_path occupied dirty
 
     [[ "$TEST_MODE" == "true" ]] && return 0
 
     if ! workspace_is_git_worktree; then
-        echo "Error: Agentic Researcher topics require launching from a Git worktree."
+        [[ "$RENDER_ONLY" == "true" || "$AR_BRANCH_OWNERSHIP" == "readonly" ]] && return 0
+        echo "Error: Agentic Researcher branch ownership requires launching from a Git worktree."
         echo ""
-        echo "Create or enter a branch named agent/<topic>, then relaunch:"
-        echo "  git switch -c agent/my-topic"
-        echo "  agentic-researcher $WORKSPACE_DIR"
+        echo "Create or enter a project Git checkout, then relaunch."
         exit 1
     fi
 
     branch="$(current_workspace_git_branch)"
     if [[ -z "$branch" ]]; then
-        echo "Error: Agentic Researcher topics require a named Git branch, but this worktree is detached."
+        [[ "$RENDER_ONLY" == "true" || "$AR_BRANCH_OWNERSHIP" == "readonly" ]] && return 0
+        echo "Error: Agentic Researcher branch ownership requires a named Git branch, but this worktree is detached."
         exit 1
     fi
 
-    if [[ -n "${AR_AGENT_TOPIC:-}" ]]; then
-        AR_AGENT_TOPIC="$(slugify_agent_topic "$AR_AGENT_TOPIC")"
-    elif inferred="$(infer_agent_topic_from_branch "$branch")" && [[ -n "$inferred" ]]; then
-        AR_AGENT_TOPIC="$inferred"
-    else
-        echo "Error: Agentic Researcher needs an agent topic for this top-level agent."
-        echo ""
-        echo "Create or switch to a topic branch so AR can infer the topic:"
-        echo "  git switch -c agent/my-topic"
-        echo "  agentic-researcher $WORKSPACE_DIR"
-        exit 1
+    if [[ -n "${AR_AGENT_BRANCH:-}" ]]; then
+        if [[ "$RENDER_ONLY" != "true" && "$branch" != "$AR_AGENT_BRANCH" ]]; then
+            switch_to_agent_branch "$AR_AGENT_BRANCH" || exit 1
+            branch="$(current_workspace_git_branch)"
+        elif [[ "$RENDER_ONLY" == "true" ]]; then
+            branch="$AR_AGENT_BRANCH"
+        fi
     fi
 
-    expected_prefix="agent/$AR_AGENT_TOPIC"
-    case "$branch" in
-        main|master)
-            echo "Error: Refusing to launch an agent topic on protected branch '$branch'."
-            echo ""
-            echo "Create a topic branch first:"
-            echo "  git switch -c $expected_prefix"
-            echo "  agentic-researcher $WORKSPACE_DIR"
-            exit 1
+    owner_branch="$(agent_owner_branch_from_branch "$branch")"
+    set_agent_branch_vars "$owner_branch" "$branch"
+
+    [[ "$RENDER_ONLY" == "true" ]] && return 0
+
+    case "$AR_BRANCH_OWNERSHIP" in
+        readonly|shared)
+            return 0
             ;;
     esac
 
-    if [[ "$branch" != "$expected_prefix" && "$branch" != "$expected_prefix"/* ]]; then
-        echo "Error: Agent topic '$AR_AGENT_TOPIC' must run on branch '$expected_prefix' or a child branch under it."
+    if branch_name_is_agent_branch "$branch" && ! branch_guard_is_occupied "$AR_AGENT_BRANCH"; then
+        register_branch_guard
+        return 0
+    fi
+
+    if [[ "$ALLOW_SHARED_BRANCH" == "true" ]]; then
+        BRANCH_GUARD_OVERRIDE=true
+        register_branch_guard
+        return 0
+    fi
+
+    active_guard=""
+    if active_guard="$(branch_guard_first_active_file "$AR_AGENT_BRANCH")"; then
+        occupied="yes"
+    else
+        occupied="no"
+    fi
+    if workspace_has_uncommitted_changes; then
+        dirty="yes"
+    else
+        dirty="no"
+    fi
+
+    if ! launch_is_interactive; then
+        echo "Error: Exclusive main agent '$AR_MAIN_AGENT' is not on an unoccupied agent/* branch."
         echo "Current branch: $branch"
+        echo "Another active agent: $occupied"
+        echo "Uncommitted changes: $dirty"
+        if [[ -n "$active_guard" ]]; then
+            echo ""
+            echo "Another active local agent appears to be using branch '$AR_AGENT_BRANCH':"
+            branch_guard_summary "$active_guard"
+        fi
+        candidate="$(unused_agent_branch_candidate)"
+        base_ref="$(infer_agent_branch_base_ref "$AR_AGENT_BRANCH" "$branch")"
+        target_path="$(default_agent_worktree_path "$candidate")"
         echo ""
-        echo "Switch to the topic branch, then relaunch:"
-        echo "  git switch $expected_prefix"
-        echo "  agentic-researcher $WORKSPACE_DIR"
+        if [[ "$occupied" == "yes" ]]; then
+            echo "Create a new worktree with an unused agent branch:"
+            echo "  git worktree add -b $candidate $target_path $base_ref"
+            echo "  agentic-researcher $target_path"
+        else
+            echo "Create or switch to an unused agent branch first:"
+            echo "  git switch -c $candidate"
+            echo "  agentic-researcher $WORKSPACE_DIR"
+        fi
+        if [[ "$dirty" == "yes" && "$occupied" == "yes" ]]; then
+            echo ""
+            echo "Note: uncommitted changes in the current worktree stay where they are."
+        fi
+        echo ""
+        echo "Or choose an explicit branch before launch:"
+        echo "  agentic-researcher --agent-branch $candidate $WORKSPACE_DIR"
+        echo ""
+        echo "Or continue intentionally with shared-branch work:"
+        echo "  agentic-researcher --allow-shared-branch $WORKSPACE_DIR"
         exit 1
     fi
 
-    WORKSPACE_GIT_BRANCH="$branch"
-    AR_AGENT_BRANCH_PREFIX="$expected_prefix"
-    export AR_AGENT_TOPIC AR_AGENT_BRANCH_PREFIX
+    prepare_agent_branch_interactive "$branch" "$AR_AGENT_BRANCH" "$occupied" "$dirty" "$active_guard"
+    branch="$(current_workspace_git_branch)"
+    owner_branch="$(agent_owner_branch_from_branch "$branch")"
+    set_agent_branch_vars "$owner_branch" "$branch"
+
+    if [[ "$BRANCH_GUARD_OVERRIDE" == "true" ]]; then
+        register_branch_guard
+        return 0
+    fi
+
+    if branch_guard_is_occupied "$AR_AGENT_BRANCH"; then
+        echo "Error: Branch '$AR_AGENT_BRANCH' appears to have another active local agent session."
+        branch_guard_summary "$(branch_guard_first_active_file "$AR_AGENT_BRANCH")"
+        exit 1
+    fi
+
+    register_branch_guard
+    return 0
 }
 
 validate_api_key() {
@@ -1010,9 +1541,10 @@ run_optional_skill_hooks() {
 setup_storage() {
     STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-researcher}"
 
-    UV_CACHE_DIR="$STATE_ROOT/uv/cache"
-    UV_PYTHON_INSTALL_DIR="$STATE_ROOT/uv/python"
-    UV_TOOL_DIR="$STATE_ROOT/uv/tools"
+    UV_CACHE_DIR="${UV_CACHE_DIR:-$STATE_ROOT/uv/cache}"
+    UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$STATE_ROOT/uv/python}"
+    UV_TOOL_DIR="${UV_TOOL_DIR:-$STATE_ROOT/uv/tools}"
+    export UV_CACHE_DIR UV_PYTHON_INSTALL_DIR UV_TOOL_DIR
 
     if [[ "$AR_SANDBOX" == "none" ]]; then
         mkdir -p "$STATE_ROOT"
@@ -1046,6 +1578,33 @@ setup_storage() {
 
     cli_call_all setup_storage
 }
+render_module_block() {
+    local module_name="$1"
+    local module_path="$SCRIPT_DIR/modules/$module_name.md"
+
+    if [[ ! -f "$module_path" ]]; then
+        echo "Warning: Module not found: $module_name" >&2
+        return 0
+    fi
+
+    cat "$module_path"
+    printf '\n'
+}
+
+expand_modules_from_stdin() {
+    local line module_name
+    local module_regex='^<!--[[:space:]]*AR_MODULE:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*-->$'
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ $module_regex ]]; then
+            module_name="${BASH_REMATCH[1]}"
+            render_module_block "$module_name"
+        else
+            printf '%s\n' "$line"
+        fi
+    done
+}
+
 render_instruction_template() {
     local output_path="$1"
 
@@ -1054,9 +1613,9 @@ render_instruction_template() {
             /<!-- DOCKER-OMIT-START -->/ { skip=1; next }
             /<!-- DOCKER-OMIT-END -->/   { skip=0; next }
             !skip { print }
-        ' "$SCRIPT_DIR/INSTRUCTIONS.md" > "$output_path"
+        ' "$SCRIPT_DIR/INSTRUCTIONS.md" | expand_modules_from_stdin > "$output_path"
     else
-        cp "$SCRIPT_DIR/INSTRUCTIONS.md" "$output_path"
+        expand_modules_from_stdin < "$SCRIPT_DIR/INSTRUCTIONS.md" > "$output_path"
     fi
 }
 
@@ -1127,7 +1686,9 @@ setup_main_agent_instruction_block() {
         exit 1
     fi
 
-    if ! source_path="$(find_agent_source_by_name "$main_agent")"; then
+    if [[ -n "${MAIN_AGENT_SOURCE_PATH:-}" ]]; then
+        source_path="$MAIN_AGENT_SOURCE_PATH"
+    elif ! source_path="$(find_agent_source_by_name "$main_agent")"; then
         echo "Error: Main agent definition not found: $main_agent"
         echo "Add agents/$main_agent.md with frontmatter 'kind: main' to AR or the org notes repo."
         exit 1
@@ -1140,44 +1701,47 @@ setup_main_agent_instruction_block() {
     fi
 
     temp_path="${instruction_path}.tmp"
-    awk '
-        /^<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START / { skip=1; next }
-        /^<!-- AGENTIC-RESEARCHER-MAIN-AGENT-END -->/ { skip=0; next }
-        skip != 1 { print }
-    ' "$instruction_path" > "$temp_path"
+    cp "$instruction_path" "$temp_path"
     {
-        printf '\n<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START name=%s -->\n\n' "$main_agent"
-        printf '<!-- Generated by agentic-researcher. Edit the source main agent definition or select a different AR_MAIN_AGENT to change this section. -->\n\n'
-        strip_frontmatter "$source_path"
-        printf '\n<!-- AGENTIC-RESEARCHER-MAIN-AGENT-END -->\n'
+        printf '\n'
+        strip_frontmatter "$source_path" | expand_modules_from_stdin
     } >> "$temp_path"
     mv "$temp_path" "$instruction_path"
 }
 
-setup_agent_topic_instruction_block() {
+setup_branch_instruction_block() {
     local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
     local temp_path
 
-    [[ "$TEST_MODE" == "true" ]] && return 0
     [[ -f "$instruction_path" ]] || return 0
-    [[ -n "${AR_AGENT_TOPIC:-}" ]] || return 0
+    [[ -n "${AR_AGENT_BRANCH:-}" ]] || return 0
 
     temp_path="${instruction_path}.tmp"
-    awk '
-        /^<!-- AGENTIC-RESEARCHER-TOPIC-START / { skip=1; next }
-        /^<!-- AGENTIC-RESEARCHER-TOPIC-END -->/ { skip=0; next }
-        skip != 1 { print }
-    ' "$instruction_path" > "$temp_path"
+    cp "$instruction_path" "$temp_path"
+
     {
-        printf '\n<!-- AGENTIC-RESEARCHER-TOPIC-START topic=%s -->\n\n' "$AR_AGENT_TOPIC"
-        printf '<!-- Generated by agentic-researcher for this top-level agent invocation. -->\n\n'
-        printf '## Agent Topic\n\n'
-        printf 'This top-level agent invocation owns topic `%s`.\n\n' "$AR_AGENT_TOPIC"
-        printf 'Work only on Git branch `%s` or child branches such as `%s/exp/<experiment-name>`. Do not commit to `main` or `master` unless the user explicitly asks.\n\n' "$AR_AGENT_BRANCH_PREFIX" "$AR_AGENT_BRANCH_PREFIX"
-        printf 'Only one top-level agent may work on this topic at a time. Subagents inherit this topic from their parent and should not acquire separate topic ownership.\n\n'
-        printf 'The topic-local experiment log lives on the project `%s` state branch at `.agentic/topics/%s/experiment-log/`. Use the `experiment-logger` subagent for new experiment results and the `experiment-corrector` subagent for corrections. Within this topic, experiment IDs are local, such as `E0001_block-sparse-baseline`; from other topics, refer to them as `%s/E0001_block-sparse-baseline`.\n\n' "${AR_AGENTIC_STATE_BRANCH:-agentic/state}" "$AR_AGENT_TOPIC" "$AR_AGENT_TOPIC"
-        printf '<!-- AGENTIC-RESEARCHER-TOPIC-END -->\n'
+        printf '\n'
+        printf '## Agent Branch\n\n'
+        printf 'Active branch: `%s`.\n\n' "$WORKSPACE_GIT_BRANCH"
+        printf 'Branch ownership mode: `%s`.\n\n' "${AR_BRANCH_OWNERSHIP:-exclusive}"
+        case "${AR_BRANCH_OWNERSHIP:-exclusive}" in
+            readonly)
+                printf 'This invocation is read-only. Do not modify project files, stage changes, commit, or push. If sandbox support is available, the launcher may enforce read-only access; otherwise treat this as an instruction-level constraint.\n\n'
+                ;;
+            shared)
+                printf 'This invocation may share the branch with other agents or humans. Use ordinary Git collaboration: inspect status before editing, pull/rebase/merge when appropriate, and resolve conflicts explicitly.\n\n'
+                ;;
+            *)
+                if [[ "${BRANCH_GUARD_OVERRIDE:-false}" == "true" ]]; then
+                    printf 'This invocation was explicitly allowed to use a branch that is not an unoccupied `agent/*` branch. Another local agent may also be writing here, so use normal Git conflict checks and do not assume exclusive ownership.\n\n'
+                else
+                    printf 'This invocation is expected to be the only mutating top-level agent for this branch on this AR installation. The launcher uses a local soft branch guard to catch accidental duplicate writers; Git remains the source of truth for conflicts.\n\n'
+                fi
+                printf 'Work on `%s` or child branches such as `%s/exp/<experiment-name>`. Do not commit to `main` or `master` unless the user explicitly asks.\n\n' "$AR_AGENT_BRANCH" "$AR_AGENT_BRANCH"
+                ;;
+        esac
     } >> "$temp_path"
+
     mv "$temp_path" "$instruction_path"
 }
 
@@ -1238,11 +1802,7 @@ setup_subagent_catalog_instruction_block() {
     [[ -f "$instruction_path" ]] || return 0
 
     temp_path="${instruction_path}.tmp"
-    awk '
-        /^<!-- AGENTIC-RESEARCHER-SUBAGENTS-START -->/ { skip=1; next }
-        /^<!-- AGENTIC-RESEARCHER-SUBAGENTS-END -->/ { skip=0; next }
-        skip != 1 { print }
-    ' "$instruction_path" > "$temp_path"
+    cp "$instruction_path" "$temp_path"
 
     agent_root="$(project_agent_root_for_tool)"
     if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
@@ -1250,8 +1810,7 @@ setup_subagent_catalog_instruction_block() {
     fi
 
     {
-        printf '\n<!-- AGENTIC-RESEARCHER-SUBAGENTS-START -->\n\n'
-        printf '<!-- Generated by agentic-researcher. Edit source subagent definitions to change this catalog. -->\n\n'
+        printf '\n'
         printf '## Available Subagents\n\n'
         printf 'Subagents are delegated tools. Use this catalog to decide when a subagent exists, but do not infer the full input shape from memory. Before launching a subagent, read its rendered definition file and use that file'\''s `## Subagent Contract` section for the typed request template. Each subagent has exactly one request template; if a workflow needs a different request shape, use a different subagent.\n\n'
     } >> "$temp_path"
@@ -1266,8 +1825,6 @@ setup_subagent_catalog_instruction_block() {
     if [[ "$SUBAGENT_CATALOG_EMITTED" != "true" ]]; then
         printf '(none)\n' >> "$temp_path"
     fi
-    printf '\n<!-- AGENTIC-RESEARCHER-SUBAGENTS-END -->\n' >> "$temp_path"
-
     mv "$temp_path" "$instruction_path"
 }
 
@@ -1275,12 +1832,53 @@ setup_instruction_file() {
     local target
     target="$(cli_call_required instruction_target)"
 
-    # Copy template to workspace if target doesn't exist
-    if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]] && [[ ! -f "$WORKSPACE_DIR/$target" ]]; then
+    INSTRUCTION_FILE_REGENERATED=false
+
+    if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
         render_instruction_template "$WORKSPACE_DIR/$target"
+        INSTRUCTION_FILE_REGENERATED=true
     fi
 
     INSTRUCTION_TARGET="$target"
+}
+
+normalize_markdown_file() {
+    local target_path="$1"
+    [[ -f "$target_path" ]] || return 0
+    resolve_python_cmd || return 0
+    "${AR_PYTHON_CMD[@]}" - "$target_path" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines()
+out: list[str] = []
+blank_run = 0
+in_fence = False
+
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("```"):
+        in_fence = not in_fence
+        out.append(line.rstrip())
+        blank_run = 0
+        continue
+    if in_fence:
+        out.append(line.rstrip())
+        continue
+    if stripped == "":
+        blank_run += 1
+        if blank_run <= 1:
+            out.append("")
+        continue
+    blank_run = 0
+    out.append(line.rstrip())
+
+while out and out[-1] == "":
+    out.pop()
+
+path.write_text("\n".join(out) + "\n", encoding="utf-8")
+PY
 }
 strip_frontmatter() {
     local source_path="$1"
@@ -1611,63 +2209,132 @@ ar_install_env_path() {
 }
 
 ar_notes_cli_env_path() {
-    printf '%s/scripts/ar-notes\n' "$(ar_install_env_path)"
+    printf '%s/scripts/tools/ar-notes\n' "$(ar_install_env_path)"
 }
 
 ar_tool_cli_env_path() {
     printf '%s/scripts/ar-tool\n' "$(ar_install_env_path)"
 }
 
+provider_refresh_cli_env_path() {
+    printf '%s/scripts/provider-refresh\n' "$(ar_install_env_path)"
+}
+
+ar_notes_cli_host_path() {
+    printf '%s/scripts/tools/ar-notes\n' "$SCRIPT_DIR"
+}
+
+ar_tool_cli_host_path() {
+    printf '%s/scripts/ar-tool\n' "$SCRIPT_DIR"
+}
+
+enabled_provider_names() {
+    local raw="${AR_INSTRUCTION_PROVIDERS:-agentic-notes,experiment-log}"
+    local provider
+
+    raw="${raw//,/ }"
+    for provider in $raw; do
+        [[ -n "$provider" ]] || continue
+        [[ "$provider" == "none" ]] && continue
+        if [[ "$provider" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            printf '%s\n' "$provider"
+        else
+            echo "Warning: Ignoring invalid instruction provider name: $provider" >&2
+        fi
+    done
+}
+
+provider_enabled() {
+    local needle="$1"
+    local provider
+
+    for provider in $(enabled_provider_names); do
+        [[ "$provider" == "$needle" ]] && return 0
+    done
+    return 1
+}
+
+provider_path() {
+    local provider_name="$1"
+    local candidate
+
+    for candidate in \
+        "$STATE_ROOT/repos/org-agentic-notes/providers/$provider_name/bin/$provider_name" \
+        "$STATE_ROOT/repos/org-agentic-notes/providers/$provider_name/$provider_name" \
+        "$SCRIPT_DIR/scripts/providers/$provider_name"
+    do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+provider_call() {
+    local provider_name="$1"
+    shift
+    local provider_exe
+
+    if ! provider_exe="$(provider_path "$provider_name")"; then
+        echo "Warning: Instruction provider not found: $provider_name" >&2
+        return 127
+    fi
+    "$provider_exe" "$@"
+}
+
 project_agent_root_for_tool() {
     cli_call_required project_agent_root
 }
 
-AGENTIC_NOTES_SECTION_DIR=""
+PROVIDER_SECTION_DIR=""
 
 render_agentic_notes_for_agent_type() {
     local render_agent_type="$1"
     local rendered_path
 
-    if [[ -n "$AGENTIC_NOTES_SECTION_DIR" ]]; then
-        rendered_path="$AGENTIC_NOTES_SECTION_DIR/$render_agent_type.md"
+    provider_enabled agentic-notes || return 0
+
+    if [[ -n "$PROVIDER_SECTION_DIR" ]]; then
+        rendered_path="$PROVIDER_SECTION_DIR/$render_agent_type.md"
         if [[ -f "$rendered_path" ]]; then
             cat "$rendered_path"
             return 0
         fi
     fi
-    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
-    "$SCRIPT_DIR/scripts/ar-notes" render-section \
+    provider_call agentic-notes render-section \
         --project-dir "$WORKSPACE_DIR" \
         --agent-type "$render_agent_type" 2>/dev/null || true
 }
 
-prepare_agentic_notes_sections() {
-    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
+prepare_provider_sections() {
     [[ ${#ACTIVE_PROJECT_AGENT_NAMES[@]} -gt 0 ]] || return 0
+    provider_enabled agentic-notes || return 0
 
     local temp_root render_args agent_name
     temp_root="$STATE_ROOT/tmp"
     mkdir -p "$temp_root"
-    AGENTIC_NOTES_SECTION_DIR="$(mktemp -d "$temp_root/agent-notes.XXXXXX")" || {
-        AGENTIC_NOTES_SECTION_DIR=""
+    PROVIDER_SECTION_DIR="$(mktemp -d "$temp_root/provider-sections.XXXXXX")" || {
+        PROVIDER_SECTION_DIR=""
         return 0
     }
 
-    render_args=(render-sections --project-dir "$WORKSPACE_DIR" --output-dir "$AGENTIC_NOTES_SECTION_DIR")
+    render_args=(render-sections --project-dir "$WORKSPACE_DIR" --output-dir "$PROVIDER_SECTION_DIR")
     for agent_name in "${ACTIVE_PROJECT_AGENT_NAMES[@]}"; do
         render_args+=(--agent-type "$agent_name")
     done
 
-    if ! "$SCRIPT_DIR/scripts/ar-notes" "${render_args[@]}" >/dev/null 2>/dev/null; then
-        rm -rf "$AGENTIC_NOTES_SECTION_DIR"
-        AGENTIC_NOTES_SECTION_DIR=""
+    if ! provider_call agentic-notes "${render_args[@]}" >/dev/null 2>/dev/null; then
+        rm -rf "$PROVIDER_SECTION_DIR"
+        PROVIDER_SECTION_DIR=""
     fi
 }
 
-cleanup_agentic_notes_sections() {
-    if [[ -n "$AGENTIC_NOTES_SECTION_DIR" ]]; then
-        rm -rf "$AGENTIC_NOTES_SECTION_DIR"
-        AGENTIC_NOTES_SECTION_DIR=""
+cleanup_provider_sections() {
+    if [[ -n "$PROVIDER_SECTION_DIR" ]]; then
+        rm -rf "$PROVIDER_SECTION_DIR"
+        PROVIDER_SECTION_DIR=""
     fi
 }
 
@@ -1699,7 +2366,7 @@ render_markdown_agent_file() {
                 print "<!-- Generated by agentic-researcher. Edit the source agent definition to change this agent. -->"
             }
         }
-    ' "$source_path" > "$temp_path"
+    ' "$source_path" | expand_modules_from_stdin > "$temp_path"
     {
         printf '\n'
         render_agentic_notes_for_agent_type "$agent_name"
@@ -1837,7 +2504,7 @@ setup_project_agents() {
     collect_active_project_agent_names "$SCRIPT_DIR/agents" "$org_agent_dir"
     collect_active_project_agent_names "$org_agent_dir" ""
     cleanup_inactive_managed_agents "$agent_root" "Generated by agentic-researcher"
-    prepare_agentic_notes_sections
+    prepare_provider_sections
 
     if ! render_agent_source_dir "$agent_root" "$SCRIPT_DIR/agents" "built-in" "subagent" "$org_agent_dir"; then
         render_status=1
@@ -1849,24 +2516,20 @@ setup_project_agents() {
         fi
     fi
 
-    cleanup_agentic_notes_sections
+    cleanup_provider_sections
     return "$render_status"
 }
 
 append_skill_instruction_block() {
     local output_path="$1"
-    local skill_name="$2"
+    local _skill_name="$2"
     local instruction_source="$3"
-    local begin_marker="<!-- AGENTIC-RESEARCHER-SKILL-INSTRUCTIONS-START $skill_name -->"
-    local end_marker="<!-- AGENTIC-RESEARCHER-SKILL-INSTRUCTIONS-END $skill_name -->"
 
     [[ -f "$instruction_source" ]] || return 0
 
     {
-        printf '\n%s\n' "$begin_marker"
         printf '\n'
         cat "$instruction_source"
-        printf '\n%s\n' "$end_marker"
     } >> "$output_path"
 }
 
@@ -1877,13 +2540,7 @@ setup_skill_instruction_blocks() {
     local temp_path="${instruction_path}.tmp"
     local source_path skill_name
 
-    awk '
-        /^<!-- AGENTIC-RESEARCHER-SKILL-INSTRUCTIONS-START / { skip=1; next }
-        /^<!-- AGENTIC-RESEARCHER-SKILL-INSTRUCTIONS-END / { skip=0; next }
-        $0 == "<!-- AGENTIC-RESEARCHER-GPU-BACKEND-START -->" { skip=1; next }
-        $0 == "<!-- AGENTIC-RESEARCHER-GPU-BACKEND-END -->" { skip=0; next }
-        skip != 1 { print }
-    ' "$instruction_path" > "$temp_path"
+    cp "$instruction_path" "$temp_path"
 
     for source_path in "$SCRIPT_DIR"/skills/*/INSTRUCTIONS.md; do
         [[ -f "$source_path" ]] || continue
@@ -1899,77 +2556,78 @@ setup_skill_instruction_blocks() {
     mv "$temp_path" "$instruction_path"
 }
 
-setup_agentic_notes_state() {
-    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
+export_instruction_provider_env() {
+    if [[ -n "${AR_AGENT_BRANCH_ID:-}" ]]; then
+        AR_SESSION_ID="${AR_SESSION_ID:-$AR_PROJECT_ID-$AR_AGENT_BRANCH_ID-$$-$(date +%s)}"
+    fi
 
-    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_AGENT_TOPIC AR_USER_ID AR_PROJECT_ID
+    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_INSTRUCTION_PROVIDERS
+    export AR_AGENT_BRANCH AR_AGENT_BRANCH_ID AR_AGENT_TOPIC AR_AGENT_BRANCH_PREFIX AR_BRANCH_OWNERSHIP
+    export AR_USER_ID AR_PROJECT_ID AR_SESSION_ID
     export AR_AGENTIC_STATE_BRANCH AR_NOTES_AUTO_REFRESH AR_NOTES_REFRESH_MODE AR_NOTES_REFRESH_INTERVAL_SECONDS
     export AR_RESOLVER_GIT_NAME AR_RESOLVER_GIT_EMAIL AR_NOTES_GIT_NAME AR_NOTES_GIT_EMAIL
-
-    if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
-        if ! "$SCRIPT_DIR/scripts/ar-notes" init-org-notes --repo "$AR_ORG_NOTES_REPO" >/dev/null; then
-            echo "Warning: Could not initialize org notes checkout."
-        fi
-    fi
-
-    case "${AR_NOTES_AUTO_REFRESH:-true}" in
-        0|false|False|FALSE|no|No|NO|off|Off|OFF)
-            if ! "$SCRIPT_DIR/scripts/ar-notes" ensure-project-state --project-dir "$WORKSPACE_DIR" --skip-pull >/dev/null; then
-                echo "Warning: Could not initialize project agentic/state checkout."
-                return 0
-            fi
-            ;;
-        *)
-            case "${AR_NOTES_REFRESH_MODE:-periodic}" in
-                foreground)
-                    if ! "$SCRIPT_DIR/scripts/ar-notes" refresh --project-dir "$WORKSPACE_DIR" >/dev/null; then
-                        echo "Warning: Could not refresh Agentic Notes checkouts."
-                    fi
-                    ;;
-                *)
-                    if ! "$SCRIPT_DIR/scripts/ar-notes" ensure-project-state --project-dir "$WORKSPACE_DIR" --skip-pull >/dev/null; then
-                        echo "Warning: Could not initialize project agentic/state checkout."
-                        return 0
-                    fi
-                    ;;
-            esac
-            ;;
-    esac
+    export AR_NOTES_CLI AR_TOOL_CLI AR_CLI_TOOL TEST_MODE RENDER_ONLY
+    AR_NOTES_CLI="$(ar_notes_cli_host_path)"
+    AR_TOOL_CLI="$(ar_tool_cli_host_path)"
 }
 
-setup_agent_topic_lease() {
-    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
-    [[ "$TEST_MODE" == "true" ]] && return 0
-    [[ -n "${AR_AGENT_TOPIC:-}" ]] || return 0
+setup_agentic_notes_provider_once() {
+    provider_enabled agentic-notes || return 0
+    [[ "$AGENTIC_NOTES_PROVIDER_SETUP" == "true" ]] && return 0
 
-    AR_SESSION_ID="${AR_SESSION_ID:-$AR_PROJECT_ID-$AR_AGENT_TOPIC-$$-$(date +%s)}"
-    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_AGENT_TOPIC AR_USER_ID AR_PROJECT_ID AR_SESSION_ID
-    export AR_AGENTIC_STATE_BRANCH AR_RESOLVER_GIT_NAME AR_RESOLVER_GIT_EMAIL AR_NOTES_GIT_NAME AR_NOTES_GIT_EMAIL
-
-    if ! "$SCRIPT_DIR/scripts/ar-notes" acquire-topic \
+    export_instruction_provider_env
+    if ! provider_call agentic-notes setup \
         --project-dir "$WORKSPACE_DIR" \
-        --topic "$AR_AGENT_TOPIC" \
-        --main-agent "${AR_MAIN_AGENT:-research-coordinator}" \
-        --user-id "${AR_USER_ID:-$USER}" \
         --branch "${WORKSPACE_GIT_BRANCH:-}" \
-        --session-id "$AR_SESSION_ID" >/dev/null; then
-        echo "Error: Could not acquire topic lease for '$AR_AGENT_TOPIC'."
-        echo "Only one top-level agent may work on a topic at a time."
+        --session-id "${AR_SESSION_ID:-}" \
+        --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
+        --tool "$AR_CLI_TOOL"; then
+        echo "Error: Instruction provider 'agentic-notes' setup failed."
         exit 1
     fi
-    TOPIC_LEASE_ACQUIRED=true
+    AGENTIC_NOTES_PROVIDER_SETUP=true
 }
 
-release_agent_topic_lease() {
-    [[ "$TOPIC_LEASE_ACQUIRED" == "true" ]] || return 0
-    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
-    [[ -n "${AR_AGENT_TOPIC:-}" && -n "${AR_SESSION_ID:-}" ]] || return 0
+setup_instruction_providers() {
+    local provider_name
 
-    "$SCRIPT_DIR/scripts/ar-notes" release-topic \
-        --project-dir "$WORKSPACE_DIR" \
-        --topic "$AR_AGENT_TOPIC" \
-        --session-id "$AR_SESSION_ID" >/dev/null || \
-        echo "Warning: Could not release topic lease for '$AR_AGENT_TOPIC'." >&2
+    export_instruction_provider_env
+
+    for provider_name in $(enabled_provider_names); do
+        if [[ "$provider_name" == "agentic-notes" && "$AGENTIC_NOTES_PROVIDER_SETUP" == "true" ]]; then
+            continue
+        fi
+        if ! provider_call "$provider_name" setup \
+            --project-dir "$WORKSPACE_DIR" \
+            --branch "${WORKSPACE_GIT_BRANCH:-}" \
+            --session-id "${AR_SESSION_ID:-}" \
+            --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
+            --tool "$AR_CLI_TOOL"; then
+            echo "Error: Instruction provider '$provider_name' setup failed."
+            exit 1
+        fi
+    done
+}
+
+cleanup_instruction_providers() {
+    local provider_name
+
+    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_INSTRUCTION_PROVIDERS
+    export AR_AGENT_BRANCH AR_AGENT_BRANCH_ID AR_AGENT_TOPIC AR_AGENT_BRANCH_PREFIX AR_BRANCH_OWNERSHIP
+    export AR_USER_ID AR_PROJECT_ID AR_SESSION_ID
+    export AR_AGENTIC_STATE_BRANCH AR_RESOLVER_GIT_NAME AR_RESOLVER_GIT_EMAIL AR_NOTES_GIT_NAME AR_NOTES_GIT_EMAIL
+    export AR_NOTES_CLI AR_TOOL_CLI AR_CLI_TOOL TEST_MODE RENDER_ONLY
+    AR_NOTES_CLI="$(ar_notes_cli_host_path)"
+    AR_TOOL_CLI="$(ar_tool_cli_host_path)"
+
+    for provider_name in $(enabled_provider_names); do
+        provider_call "$provider_name" cleanup \
+            --project-dir "$WORKSPACE_DIR" \
+            --branch "${WORKSPACE_GIT_BRANCH:-}" \
+            --session-id "${AR_SESSION_ID:-}" \
+            --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
+            --tool "$AR_CLI_TOOL" >/dev/null || true
+    done
 }
 
 launcher_cleanup() {
@@ -1978,13 +2636,14 @@ launcher_cleanup() {
     if [[ "$OPTIONAL_CLEANUP_ENABLED" == "true" ]]; then
         run_optional_skill_hooks cleanup || true
     fi
-    release_agent_topic_lease || true
+    cleanup_instruction_providers || true
+    cleanup_branch_guard || true
     return "$status"
 }
 
-setup_agentic_notes_refresh_loop() {
-    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
+setup_provider_refresh_loops() {
     [[ "$TEST_MODE" == "true" ]] && return 0
+    [[ "$RENDER_ONLY" == "true" ]] && return 0
 
     case "${AR_NOTES_AUTO_REFRESH:-true}" in
         0|false|False|FALSE|no|No|NO|off|Off|OFF)
@@ -2031,27 +2690,52 @@ setup_agentic_notes_refresh_loop() {
         rm -f "$heartbeat_file"
     ) >/dev/null 2>&1 &
 
-    "$SCRIPT_DIR/scripts/ar-notes" refresh-loop \
-        --project-dir "$WORKSPACE_DIR" \
-        --heartbeat-dir "$heartbeat_dir" \
-        --interval-seconds "$interval" \
-        --stale-seconds "$stale_seconds" >>"$refresh_log" 2>&1 &
+    local provider_name
+    for provider_name in $(enabled_provider_names); do
+        provider_call "$provider_name" refresh-loop \
+            --project-dir "$WORKSPACE_DIR" \
+            --heartbeat-dir "$heartbeat_dir" \
+            --interval-seconds "$interval" \
+            --stale-seconds "$stale_seconds" \
+            --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
+            --tool "$AR_CLI_TOOL" >>"$refresh_log" 2>&1 &
+    done
 }
 
-setup_agentic_notes_instruction() {
-    [[ -x "$SCRIPT_DIR/scripts/ar-notes" ]] || return 0
+setup_provider_instruction_sections() {
     [[ -n "${INSTRUCTION_TARGET:-}" ]] || return 0
+    local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
+    local temp_path provider_name section
 
-    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_AGENT_TOPIC AR_USER_ID AR_PROJECT_ID
+    [[ -f "$instruction_path" ]] || return 0
+
+    export AR_STATE_ROOT AR_ORG_NOTES_REPO AR_MAIN_AGENT AR_INSTRUCTION_PROVIDERS
+    export AR_AGENT_BRANCH AR_AGENT_BRANCH_ID AR_AGENT_TOPIC AR_AGENT_BRANCH_PREFIX AR_BRANCH_OWNERSHIP
+    export AR_USER_ID AR_PROJECT_ID AR_SESSION_ID
     export AR_AGENTIC_STATE_BRANCH AR_NOTES_AUTO_REFRESH AR_SANDBOX
+    export AR_NOTES_CLI AR_TOOL_CLI AR_CLI_TOOL TEST_MODE RENDER_ONLY
+    AR_NOTES_CLI="$(ar_notes_cli_host_path)"
+    AR_TOOL_CLI="$(ar_tool_cli_host_path)"
 
-    if ! "$SCRIPT_DIR/scripts/ar-notes" generate-instructions \
-        --project-dir "$WORKSPACE_DIR" \
-        --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
-        --tool "$AR_CLI_TOOL" \
-        --skip-ensure-project-state >/dev/null; then
-        echo "Warning: Could not update Agentic Notes instruction section."
-    fi
+    temp_path="${instruction_path}.tmp"
+    cp "$instruction_path" "$temp_path"
+
+    for provider_name in $(enabled_provider_names); do
+        section="$(
+            provider_call "$provider_name" render-instruction \
+                --project-dir "$WORKSPACE_DIR" \
+                --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
+                --tool "$AR_CLI_TOOL" 2>/dev/null || true
+        )"
+        if [[ -n "$section" ]]; then
+            {
+                printf '\n'
+                printf '%s\n' "$section"
+            } >> "$temp_path"
+        fi
+    done
+
+    mv "$temp_path" "$instruction_path"
 }
 
 merge_managed_hook_json() {
@@ -2151,34 +2835,26 @@ def run_command(command: list[str]) -> tuple[bool, str]:
     return False, output or f"{command[0]} exited with status {result.returncode}."
 
 
-def run_refresh(notes_cli: str, project_dir: str, agent_type: str, tool: str) -> tuple[bool, str]:
-    if not notes_cli:
-        return False, "AR_NOTES_CLI was not configured."
-    refresh_command = [sys.executable, notes_cli, "refresh", "--project-dir", project_dir]
-    generate_command = [
-        sys.executable,
-        notes_cli,
-        "generate-instructions",
+def run_refresh(provider_refresh_cli: str, instruction_path: str, project_dir: str, agent_type: str, tool: str) -> tuple[bool, str]:
+    if not provider_refresh_cli:
+        return False, "AR_PROVIDER_REFRESH_CLI was not configured."
+    command = [
+        provider_refresh_cli,
+        "--instruction-path",
+        instruction_path,
         "--project-dir",
         project_dir,
         "--agent-type",
         agent_type,
         "--tool",
         tool,
-        "--skip-ensure-project-state",
     ]
-    ok, refresh_output = run_command(refresh_command)
-    if not ok:
-        return False, refresh_output
-    ok, generate_output = run_command(generate_command)
-    if not ok:
-        return False, generate_output
-    return True, "\n".join(part for part in (refresh_output, generate_output) if part) or "Agentic Notes refresh completed."
+    return run_command(command)
 
 
 def main() -> None:
     instruction_path = sys.argv[1] if len(sys.argv) > 1 else "AGENTS.md"
-    notes_cli = sys.argv[2] if len(sys.argv) > 2 else ""
+    provider_refresh_cli = sys.argv[2] if len(sys.argv) > 2 else ""
     project_dir = sys.argv[3] if len(sys.argv) > 3 else "."
     agent_type = sys.argv[4] if len(sys.argv) > 4 else "research-coordinator"
     tool = sys.argv[5] if len(sys.argv) > 5 else "codex"
@@ -2187,11 +2863,11 @@ def main() -> None:
     except Exception:
         hook_input = {}
     event_name = hook_input.get("hook_event_name") or "SessionStart"
-    refreshed, refresh_status = run_refresh(notes_cli, project_dir, agent_type, tool)
+    refreshed, refresh_status = run_refresh(provider_refresh_cli, instruction_path, project_dir, agent_type, tool)
     refresh_sentence = (
-        "Agentic Researcher just pulled the org/project Agentic Notes state and rematerialized the rendered instruction file."
+        "Agentic Researcher just refreshed configured instruction providers and rematerialized the rendered instruction file."
         if refreshed
-        else f"Agentic Researcher tried to pull and rematerialize Agentic Notes, but refresh failed: {refresh_status}"
+        else f"Agentic Researcher tried to refresh configured instruction providers, but refresh failed: {refresh_status}"
     )
     message = (
         "You have just experienced context compaction. Treat this moment as "
@@ -2338,12 +3014,17 @@ build_env_args() {
         --env "AR_INSTALL_DIR=$(ar_install_env_path)"
         --env "AR_NOTES_CLI=$(ar_notes_cli_env_path)"
         --env "AR_TOOL_CLI=$(ar_tool_cli_env_path)"
+        --env "AR_PROVIDER_REFRESH_CLI=$(provider_refresh_cli_env_path)"
         --env "AR_JOB_BACKEND=${JOB_BACKEND:-none}"
         --env "AR_STATE_ROOT=$STATE_ROOT"
         --env "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
         --env "AR_MAIN_AGENT=${AR_MAIN_AGENT:-research-coordinator}"
+        --env "AR_INSTRUCTION_PROVIDERS=${AR_INSTRUCTION_PROVIDERS:-agentic-notes,experiment-log}"
+        --env "AR_AGENT_BRANCH=${AR_AGENT_BRANCH:-}"
+        --env "AR_AGENT_BRANCH_ID=${AR_AGENT_BRANCH_ID:-}"
         --env "AR_AGENT_TOPIC=${AR_AGENT_TOPIC:-}"
         --env "AR_AGENT_BRANCH_PREFIX=${AR_AGENT_BRANCH_PREFIX:-}"
+        --env "AR_BRANCH_OWNERSHIP=${AR_BRANCH_OWNERSHIP:-exclusive}"
         --env "AR_SESSION_ID=${AR_SESSION_ID:-}"
         --env "AR_USER_ID=${AR_USER_ID:-$USER}"
         --env "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
@@ -2382,8 +3063,9 @@ print_debug_launch() {
     echo "Launch debug:"
     echo "  Sandbox:        $AR_SANDBOX"
     echo "  Tool:           $AR_CLI_TOOL"
-    echo "  Agent topic:    ${AR_AGENT_TOPIC:-none}"
-    echo "  Topic branch:   ${AR_AGENT_BRANCH_PREFIX:-none}"
+    echo "  Agent branch:   ${AR_AGENT_BRANCH:-none}"
+    echo "  Current branch: ${WORKSPACE_GIT_BRANCH:-none}"
+    echo "  Ownership:      ${AR_BRANCH_OWNERSHIP:-exclusive}"
     echo "  Job backend:    ${JOB_BACKEND:-none}"
     echo "  Workspace:      $WORKSPACE_DIR"
     echo "  State root:     $STATE_ROOT"
@@ -2425,36 +3107,50 @@ main() {
     profile_step "validate_workspace" validate_workspace
     profile_step "validate_cli_workspace" validate_cli_workspace
     profile_step "validate_project_id" validate_project_id
-    profile_step "validate_agent_topic" validate_agent_topic
-    profile_step "validate_api_key" validate_api_key
+    profile_step "setup_storage" setup_storage
+    trap launcher_cleanup EXIT
+    profile_step "setup_agentic_notes_provider" setup_agentic_notes_provider_once
+    profile_step "resolve_main_agent_metadata" resolve_main_agent_metadata
+    profile_step "prepare_agent_branch" prepare_agent_branch
+    if [[ "$RENDER_ONLY" != "true" ]]; then
+        profile_step "validate_api_key" validate_api_key
+    fi
     profile_step "resolve_optional_skills" resolve_optional_skills
     profile_step "validate_optional_skills" validate_optional_skills
-    profile_step "optional preflight hooks" run_optional_skill_hooks preflight
-    profile_step "ensure_container_image" ensure_container_image
-    profile_step "validate_container" validate_container
-    profile_step "setup_storage" setup_storage
-    profile_step "setup_agentic_notes_state" setup_agentic_notes_state
-    profile_step "setup_agent_topic_lease" setup_agent_topic_lease
-    trap launcher_cleanup EXIT
+    if [[ "$RENDER_ONLY" != "true" ]]; then
+        profile_step "optional preflight hooks" run_optional_skill_hooks preflight
+        profile_step "ensure_container_image" ensure_container_image
+        profile_step "validate_container" validate_container
+    fi
+    profile_step "setup_instruction_providers" setup_instruction_providers
     profile_step "setup_instruction_file" setup_instruction_file
     profile_step "setup_main_agent_block" setup_main_agent_instruction_block
-    profile_step "setup_agent_topic_block" setup_agent_topic_instruction_block
+    profile_step "setup_branch_instruction_block" setup_branch_instruction_block
     profile_step "setup_skill_instruction_blocks" setup_skill_instruction_blocks
-    profile_step "setup_agentic_notes_instruction" setup_agentic_notes_instruction
-    profile_step "setup_compaction_hooks" setup_compaction_hooks
-    profile_step "translate_tool_args" translate_tool_args
-    profile_step "setup_auth_binds" setup_auth_binds
-    profile_step "setup_research_binds" setup_research_binds
-    profile_step "setup_optional_binds" setup_optional_binds
-    profile_step "optional setup hooks" run_optional_skill_hooks setup
-    profile_step "build_env_args" build_env_args
-    profile_step "print_debug_launch" print_debug_launch
-
-    profile_step "cli setup_runtime" cli_call setup_runtime
+    if [[ "$RENDER_ONLY" != "true" ]]; then
+        profile_step "setup_compaction_hooks" setup_compaction_hooks
+        profile_step "translate_tool_args" translate_tool_args
+        profile_step "setup_auth_binds" setup_auth_binds
+        profile_step "setup_research_binds" setup_research_binds
+        profile_step "setup_optional_binds" setup_optional_binds
+        profile_step "optional setup hooks" run_optional_skill_hooks setup
+        profile_step "build_env_args" build_env_args
+        profile_step "print_debug_launch" print_debug_launch
+        profile_step "cli setup_runtime" cli_call setup_runtime
+    fi
     profile_step "setup_project_skills" setup_project_skills
     profile_step "setup_project_agents" setup_project_agents
     profile_step "setup_subagent_catalog" setup_subagent_catalog_instruction_block
-    profile_step "setup_notes_refresh_loop" setup_agentic_notes_refresh_loop
+    profile_step "setup_provider_instruction_sections" setup_provider_instruction_sections
+    if [[ -n "${INSTRUCTION_TARGET:-}" ]]; then
+        profile_step "normalize_instruction_file" normalize_markdown_file "$WORKSPACE_DIR/$INSTRUCTION_TARGET"
+    fi
+    if [[ "$RENDER_ONLY" == "true" ]]; then
+        profile_elapsed "startup setup total" "$startup_start_us"
+        echo "Rendered instruction file: $WORKSPACE_DIR/$INSTRUCTION_TARGET"
+        exit 0
+    fi
+    profile_step "setup_provider_refresh_loops" setup_provider_refresh_loops
     profile_elapsed "startup setup total" "$startup_start_us"
 
     # Display banner
@@ -2486,9 +3182,10 @@ main() {
     fi
 
     echo "Workspace:      $WORKSPACE_DIR"
-    if [[ -n "${AR_AGENT_TOPIC:-}" ]]; then
-        echo "Agent topic:    $AR_AGENT_TOPIC"
-        echo "Topic branch:   ${AR_AGENT_BRANCH_PREFIX:-agent/$AR_AGENT_TOPIC}"
+    if [[ -n "${AR_AGENT_BRANCH:-}" ]]; then
+        echo "Agent branch:   $AR_AGENT_BRANCH"
+        echo "Current branch: ${WORKSPACE_GIT_BRANCH:-$AR_AGENT_BRANCH}"
+        echo "Ownership:      ${AR_BRANCH_OWNERSHIP:-exclusive}"
     fi
     if [[ "$AR_SANDBOX" == "none" ]]; then
         echo "Sandboxed:      No (sandbox none; full host filesystem access)"

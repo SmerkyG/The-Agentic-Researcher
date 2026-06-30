@@ -12,7 +12,6 @@ from contextlib import ExitStack, contextmanager
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -30,9 +29,7 @@ except ImportError:  # pragma: no cover - Windows fallback
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
-NOTES_BEGIN = "<!-- AGENTIC-RESEARCHER-NOTES-START -->"
-NOTES_END = "<!-- AGENTIC-RESEARCHER-NOTES-END -->"
+REPO_ROOT = SCRIPT_DIR.parents[1]
 ALWAYS_INJECTED_NOTE = "always-injected.md"
 ALWAYS_INJECTED_NOTE_STEM = "always-injected"
 ALL_AGENTS_TYPE = "all-agents"
@@ -90,10 +87,10 @@ def user_id(value: str | None = None) -> str:
 
 
 def agent_topic(value: str | None = None) -> str:
-    raw = value or os.environ.get("AR_AGENT_TOPIC") or ""
+    raw = value or os.environ.get("AR_AGENT_BRANCH_ID") or os.environ.get("AR_AGENT_TOPIC") or ""
     topic = slugify(raw, default="")
     if not topic:
-        raise ArNotesError("agent topic is required; pass --agent-topic to agentic-researcher or set AR_AGENT_TOPIC")
+        raise ArNotesError("branch log id is required; launch from an agent branch or set AR_AGENT_BRANCH_ID")
     return topic
 
 
@@ -431,7 +428,7 @@ def ensure_project_checkout(project_dir: Path, explicit_project_id: str | None =
 def initial_summary() -> str:
     return (
         "# Experiment Summary\n\n"
-        "Read this topic-local summary first. Open individual experiment files only when needed.\n\n"
+        "Read this branch-local summary first. Open individual experiment files only when needed.\n\n"
         "| ID | User | Status | Description | Key Result | Commit |\n"
         "|---|---|---|---|---|---|\n"
     )
@@ -714,27 +711,30 @@ def scoped_on_demand_topics(project_dir: Path, agent_type_value: str) -> list[st
     return sorted(topics)
 
 
-def build_notes_section(project_dir: Path, agent_type_value: str, *, markers: bool = True) -> str:
+def build_notes_section(
+    project_dir: Path,
+    agent_type_value: str,
+    *,
+    include_guidance: bool = True,
+) -> str:
     always_parts = compose_scoped_note(project_dir, agent_type_value, ALWAYS_INJECTED_NOTE_STEM)
     topics = scoped_on_demand_topics(project_dir, agent_type_value)
 
     lines: list[str] = []
-    if markers:
-        lines.append(NOTES_BEGIN)
-        lines.append("")
-    lines.extend(
-        [
-            "## Agentic Notes",
-            "",
-            "Git-backed Agentic Notes contain helpful knowledge about packages, tools, architectures, project conventions, and agent-type-specific work.",
-            "",
-            "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed on-demand note topics, read the rendered note with `\"${AR_NOTES_CLI:-scripts/ar-notes}\" read-note --project-dir . --agent-type "
-            f"{agent_type_value} TOPIC` if you have not read it since the last compaction. That command dynamically combines all available org/project and all-agents/agent-type portions for this project and agent type.",
-            "",
-            "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies across every agent in the organization, update org `all-agents` `always-injected.md`. If it applies across this agent type in the organization, update org agent-type `always-injected.md`. If it applies to every agent in this project, update project `all-agents` `always-injected.md`. If it applies only to this agent type within this project, update project agent-type `always-injected.md`.",
-            "",
-        ]
-    )
+    if include_guidance:
+        lines.extend(
+            [
+                "## Agentic Notes",
+                "",
+                "Git-backed Agentic Notes contain helpful knowledge about packages, tools, architectures, project conventions, and agent-type-specific work.",
+                "",
+                "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed on-demand note topics, read the rendered note with `\"${AR_NOTES_CLI:-scripts/tools/ar-notes}\" read-note --project-dir . --agent-type "
+                f"{agent_type_value} TOPIC` if you have not read it since the last compaction. That command dynamically combines all available org/project and all-agents/agent-type portions for this project and agent type.",
+                "",
+                "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies across every agent in the organization, update org `all-agents` `always-injected.md`. If it applies across this agent type in the organization, update org agent-type `always-injected.md`. If it applies to every agent in this project, update project `all-agents` `always-injected.md`. If it applies only to this agent type within this project, update project agent-type `always-injected.md`.",
+                "",
+            ]
+        )
 
     append_composed_note(lines, "Always-Injected Notes", always_parts)
 
@@ -743,9 +743,6 @@ def build_notes_section(project_dir: Path, agent_type_value: str, *, markers: bo
         lines.extend([f"- `{topic}`" for topic in topics])
         lines.append("")
 
-    if markers:
-        lines.append(NOTES_END)
-        lines.append("")
     return "\n".join(lines)
 
 
@@ -770,31 +767,28 @@ def render_instruction_template(target: Path) -> None:
     target.write_text(text, encoding="utf-8")
 
 
-def strip_notes_section(text: str) -> str:
-    pattern = re.compile(
-        rf"\n?{re.escape(NOTES_BEGIN)}.*?{re.escape(NOTES_END)}\n?",
-        flags=re.S,
-    )
-    stripped = pattern.sub("\n", text).rstrip()
-    return stripped + "\n"
-
-
 def generate_instructions(args: argparse.Namespace) -> None:
     project_dir = Path(args.project_dir).resolve()
     active_agent_type = agent_type(args.agent_type)
     target = project_dir / instruction_target(args.tool)
     if not target.exists():
         render_instruction_template(target)
-    text = strip_notes_section(target.read_text(encoding="utf-8"))
+    text = target.read_text(encoding="utf-8")
     if not getattr(args, "skip_ensure_project_state", False):
         ensure_project_state(project_dir)
-    notes_section = build_notes_section(project_dir, active_agent_type, markers=True)
+    notes_section = build_notes_section(project_dir, active_agent_type)
     target.write_text(text.rstrip() + "\n\n" + notes_section, encoding="utf-8")
 
 
 def render_section(args: argparse.Namespace) -> None:
     project_dir = Path(args.project_dir).resolve()
-    print(build_notes_section(project_dir, agent_type(args.agent_type), markers=False))
+    print(
+        build_notes_section(
+            project_dir,
+            agent_type(args.agent_type),
+            include_guidance=not getattr(args, "dynamic_only", False),
+        )
+    )
 
 
 def render_sections(args: argparse.Namespace) -> None:
@@ -811,7 +805,7 @@ def render_sections(args: argparse.Namespace) -> None:
             raise ArNotesError(f"invalid agent type: {active_agent_type}")
         seen.add(active_agent_type)
         (output_dir / f"{active_agent_type}.md").write_text(
-            build_notes_section(project_dir, active_agent_type, markers=False),
+            build_notes_section(project_dir, active_agent_type),
             encoding="utf-8",
         )
 
@@ -1313,91 +1307,6 @@ def format_utc(value: dt.datetime) -> str:
     return value.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def parse_utc(value: Any) -> dt.datetime | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        return dt.datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
-    except ValueError:
-        return None
-
-
-def lease_is_active(lease: dict[str, Any], now: dt.datetime) -> bool:
-    if lease.get("status") != "active":
-        return False
-    expires_at = parse_utc(lease.get("expires_at"))
-    return expires_at is None or expires_at > now
-
-
-def lease_path(repo: Path, topic: str) -> Path:
-    return topic_dir(repo, topic) / "ACTIVE.yaml"
-
-
-def acquire_topic(args: argparse.Namespace) -> None:
-    project_dir = Path(args.project_dir).resolve()
-    topic = agent_topic(args.topic)
-    session_id = str(args.session_id or "").strip()
-    if not session_id:
-        raise ArNotesError("acquire-topic requires --session-id")
-    repo = ensure_project_state(project_dir)
-    changed_paths = ensure_topic_state_files(repo, topic)
-    path = lease_path(repo, topic)
-    existing = safe_load_yaml(path)
-    now = utc_now()
-    existing_session = str(existing.get("session_id") or "")
-    if lease_is_active(existing, now) and existing_session and existing_session != session_id:
-        raise ArNotesError(
-            f"topic '{topic}' is already active for session {existing_session} "
-            f"started by {existing.get('user_id') or 'unknown'} at {existing.get('started_at') or 'unknown time'}"
-        )
-    expires_at = now + dt.timedelta(seconds=max(60, int(args.lease_seconds)))
-    write_yaml(
-        path,
-        {
-            "schema_version": 1,
-            "topic": topic,
-            "status": "active",
-            "session_id": session_id,
-            "main_agent": args.main_agent or os.environ.get("AR_MAIN_AGENT") or "research-coordinator",
-            "user_id": args.user_id or user_id(),
-            "host": socket.gethostname(),
-            "workspace": str(project_dir),
-            "branch": args.branch or "",
-            "started_at": format_utc(now),
-            "heartbeat_at": format_utc(now),
-            "expires_at": format_utc(expires_at),
-        },
-    )
-    changed_paths.append(path)
-    commit_if_changed(repo, f"topic: acquire {topic}", changed_paths)
-    if not push(repo, state_branch()):
-        raise ArNotesError(f"topic '{topic}' lease push was rejected")
-    print(topic)
-
-
-def release_topic(args: argparse.Namespace) -> None:
-    project_dir = Path(args.project_dir).resolve()
-    topic = agent_topic(args.topic)
-    session_id = str(args.session_id or "").strip()
-    if not session_id:
-        raise ArNotesError("release-topic requires --session-id")
-    repo = ensure_project_state(project_dir)
-    path = lease_path(repo, topic)
-    existing = safe_load_yaml(path)
-    if not existing:
-        return
-    if str(existing.get("session_id") or "") != session_id:
-        return
-    now = utc_now()
-    existing["status"] = "released"
-    existing["released_at"] = format_utc(now)
-    existing["heartbeat_at"] = format_utc(now)
-    write_yaml(path, existing)
-    if commit_if_changed(repo, f"topic: release {topic}", [path]) and not push(repo, state_branch()):
-        raise ArNotesError(f"topic '{topic}' lease release push was rejected")
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1483,22 +1392,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--topic", default=os.environ.get("AR_AGENT_TOPIC"))
     p.set_defaults(func=log_correction)
 
-    p = sub.add_parser("acquire-topic")
-    p.add_argument("--project-dir", required=True)
-    p.add_argument("--topic", default=os.environ.get("AR_AGENT_TOPIC"))
-    p.add_argument("--main-agent", default=os.environ.get("AR_MAIN_AGENT", "research-coordinator"))
-    p.add_argument("--user-id", default=os.environ.get("AR_USER_ID"))
-    p.add_argument("--branch", default="")
-    p.add_argument("--session-id", default=os.environ.get("AR_SESSION_ID"))
-    p.add_argument("--lease-seconds", type=int, default=7 * 24 * 60 * 60)
-    p.set_defaults(func=acquire_topic)
-
-    p = sub.add_parser("release-topic")
-    p.add_argument("--project-dir", required=True)
-    p.add_argument("--topic", default=os.environ.get("AR_AGENT_TOPIC"))
-    p.add_argument("--session-id", default=os.environ.get("AR_SESSION_ID"))
-    p.set_defaults(func=release_topic)
-
     return parser
 
 
@@ -1554,8 +1447,6 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
         add_topic_lock(correction_topic_for_lock(args))
     elif command == "log-experiment":
         add_topic_lock(experiment_topic_for_lock(args))
-    elif command in {"acquire-topic", "release-topic"}:
-        add_topic_lock(getattr(args, "topic", None))
     elif command == "refresh":
         if os.environ.get("AR_ORG_NOTES_REPO"):
             add_org_lock()
@@ -1610,6 +1501,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("command")
         parser.add_argument("--project-dir", required=True)
         parser.add_argument("--agent-type", default=None)
+        parser.add_argument("--dynamic-only", action="store_true")
         args = parser.parse_args(argv)
         try:
             with ExitStack() as stack:

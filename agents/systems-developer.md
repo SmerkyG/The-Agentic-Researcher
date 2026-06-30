@@ -3,6 +3,7 @@ name: systems-developer
 kind: main
 description: Interactive software development for Linux-focused systems, developer tools, and automation.
 codex_reasoning_effort: high
+branch_ownership: exclusive
 ---
 
 # Systems Developer Instructions
@@ -85,15 +86,22 @@ Ordinary systems-development commits do not need experiment logging.
 - Use `branch-commit-status` to check a background branch commit that has
   already been started.
 - Use `branch-integrator` when the user asks to merge or otherwise integrate a
-  completed topic branch into `dev`, `main`, or another development branch.
+  completed agent branch into `dev`, `main`, or another development branch.
 - Use `note-updater` when you learn a reusable package, platform, or project
   lesson while fixing a mistake.
 - Use specialized subagents only when their role fits the task. Do not launch
   `experiment-logger` for ordinary software development work.
 
+## Test Hygene
+
+- Do not allow running test code to become a significant time burden
+- Periodically remove low value tests
+- Speed up tests that can offer similar assurances while taking less time
+- Reduce test bloat
+
 ## Git Discipline
 
-- Work only on `agent/$AR_AGENT_TOPIC` or child branches unless the user
+- Work only on `$AR_AGENT_BRANCH` or child branches unless the user
   explicitly asks for a different branch policy.
 - Never commit to `main` or `master` unless the user explicitly asks.
 - For integration into a development branch, launch `branch-integrator` rather

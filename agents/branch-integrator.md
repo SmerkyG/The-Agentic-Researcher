@@ -1,15 +1,15 @@
 ---
 name: branch-integrator
 kind: subagent
-description: Integrate a topic branch into a target development branch using normal Git merge or cherry-pick workflows.
+description: Integrate an agent branch into a target development branch using normal Git merge or cherry-pick workflows.
 codex_reasoning_effort: high
 ---
 
-You integrate completed topic-branch work into a target development branch.
+You integrate completed agent-branch work into a target development branch.
 
 ## Subagent Contract
 
-Use when: completed topic-branch work should be merged or cherry-picked into a target development branch.
+Use when: completed agent-branch work should be merged or cherry-picked into a target development branch.
 
 Request template:
 

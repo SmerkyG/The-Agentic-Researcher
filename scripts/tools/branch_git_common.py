@@ -130,16 +130,21 @@ def current_commit(project_dir: Path) -> str:
 
 
 def validate_topic_branch(branch: str, topic: str | None) -> str:
-    topic_value = slugify(topic or os.environ.get("AR_AGENT_TOPIC", ""), default="")
+    topic_value = slugify(
+        topic
+        or os.environ.get("AR_AGENT_BRANCH_ID", "")
+        or os.environ.get("AR_AGENT_TOPIC", ""),
+        default="",
+    )
     if not topic_value:
         match = re.match(r"^agent/([^/]+)(?:/.*)?$", branch)
         if match:
             topic_value = slugify(match.group(1), default="")
     if not topic_value:
-        raise ToolError("branch snapshot request needs topic or AR_AGENT_TOPIC")
+        raise ToolError("branch snapshot request needs branch_log, AR_AGENT_BRANCH_ID, or an agent/* branch")
     prefix = f"agent/{topic_value}"
     if branch != prefix and not branch.startswith(f"{prefix}/"):
-        raise ToolError(f"current branch '{branch}' does not match topic branch '{prefix}'")
+        raise ToolError(f"current branch '{branch}' does not match agent branch '{prefix}'")
     return topic_value
 
 

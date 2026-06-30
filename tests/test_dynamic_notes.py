@@ -14,7 +14,7 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-AR_NOTES = REPO_ROOT / "scripts" / "ar-notes"
+AR_NOTES = REPO_ROOT / "scripts" / "tools" / "ar-notes"
 AGENTIC_RESEARCHER = REPO_ROOT / "agentic-researcher"
 
 
@@ -104,6 +104,10 @@ def base_env(tmp_path: Path, org_remote: Path | None = None) -> dict[str, str]:
             "AR_AGENTIC_STATE_BRANCH": "agentic/state",
             "AR_NOTES_GIT_NAME": "Agentic Test",
             "AR_NOTES_GIT_EMAIL": "agentic-test@example.com",
+            "AR_NOTES_AUTO_REFRESH": "false",
+            "UV_CACHE_DIR": str(REPO_ROOT / ".pytest_cache" / "uv" / "cache"),
+            "UV_PYTHON_INSTALL_DIR": str(REPO_ROOT / ".pytest_cache" / "uv" / "python"),
+            "UV_TOOL_DIR": str(REPO_ROOT / ".pytest_cache" / "uv" / "tools"),
         }
     )
     if org_remote is not None:
@@ -578,12 +582,12 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
 
     result = run(
         [
-            sys.executable,
-            str(hook),
-            str(project / "AGENTS.md"),
-            str(AR_NOTES),
-            str(project),
-            "gpu-kernel-engineer",
+                sys.executable,
+                str(hook),
+                str(project / "AGENTS.md"),
+                str(REPO_ROOT / "scripts" / "provider-refresh"),
+                str(project),
+                "research-coordinator",
             "codex",
         ],
         env=env,
@@ -741,88 +745,64 @@ def test_project_state_infers_project_id_from_git_remote(tmp_path: Path) -> None
     ).exists()
 
 
-def test_topic_lease_blocks_same_topic_but_not_other_topics(tmp_path: Path) -> None:
+def test_launcher_branch_guard_blocks_same_branch_but_not_other_branches(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
+    other_project = clone_project(tmp_path, project_remote, "other-project")
+    git(other_project, "checkout", "-b", "agent/paper-draft")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = base_env(tmp_path)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["AR_INSTRUCTION_PROVIDERS"] = "none"
 
-    first = run(
-        [
-            str(AR_NOTES),
-            "acquire-topic",
-            "--project-dir",
-            str(project),
-            "--topic",
-            "kernel-search",
-            "--session-id",
-            "session-one",
-        ],
-        env=env,
+    guard_dir = Path(env["AR_STATE_ROOT"]) / "branch-guards" / env["AR_PROJECT_ID"] / "agent-kernel-search"
+    guard_dir.mkdir(parents=True)
+    (guard_dir / "session-one.guard").write_text(
+        "\n".join(
+            [
+                "session_id=session-one",
+                "main_agent=research-coordinator",
+                "pid=12345",
+                "host=test-host",
+                f"workspace={project}",
+                "started_at=2026-06-30T00:00:00Z",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
     )
+
     blocked = run(
         [
-            str(AR_NOTES),
-            "acquire-topic",
-            "--project-dir",
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
             str(project),
-            "--topic",
-            "kernel-search",
-            "--session-id",
-            "session-two",
         ],
         env=env,
         check=False,
     )
     other = run(
         [
-            str(AR_NOTES),
-            "acquire-topic",
-            "--project-dir",
-            str(project),
-            "--topic",
-            "paper-draft",
-            "--session-id",
-            "session-three",
-        ],
-        env=env,
-    )
-    run(
-        [
-            str(AR_NOTES),
-            "release-topic",
-            "--project-dir",
-            str(project),
-            "--topic",
-            "kernel-search",
-            "--session-id",
-            "session-one",
-        ],
-        env=env,
-    )
-    reacquired = run(
-        [
-            str(AR_NOTES),
-            "acquire-topic",
-            "--project-dir",
-            str(project),
-            "--topic",
-            "kernel-search",
-            "--session-id",
-            "session-two",
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
+            str(other_project),
         ],
         env=env,
     )
 
-    state = state_checkout(env)
-    kernel_active = yaml.safe_load((state / ".agentic" / "topics" / "kernel-search" / "ACTIVE.yaml").read_text())
-    paper_active = yaml.safe_load((state / ".agentic" / "topics" / "paper-draft" / "ACTIVE.yaml").read_text())
-    assert first.stdout.strip() == "kernel-search"
     assert blocked.returncode == 1
-    assert "already active" in blocked.stderr
-    assert other.stdout.strip() == "paper-draft"
-    assert reacquired.stdout.strip() == "kernel-search"
-    assert kernel_active["session_id"] == "session-two"
-    assert paper_active["session_id"] == "session-three"
+    assert "appears to be using branch 'agent/kernel-search'" in blocked.stdout
+    assert "agent/alice" in blocked.stdout
+    assert other.returncode == 0
+    assert "Agent branch:   agent/paper-draft" in other.stdout
 
 
 def test_project_remote_name_uses_repo_basename() -> None:
@@ -1294,7 +1274,7 @@ def make_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def test_launcher_infers_agent_topic_from_topic_branch(tmp_path: Path) -> None:
+def test_launcher_uses_unoccupied_agent_branch(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
     fake_bin = tmp_path / "bin"
@@ -1317,21 +1297,28 @@ def test_launcher_infers_agent_topic_from_topic_branch(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Agent topic:    kernel-search" in result.stdout
+    assert "Agent branch:   agent/kernel-search" in result.stdout
+    assert "Ownership:      exclusive" in result.stdout
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
-    assert "<!-- AGENTIC-RESEARCHER-TOPIC-START topic=kernel-search -->" in instruction_text
+    assert "## Agent Branch" in instruction_text
+    assert "Active branch: `agent/kernel-search`." in instruction_text
+    assert "Branch ownership mode: `exclusive`." in instruction_text
     assert "agent/kernel-search/exp/<experiment-name>" in instruction_text
 
 
-def test_launcher_refuses_protected_branch_for_agent_topic(tmp_path: Path) -> None:
+def test_launcher_render_only_rewrites_managed_instruction_and_normalizes_whitespace(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
-    git(project, "switch", "main")
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = base_env(tmp_path)
-    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    (project / "AGENTS.md").write_text(
+        "# Research Agent Instructions\n\n"
+        "stale generated base\n"
+        "\n\n\n\n\n"
+        "<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START name=research-coordinator -->\n"
+        "old generated main agent\n"
+        "<!-- AGENTIC-RESEARCHER-MAIN-AGENT-END -->\n",
+        encoding="utf-8",
+    )
 
     result = run(
         [
@@ -1340,8 +1327,50 @@ def test_launcher_refuses_protected_branch_for_agent_topic(tmp_path: Path) -> No
             "none",
             "--tool",
             "codex",
-            "--agent-topic",
-            "kernel-search",
+            "--render-only",
+            str(project),
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert f"Rendered instruction file: {project / 'AGENTS.md'}" in result.stdout
+    text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert text.startswith("# Global Instructions")
+    assert "# Research Agent Instructions" not in text.splitlines()[0]
+    assert "stale generated base" not in text
+    assert "old generated main agent" not in text
+    assert "\n\n\n\n" not in text
+    assert "## Agentic Notes" in text
+    assert "## Agent Branch" in text
+    assert "<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START" not in text
+    assert "<!-- AGENTIC-RESEARCHER-MODULE-START" not in text
+    assert "<!-- AGENTIC-RESEARCHER-PROVIDER-START" not in text
+    assert "<!-- AGENTIC-RESEARCHER-NOTES-START" not in text
+    assert "<!-- AGENTIC-RESEARCHER-TOPIC-START" not in text
+    assert "<!-- AGENTIC-RESEARCHER-SUBAGENTS-START" not in text
+    assert text.count("<!--") == 0
+    assert (project / ".codex" / "agents" / "experiment-logger.toml").exists()
+
+
+def test_launcher_refuses_main_branch_without_permission_in_noninteractive_mode(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    git(project, "switch", "main")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = base_env(tmp_path)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["AR_INSTRUCTION_PROVIDERS"] = "none"
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
             str(project),
         ],
         env=env,
@@ -1349,7 +1378,9 @@ def test_launcher_refuses_protected_branch_for_agent_topic(tmp_path: Path) -> No
     )
 
     assert result.returncode == 1
-    assert "Refusing to launch an agent topic on protected branch 'main'" in result.stdout
+    assert "not on an unoccupied agent/* branch" in result.stdout
+    assert "Current branch: main" in result.stdout
+    assert "git switch -c agent/alice" in result.stdout
 
 
 def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path) -> None:
@@ -1374,6 +1405,7 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
             "--sandbox", "none",
             "--tool",
             "codex",
+            "--render-only",
             str(project),
         ],
         env=env,
@@ -1391,8 +1423,8 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert (project / ".codex" / "agents" / "branch-integrator.toml").exists()
     assert not (project / ".codex" / "agents" / "research-coordinator.toml").exists()
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
-    assert "<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START name=research-coordinator -->" in instruction_text
-    assert "<!-- AGENTIC-RESEARCHER-SUBAGENTS-START -->" in instruction_text
+    assert "<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START" not in instruction_text
+    assert "<!-- AGENTIC-RESEARCHER-SUBAGENTS-START" not in instruction_text
     assert "## Available Subagents" in instruction_text
     assert "- `experiment-logger`:" in instruction_text
     assert "- `experiment-corrector`:" in instruction_text
@@ -1401,8 +1433,10 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert "Request: `" not in instruction_text
     assert "Contract: `" in instruction_text
     assert "# Research Coordinator Instructions" in instruction_text
-    assert "### Agentic Notes" in instruction_text
     assert "## Agentic Notes" in instruction_text
+    assert "## Agent Branch" in instruction_text
+    assert "<!-- AGENTIC-RESEARCHER-PROVIDER-START" not in instruction_text
+    assert instruction_text.count("<!--") == 0
     assert "Org body." in instruction_text
 
 
@@ -1422,6 +1456,7 @@ def test_launcher_renders_builtin_systems_developer_main_agent(tmp_path: Path) -
             "none",
             "--tool",
             "codex",
+            "--render-only",
             "--main-agent",
             "systems-developer",
             str(project),
@@ -1432,7 +1467,7 @@ def test_launcher_renders_builtin_systems_developer_main_agent(tmp_path: Path) -
     assert result.returncode == 0
     assert not (project / ".codex" / "agents" / "systems-developer.toml").exists()
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
-    assert "<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START name=systems-developer -->" in instruction_text
+    assert "<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START" not in instruction_text
     assert "# Systems Developer Instructions" in instruction_text
     assert "This is not a research experiment workflow." in instruction_text
 
@@ -1481,6 +1516,7 @@ def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path
             "none",
             "--tool",
             "codex",
+            "--render-only",
             str(project),
         ],
         env=env,
@@ -1535,6 +1571,7 @@ def test_launcher_renders_org_main_agent_override_without_subagent(tmp_path: Pat
             "none",
             "--tool",
             "codex",
+            "--render-only",
             str(project),
         ],
         env=env,
@@ -1619,6 +1656,7 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_agent_notes(tmp
             "none",
             "--tool",
             "codex",
+            "--render-only",
             "--main-agent",
             "research-coordinator",
             str(coordinator),
@@ -1632,10 +1670,11 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_agent_notes(tmp
             "none",
             "--tool",
             "codex",
+            "--render-only",
             "--main-agent",
             "research-paper-author",
-            "--agent-topic",
-            "paper-draft",
+            "--agent-branch",
+            "agent/paper-draft",
             str(paper),
         ],
         env=env,
@@ -1657,48 +1696,3 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_agent_notes(tmp
     assert (state / ".agentic" / "agent-notes" / "research-coordinator" / "always-injected.md").exists()
     assert (state / ".agentic" / "agent-notes" / "research-paper-author" / "always-injected.md").exists()
     assert not (state / "AGENTS.md").exists()
-
-
-def test_org_main_agent_name_conflict_removes_builtin_subagent(tmp_path: Path) -> None:
-    org_remote = init_bare_remote(
-        tmp_path,
-        "org-main-conflict",
-        {
-            "agents/experiment-runner.md": (
-                "---\n"
-                "name: experiment-runner\n"
-                "kind: main\n"
-                "description: Not a subagent in this org.\n"
-                "---\n\n"
-                "This definition intentionally claims the built-in subagent name.\n"
-            ),
-        },
-    )
-    project_remote = seed_project_remote(tmp_path)
-    project = clone_project(tmp_path, project_remote)
-    stale_agent = project / ".codex" / "agents" / "experiment-runner.toml"
-    stale_agent.parent.mkdir(parents=True)
-    stale_agent.write_text(
-        "<!-- Generated by agentic-researcher. Edit the source agent definition to change this agent. -->\n",
-        encoding="utf-8",
-    )
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
-    env = base_env(tmp_path, org_remote)
-    env["PATH"] = f"{fake_bin}:{env['PATH']}"
-
-    result = run(
-        [
-            str(AGENTIC_RESEARCHER),
-            "--sandbox",
-            "none",
-            "--tool",
-            "codex",
-            str(project),
-        ],
-        env=env,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert not stale_agent.exists()

@@ -15,7 +15,7 @@ Request template:
 
 ```yaml
 project_dir: path               # optional; default current directory
-topic: string                   # optional; default AR_AGENT_TOPIC
+branch_log: string              # optional; default AR_AGENT_BRANCH_ID
 scope:
   - string                      # required; experiment ids, logs, report sections, or metrics
 question: string                # required; decision this analysis should support
@@ -25,7 +25,7 @@ Returns: best valid result, regressions or invalid runs, evidence for the hypoth
 
 ## Responsibilities
 
-- Read the active topic's Agentic Researcher experiment `SUMMARY.md` first when available, then open individual experiment YAML files only as needed.
+- Read the active branch's Agentic Researcher experiment `SUMMARY.md` first when available, then open individual experiment YAML files only as needed.
 - Read `report.tex`, `TODO.md`, logs, plots, and metric outputs relevant to the assigned experiments, treating `report.tex` and `TODO.md` as branch-local context.
 - Compare results against the primary metric and baseline in the project instruction file.
 - Separate real signal from debugging-only runs, scale artifacts, and failed or invalid evaluations.

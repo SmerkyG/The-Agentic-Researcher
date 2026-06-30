@@ -1,0 +1,197 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+AR_NOTES_HELPER="${AR_NOTES_CLI:-$REPO_ROOT/scripts/tools/ar-notes}"
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: agentic-notes PROVIDER_COMMAND [OPTIONS]
+
+Provider commands:
+  setup              Initialize/refresh org and project Agentic Notes state
+  render-instruction Render the top-level instruction section
+  render-section     Render an agent-specific Agentic Notes section
+  render-sections    Render sections for multiple agents into a directory
+  refresh-loop       Run the shared background refresh loop
+  post-compaction    Refresh state after context compaction
+  cleanup            No-op cleanup hook
+EOF
+}
+
+is_false() {
+    case "${1:-}" in
+        0|false|False|FALSE|no|No|NO|off|Off|OFF)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+parse_common() {
+    project_dir=""
+    agent_type="${AR_MAIN_AGENT:-research-coordinator}"
+    output_dir=""
+    heartbeat_dir=""
+    interval_seconds="${AR_NOTES_REFRESH_INTERVAL_SECONDS:-120}"
+    stale_seconds="300"
+    agent_types=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project-dir)
+                project_dir="$2"
+                shift 2
+                ;;
+            --agent-type)
+                agent_type="$2"
+                agent_types+=("$2")
+                shift 2
+                ;;
+            --output-dir)
+                output_dir="$2"
+                shift 2
+                ;;
+            --heartbeat-dir)
+                heartbeat_dir="$2"
+                shift 2
+                ;;
+            --interval-seconds)
+                interval_seconds="$2"
+                shift 2
+                ;;
+            --stale-seconds)
+                stale_seconds="$2"
+                shift 2
+                ;;
+            --tool|--branch|--session-id)
+                shift 2
+                ;;
+            *)
+                echo "agentic-notes provider: unknown option: $1" >&2
+                return 2
+                ;;
+        esac
+    done
+
+    if [[ -z "$project_dir" ]]; then
+        echo "agentic-notes provider: --project-dir is required" >&2
+        return 2
+    fi
+}
+
+setup_provider() {
+    parse_common "$@"
+
+    if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
+        if ! "$AR_NOTES_HELPER" init-org-notes --repo "$AR_ORG_NOTES_REPO" >/dev/null; then
+            echo "Warning: Could not initialize org notes checkout." >&2
+        fi
+    fi
+
+    if is_false "${AR_NOTES_AUTO_REFRESH:-true}"; then
+        "$AR_NOTES_HELPER" ensure-project-state --project-dir "$project_dir" --skip-pull >/dev/null
+        return
+    fi
+
+    case "${AR_NOTES_REFRESH_MODE:-periodic}" in
+        foreground)
+            if ! "$AR_NOTES_HELPER" refresh --project-dir "$project_dir" >/dev/null; then
+                echo "Warning: Could not refresh Agentic Notes checkouts." >&2
+            fi
+            ;;
+        *)
+            "$AR_NOTES_HELPER" ensure-project-state --project-dir "$project_dir" --skip-pull >/dev/null
+            ;;
+    esac
+}
+
+render_section_body() {
+    parse_common "$@"
+    "$AR_NOTES_HELPER" render-section --project-dir "$project_dir" --agent-type "$agent_type"
+}
+
+render_instruction() {
+    parse_common "$@"
+    if [[ -f "$REPO_ROOT/modules/agentic-notes.md" ]]; then
+        cat "$REPO_ROOT/modules/agentic-notes.md"
+        printf '\n\n'
+    fi
+    "$AR_NOTES_HELPER" render-section --project-dir "$project_dir" --agent-type "$agent_type" --dynamic-only
+}
+
+render_sections() {
+    parse_common "$@"
+    if [[ -z "$output_dir" ]]; then
+        echo "agentic-notes provider: --output-dir is required" >&2
+        return 2
+    fi
+    if [[ ${#agent_types[@]} -eq 0 ]]; then
+        echo "agentic-notes provider: at least one --agent-type is required" >&2
+        return 2
+    fi
+
+    local args=(render-sections --project-dir "$project_dir" --output-dir "$output_dir")
+    local active_agent_type
+    for active_agent_type in "${agent_types[@]}"; do
+        args+=(--agent-type "$active_agent_type")
+    done
+    "$AR_NOTES_HELPER" "${args[@]}"
+}
+
+refresh_loop() {
+    parse_common "$@"
+    "$AR_NOTES_HELPER" refresh-loop \
+        --project-dir "$project_dir" \
+        --heartbeat-dir "$heartbeat_dir" \
+        --interval-seconds "$interval_seconds" \
+        --stale-seconds "$stale_seconds"
+}
+
+post_compaction() {
+    parse_common "$@"
+    "$AR_NOTES_HELPER" refresh --project-dir "$project_dir"
+}
+
+main() {
+    local command="${1:-}"
+    if [[ "$command" == "--help" || "$command" == "-h" ]]; then
+        usage
+        return 0
+    fi
+    if [[ -z "$command" ]]; then
+        usage
+        return 2
+    fi
+    shift
+
+    case "$command" in
+        setup)
+            setup_provider "$@"
+            ;;
+        render-instruction)
+            render_instruction "$@"
+            ;;
+        render-section)
+            render_section_body "$@"
+            ;;
+        render-sections)
+            render_sections "$@"
+            ;;
+        refresh-loop)
+            refresh_loop "$@"
+            ;;
+        post-compaction)
+            post_compaction "$@"
+            ;;
+        cleanup)
+            ;;
+        *)
+            usage
+            return 2
+            ;;
+    esac
+}
+
+main "$@"

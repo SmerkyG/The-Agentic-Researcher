@@ -16,7 +16,7 @@ Detect which instruction file exists in the workspace and use it throughout:
 
 Find the Agentic Notes helper:
 - Prefer `$AR_NOTES_CLI`.
-- Otherwise, if available, use `scripts/ar-notes` from the current repo.
+- Otherwise, if available, use `scripts/tools/ar-notes` from the current repo.
 - If no helper is available, stop and ask the user to relaunch Agentic Researcher so project agent-type notes can be updated in shared state.
 
 Set `$MAIN_AGENT` to `${AR_MAIN_AGENT:-research-coordinator}`.
@@ -126,7 +126,7 @@ Wait for the user to respond before continuing.
 4. **Save** the approved note to a temporary Markdown file outside the project source tree, then update shared state:
 
 ```bash
-${AR_NOTES_CLI:-scripts/ar-notes} replace-note \
+${AR_NOTES_CLI:-scripts/tools/ar-notes} replace-note \
   --project-dir "$PROJECT_DIR" \
   --scope project \
   --agent-type "$MAIN_AGENT" \

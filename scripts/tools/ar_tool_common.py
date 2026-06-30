@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 
 
-SCRIPT_DIR = Path(__file__).resolve().parents[1]
+TOOLS_DIR = Path(__file__).resolve().parent
 
 
 class ToolError(RuntimeError):
@@ -25,7 +25,7 @@ def state_root() -> Path:
 
 
 def helper_path(env_name: str, helper_name: str) -> Path:
-    return Path(os.environ.get(env_name) or (SCRIPT_DIR / helper_name)).expanduser()
+    return Path(os.environ.get(env_name) or (TOOLS_DIR / helper_name)).expanduser()
 
 
 def ar_notes() -> Path:
@@ -100,7 +100,13 @@ def project_dir_from(request: dict[str, Any]) -> str:
 
 
 def topic_from(request: dict[str, Any]) -> str | None:
-    value = request.get("topic") or os.environ.get("AR_AGENT_TOPIC")
+    value = (
+        request.get("branch_log")
+        or request.get("branch_log_id")
+        or request.get("topic")
+        or os.environ.get("AR_AGENT_BRANCH_ID")
+        or os.environ.get("AR_AGENT_TOPIC")
+    )
     return str(value) if value else None
 
 

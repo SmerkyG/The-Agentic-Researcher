@@ -306,11 +306,11 @@ echo "Next steps:"
 if [[ "$SANDBOX" == "none" ]]; then
     echo "  1. Configure defaults:  agentic-researcher --setup"
     echo "  2. Make sure your selected CLI tool is installed on PATH"
-    echo "  3. In your project repo: git switch -c agent/my-topic"
-    echo "  4. Start the agent:     agentic-researcher ~/your-project"
+    echo "  3. Start from your project Git checkout: agentic-researcher ~/your-project"
+    echo "     If you are on main/master, AR can prompt to create an agent branch."
 else
     echo "  1. Configure defaults:  agentic-researcher --setup"
-    echo "  2. In your project repo: git switch -c agent/my-topic"
-    echo "  3. Start the agent:     agentic-researcher ~/your-project"
+    echo "  2. Start from your project Git checkout: agentic-researcher ~/your-project"
+    echo "     If you are on main/master, AR can prompt to create an agent branch."
     echo "     The container image builds automatically on first launch."
 fi

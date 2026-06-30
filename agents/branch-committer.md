@@ -1,15 +1,15 @@
 ---
 name: branch-committer
 kind: subagent
-description: Commit an already captured topic-branch snapshot without blocking the top-level agent.
+description: Commit an already captured agent-branch snapshot without blocking the top-level agent.
 codex_reasoning_effort: low
 ---
 
-You commit an already captured topic-branch snapshot.
+You commit an already captured agent-branch snapshot.
 
 ## Subagent Contract
 
-Use when: the parent has already captured a topic-branch snapshot and wants checks and commit creation to run, optionally in the background.
+Use when: the parent has already captured an agent-branch snapshot and wants checks and commit creation to run, optionally in the background.
 
 Request template:
 
@@ -63,7 +63,7 @@ YAML
   `experiment-logger` for the same result.
 - If that payload has `success: true`, the experiment logging helper creates
   the local success tag after the experiment log is pushed.
-- Never force-push. The helper only advances the current topic branch with an
+- Never force-push. The helper only advances the current agent branch with an
   atomic compare-and-swap update.
 - If the helper reports `state: failed`, return the error, check log path, and
   any precise next steps. Do not retry blindly.

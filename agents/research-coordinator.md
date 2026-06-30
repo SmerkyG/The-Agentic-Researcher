@@ -3,6 +3,7 @@ name: research-coordinator
 kind: main
 description: Coordinate autonomous research work, experiments, verification, and research records.
 codex_reasoning_effort: high
+branch_ownership: exclusive
 ---
 
 # Research Coordinator Instructions
@@ -14,6 +15,10 @@ experiments, simulations), or a deep learning researcher (training, evaluation,
 ablations). Autonomously formulate hypotheses, implement ideas, verify results,
 delegate to subagents when useful, and iterate according to the Project
 Instructions below.
+
+<!-- AR_MODULE: research-env-constraints -->
+
+<!-- AR_MODULE: research-ten-commandments -->
 
 ## Research Modules
 
@@ -95,7 +100,7 @@ Do this every session or after context compaction:
 2. Identify listed on-demand note topics that may be relevant to the current
    work. When you need one, use the generated `read-note` command so you read
    the rendered note for this project and agent type.
-3. If the active topic's Agentic Researcher experiment log is available, read
+3. If the active branch's Agentic Researcher experiment log is available, read
    its `SUMMARY.md` first; open individual experiment YAML files only when
    needed.
 4. Read `report.tex` for branch-local narrative analysis, derivations, and
@@ -142,18 +147,18 @@ Do this every session or after context compaction:
 
 ## 3. Experiment Logging and Research Record
 
-The active topic's Agentic Researcher experiment log is the durable experiment
-ledger when available. It lives under `.agentic/topics/$AR_AGENT_TOPIC/` on the
-project state branch, not in the normal code worktree. Log completed meaningful
+The active branch's Agentic Researcher experiment log is the durable experiment
+ledger when available. It lives on the project state branch, not in the normal
+code worktree. Log completed meaningful
 experiments by launching the `experiment-logger` subagent. Append corrections
 by launching the `experiment-corrector` subagent. Before launching either one,
 read its rendered subagent definition and use its `## Subagent Contract`
 section for the exact request shape. The subagent uses the provided helper so
-the topic-local counter, per-experiment YAML file, and topic `SUMMARY.md` row
-are updated under the topic lock. Do not regenerate `SUMMARY.md`, manually edit
+the branch-local counter, per-experiment YAML file, and branch `SUMMARY.md` row
+are updated under the branch log's local state lock. Do not regenerate `SUMMARY.md`, manually edit
 the state checkout, or manually alter existing experiment fields. Experiment
-IDs are local to the topic; use slash-qualified references like
-`$AR_AGENT_TOPIC/E0001_short-description` when referring across topics.
+IDs are local to the branch log; use slash-qualified references like
+`$AR_AGENT_BRANCH_ID/E0001_short-description` when referring across branch logs.
 
 `report.tex` is the branch-local narrative research record. It is for
 derivations, methods, detailed analysis, figures, verification blocks, and
@@ -169,7 +174,7 @@ path:
    focused checks, and `report.tex`/`TODO.md` when their updates belong to that
    experiment. Never use `.` or glob paths.
 2. If the completed change set is a meaningful experiment result that belongs in
-   the active topic experiment log, read the rendered `experiment-logger`
+   the active branch experiment log, read the rendered `experiment-logger`
    contract and include its experiment-log payload under
    `after_commit.experiment_log` in the snapshot request. The commit
    helper logs it automatically after the commit hash exists.
@@ -267,8 +272,8 @@ Include in `report.tex`:
 
 ## 5. Git Discipline
 
-- Work only on `agent/$AR_AGENT_TOPIC` or child branches such as
-  `agent/$AR_AGENT_TOPIC/exp/<experiment-name>`.
+- Work only on `$AR_AGENT_BRANCH` or child branches such as
+  `$AR_AGENT_BRANCH/exp/<experiment-name>`.
 - Do not directly stage, commit, tag, reset, stash, or otherwise mutate Git
   history/index state for normal research workflow. Launch the appropriate
   subagent instead.
@@ -278,7 +283,7 @@ Include in `report.tex`:
   hash exists.
 - Use `branch-commit-status` to check a background branch commit that has
   already been started.
-- When the user asks to integrate completed topic work into `dev`, `main`, or
+- When the user asks to integrate completed branch work into `dev`, `main`, or
   another development branch, launch the `branch-integrator` subagent instead
   of switching this top-level session onto the target branch.
 - If the user explicitly asks you to bypass the subagent workflow and perform

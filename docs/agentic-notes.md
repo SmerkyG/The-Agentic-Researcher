@@ -98,7 +98,7 @@ The launcher also renders a managed compaction hook for the selected CLI. The ho
 
 Subagent configs are rendered through the same agent registry. When a subagent is rendered, its note section uses that subagent's agent type, plus org and project notes. Main-agent definitions are not rendered as subagents.
 
-Use `${AR_NOTES_CLI:-scripts/ar-notes} replace-note --scope project --agent-type AGENT_TYPE --note-name always-injected --note-file NOTE.md --project-dir PATH --refresh-parent` to replace agent-type-specific project instructions. Use `--agent-type all-agents` for project guidance shared by every agent. Working agents should not edit injected note text in `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` directly.
+Use `${AR_NOTES_CLI:-scripts/tools/ar-notes} replace-note --scope project --agent-type AGENT_TYPE --note-name always-injected --note-file NOTE.md --project-dir PATH --refresh-parent` to replace agent-type-specific project instructions. Use `--agent-type all-agents` for project guidance shared by every agent. Working agents should not edit injected note text in `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` directly.
 
 ## Note Updates
 
@@ -164,7 +164,7 @@ ar-tool run experiment-correct
 
 The optional org notes repo may provide additional tools under `agent-tools/<tool>/bin/<tool>`; org tools win over built-in tools with the same name.
 
-Inside launched agents, `$AR_NOTES_CLI` also points at the low-level Agentic Notes helper (`scripts/ar-notes` in none mode, `/opt/agentic-researcher/scripts/ar-notes` in container mode). From an AR source checkout you can also run `scripts/ar-notes` directly. It provides setup, rendering, and state-management commands:
+Inside launched agents, `$AR_NOTES_CLI` points at the low-level Agentic Notes helper (`scripts/tools/ar-notes` in none mode, `/opt/agentic-researcher/scripts/tools/ar-notes` in container mode). From an AR source checkout you can also run `scripts/tools/ar-notes` directly. The launcher reaches it through the `agentic-notes` instruction provider, while the helper still provides setup, rendering, and state-management commands:
 
 ```text
 init-org-notes --repo PATH_OR_URL

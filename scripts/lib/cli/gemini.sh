@@ -78,37 +78,29 @@ def run_command(command: list[str]) -> tuple[bool, str]:
     return False, output or f"{command[0]} exited with status {result.returncode}."
 
 
-def run_refresh(notes_cli: str, project_dir: str, agent_type: str, tool: str) -> tuple[bool, str]:
-    if not notes_cli:
-        return False, "AR_NOTES_CLI was not configured."
-    refresh_command = [sys.executable, notes_cli, "refresh", "--project-dir", project_dir]
-    generate_command = [
-        sys.executable,
-        notes_cli,
-        "generate-instructions",
+def run_refresh(provider_refresh_cli: str, instruction_path: str, project_dir: str, agent_type: str, tool: str) -> tuple[bool, str]:
+    if not provider_refresh_cli:
+        return False, "AR_PROVIDER_REFRESH_CLI was not configured."
+    command = [
+        provider_refresh_cli,
+        "--instruction-path",
+        instruction_path,
         "--project-dir",
         project_dir,
         "--agent-type",
         agent_type,
         "--tool",
         tool,
-        "--skip-ensure-project-state",
     ]
-    ok, refresh_output = run_command(refresh_command)
-    if not ok:
-        return False, refresh_output
-    ok, generate_output = run_command(generate_command)
-    if not ok:
-        return False, generate_output
-    return True, "\n".join(part for part in (refresh_output, generate_output) if part) or "Agentic Notes refresh completed."
+    return run_command(command)
 
 
-def refresh_message(instruction_path: str, notes_cli: str, project_dir: str, agent_type: str, tool: str) -> str:
-    refreshed, refresh_status = run_refresh(notes_cli, project_dir, agent_type, tool)
+def refresh_message(instruction_path: str, provider_refresh_cli: str, project_dir: str, agent_type: str, tool: str) -> str:
+    refreshed, refresh_status = run_refresh(provider_refresh_cli, instruction_path, project_dir, agent_type, tool)
     refresh_sentence = (
-        "Agentic Researcher just pulled the org/project Agentic Notes state and rematerialized the rendered instruction file."
+        "Agentic Researcher just refreshed configured instruction providers and rematerialized the rendered instruction file."
         if refreshed
-        else f"Agentic Researcher tried to pull and rematerialize Agentic Notes, but refresh failed: {refresh_status}"
+        else f"Agentic Researcher tried to refresh configured instruction providers, but refresh failed: {refresh_status}"
     )
     return (
         "You have just experienced context compaction. Treat this moment as "
@@ -139,7 +131,7 @@ def mark_pending(instruction_path: str) -> None:
     }))
 
 
-def inject_pending(default_instruction_path: str, notes_cli: str, project_dir: str, agent_type: str, tool: str) -> None:
+def inject_pending(default_instruction_path: str, provider_refresh_cli: str, project_dir: str, agent_type: str, tool: str) -> None:
     try:
         hook_input = json.load(sys.stdin)
     except Exception:
@@ -172,7 +164,7 @@ def inject_pending(default_instruction_path: str, notes_cli: str, project_dir: s
     updated_request = dict(llm_request)
     updated_request["messages"] = messages + [{
         "role": "system",
-        "content": refresh_message(str(instruction_path), notes_cli, project_dir, agent_type, tool),
+        "content": refresh_message(str(instruction_path), provider_refresh_cli, project_dir, agent_type, tool),
     }]
     print(json.dumps({
         "hookSpecificOutput": {
@@ -186,12 +178,12 @@ def inject_pending(default_instruction_path: str, notes_cli: str, project_dir: s
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else "mark"
     instruction_path = sys.argv[2] if len(sys.argv) > 2 else "GEMINI.md"
-    notes_cli = sys.argv[3] if len(sys.argv) > 3 else ""
+    provider_refresh_cli = sys.argv[3] if len(sys.argv) > 3 else ""
     project_dir = sys.argv[4] if len(sys.argv) > 4 else "."
     agent_type = sys.argv[5] if len(sys.argv) > 5 else "research-coordinator"
     tool = sys.argv[6] if len(sys.argv) > 6 else "gemini"
     if mode == "inject":
-        inject_pending(instruction_path, notes_cli, project_dir, agent_type, tool)
+        inject_pending(instruction_path, provider_refresh_cli, project_dir, agent_type, tool)
     else:
         mark_pending(instruction_path)
 
@@ -206,16 +198,16 @@ cli_gemini_setup_compaction_hooks() {
     local script_path="$WORKSPACE_DIR/.gemini/hooks/agentic-researcher-compaction.py"
     render_gemini_compaction_hook_script "$script_path" || return 0
 
-    local script_runtime instruction_runtime notes_cli_runtime project_runtime agent_type_runtime tool_runtime python_runtime mark_command inject_command patch_json
+    local script_runtime instruction_runtime provider_refresh_runtime project_runtime agent_type_runtime tool_runtime python_runtime mark_command inject_command patch_json
     script_runtime="$(workspace_runtime_path ".gemini/hooks/agentic-researcher-compaction.py")"
     instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
-    notes_cli_runtime="$(ar_notes_cli_env_path)"
+    provider_refresh_runtime="$(provider_refresh_cli_env_path)"
     project_runtime="$(workspace_root_runtime_path)"
     agent_type_runtime="${AR_MAIN_AGENT:-research-coordinator}"
     tool_runtime="$AR_CLI_TOOL"
     python_runtime="$(python_runtime_command_string)"
-    mark_command="$python_runtime $(shell_quote "$script_runtime") mark $(shell_quote "$instruction_runtime") $(shell_quote "$notes_cli_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
-    inject_command="$python_runtime $(shell_quote "$script_runtime") inject $(shell_quote "$instruction_runtime") $(shell_quote "$notes_cli_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
+    mark_command="$python_runtime $(shell_quote "$script_runtime") mark $(shell_quote "$instruction_runtime") $(shell_quote "$provider_refresh_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
+    inject_command="$python_runtime $(shell_quote "$script_runtime") inject $(shell_quote "$instruction_runtime") $(shell_quote "$provider_refresh_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
     patch_json=$(cat <<EOF
 {
   "hooks": {

@@ -1,6 +1,6 @@
 # Extending Agentic Researcher
 
-Agentic Researcher can be extended without changing the core launcher by adding skills, optional skills, main agents, subagents, and agent-facing tools.
+Agentic Researcher can be extended without changing the core launcher by adding skills, optional skills, main agents, subagents, instruction providers, and agent-facing tools.
 
 Use:
 
@@ -9,8 +9,10 @@ Use:
 - AR install `agents/` for built-in main agents and subagents.
 - Org repo `agents/` for organization-provided main agents and subagents shared across AR installations.
 - Org repo `agent-tools/` for organization-provided executable tools callable through `ar-tool run`.
+- AR install `scripts/providers/` for built-in stateful instruction providers.
+- Org repo `providers/` for organization-provided instruction providers shared across AR installations.
 
-This page covers optional skills, agents, and agent-facing tools. Optional skills are the usual extension point for custom job backends; agents are the extension point for top-level workflows and reusable delegation agent types; tools are the extension point for concrete executable actions those agents can call.
+This page covers optional skills, agents, instruction providers, and agent-facing tools. Optional skills are the usual extension point for custom job backends; agents are the extension point for top-level workflows and reusable delegation agent types; providers are the extension point for launch/compaction-rendered stateful instruction systems; tools are the extension point for concrete executable actions those agents can call.
 
 ## Agents and Agent Types
 
@@ -128,6 +130,25 @@ agent-tools/
 ```
 
 Org tools win over built-in tools with the same name. Keep each tool narrow and give it one input shape. If a workflow needs model judgment, status reporting, or delegation policy, describe that workflow in a subagent and have the subagent call the tool. If it is only model-facing instructions for an existing backend command, an optional skill may be enough.
+
+## Instruction Providers
+
+Instruction providers are executable render/refresh adapters for stateful instruction systems. Built-in providers live in `scripts/providers/`; org-provided providers may live in `providers/<name>/bin/<name>` or `providers/<name>/<name>` in the org notes repo.
+
+- `agentic-notes` owns Agentic Notes state, rendering, background refresh, and post-compaction note refresh.
+- `experiment-log` owns active topic leases and the topic-local experiment-log instruction block.
+
+The launcher runs the comma-separated `AR_INSTRUCTION_PROVIDERS` list, which defaults to `agentic-notes,experiment-log`. A provider should support these commands when relevant:
+
+```text
+setup --project-dir PATH --branch BRANCH --session-id SESSION --agent-type AGENT --tool TOOL
+render-instruction --project-dir PATH --agent-type AGENT --tool TOOL
+post-compaction --project-dir PATH --agent-type AGENT --tool TOOL
+refresh-loop --project-dir PATH --heartbeat-dir DIR --interval-seconds N --stale-seconds N
+cleanup --project-dir PATH --session-id SESSION
+```
+
+Provider-owned rendered text should be wrapped in `AGENTIC-RESEARCHER-PROVIDER-START/END` markers so launch and compaction refreshes can replace those sections without touching the static base template, selected main-agent block, skill blocks, or subagent catalog.
 
 ## Optional Skill Layout
 
