@@ -1,6 +1,6 @@
 # Extending Agentic Researcher
 
-Agentic Researcher can be extended without changing the core launcher by adding skills, optional skills, main agents, and subagents.
+Agentic Researcher can be extended without changing the core launcher by adding skills, optional skills, main agents, subagents, and agent-facing tools.
 
 Use:
 
@@ -8,8 +8,9 @@ Use:
 - `optional-skills/` for selectable capabilities such as job backends, cluster tools, site-specific data systems, or lab-specific workflows.
 - AR install `agents/` for built-in main agents and subagents.
 - Org repo `agents/` for organization-provided main agents and subagents shared across AR installations.
+- Org repo `agent-tools/` for organization-provided executable tools callable through `ar-tool run`.
 
-This page covers optional skills and agents. Optional skills are the usual extension point for custom job backends; agents are the extension point for top-level workflows and reusable delegation agent types.
+This page covers optional skills, agents, and agent-facing tools. Optional skills are the usual extension point for custom job backends; agents are the extension point for top-level workflows and reusable delegation agent types; tools are the extension point for concrete executable actions those agents can call.
 
 ## Agents and Agent Types
 
@@ -101,9 +102,32 @@ Precedence is intentional: AR loads built-in agents first and org repo agents se
 
 Unmanaged project-local CLI-specific agent files are still protected; AR skips them instead of overwriting them.
 
-Keep subagents narrow. If a capability is mostly a tool, command, or backend workflow, prefer an optional skill. If it is a recurring delegation agent type with its own responsibilities and output shape, make it a subagent. Use main agents for top-level operating modes, such as `research-coordinator` or an org-provided `research-paper-author`.
+Keep subagents narrow. If a capability is mostly an executable action, make it an agent tool; if it is mostly model-facing guidance for an existing backend command, make it an optional skill. If it is a recurring delegated workflow with its own responsibilities and output shape, make it a subagent, like built-in `branch-committer` for background topic commits or built-in `branch-integrator` for landing completed topic work into a development branch. Each subagent should have exactly one typed request template in a `## Subagent Contract` section; create another subagent when a workflow needs another request shape. Use main agents for top-level operating modes, such as built-in `research-coordinator` for experiment-driven research, built-in `systems-developer` for interactive Linux-focused systems/tooling development, or an org-provided `research-paper-author`.
 
 Current limitation: AR renders all final `kind: subagent` definitions for every launch. There is not yet an `optional-agents/` selector. Project-local CLI-specific subagent files may still work for a specific CLI, and AR will not overwrite unmanaged files at the same rendered path, but those files are not portable across CLIs and do not get AR's neutral rendering behavior.
+
+## Agent Tools
+
+Agent tools are executable commands called through:
+
+```bash
+"${AR_TOOL_CLI:-scripts/ar-tool}" run tool-name <<'YAML'
+field: value
+YAML
+```
+
+The model supplies YAML on stdin. It should not be asked to write temporary request files; tools can handle any internal files they need.
+
+Built-in tools live in the AR install under `scripts/tools/`. To share a site-specific tool across AR installations, add an executable to the org notes repo:
+
+```text
+agent-tools/
+  my-tool/
+    bin/
+      my-tool
+```
+
+Org tools win over built-in tools with the same name. Keep each tool narrow and give it one input shape. If a workflow needs model judgment, status reporting, or delegation policy, describe that workflow in a subagent and have the subagent call the tool. If it is only model-facing instructions for an existing backend command, an optional skill may be enough.
 
 ## Optional Skill Layout
 

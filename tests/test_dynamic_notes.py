@@ -18,6 +18,22 @@ AR_NOTES = REPO_ROOT / "scripts" / "ar-notes"
 AGENTIC_RESEARCHER = REPO_ROOT / "agentic-researcher"
 
 
+def test_builtin_subagents_have_one_contract_template() -> None:
+    for agent_path in sorted((REPO_ROOT / "agents").glob("*.md")):
+        text = agent_path.read_text(encoding="utf-8")
+        if "kind: subagent" not in text:
+            continue
+        assert "## Subagent Contract" in text, agent_path.name
+        contract = text.split("## Subagent Contract", 1)[1]
+        if "\n## " in contract:
+            contract = contract.split("\n## ", 1)[0]
+        assert "Use when:" in contract, agent_path.name
+        assert "Request template:" in contract, agent_path.name
+        assert contract.count("```yaml") == 1, agent_path.name
+        assert "\nkind:" not in contract, agent_path.name
+        assert "Request kind:" not in contract, agent_path.name
+
+
 def run(
     command: list[str],
     *,
@@ -978,6 +994,50 @@ def test_experiment_logger_creates_counter_ids_and_appends_summary(tmp_path: Pat
     assert second_id in summary
 
 
+def test_successful_experiment_creates_local_success_tag(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path)
+    commit = git(project, "rev-parse", "HEAD").stdout.strip()
+    request = make_request(
+        tmp_path,
+        {
+            "kind": "experiment_result_request",
+            "user_id": "alice",
+            "short_description": "Successful run",
+            "title": "Successful run",
+            "description": "Test experiment.",
+            "source": {"actor_id": "research-coordinator", "agent_type": "research-coordinator"},
+            "code": {"repo": "local", "branch": "agent/kernel-search", "commit": commit, "dirty": False},
+            "command": "uv run pytest",
+            "status": "completed",
+            "success": True,
+            "key_result": "new best result",
+            "metrics": {"tests_passed": 1},
+            "artifacts": {},
+            "notes": "",
+        },
+    )
+
+    experiment_ref = run(
+        [
+            str(AR_NOTES),
+            "log-experiment",
+            "--request",
+            str(request),
+            "--project-dir",
+            str(project),
+        ],
+        env=env,
+    ).stdout.strip()
+
+    experiment_id = local_experiment_id(experiment_ref)
+    tag_name = f"exp/kernel-search/{experiment_id}-success"
+    assert git(project, "rev-list", "-n", "1", tag_name).stdout.strip() == commit
+    experiment_doc = yaml.safe_load((topic_log(env) / "experiments" / f"{experiment_id}.yaml").read_text())
+    assert experiment_doc["success"] is True
+
+
 def test_summary_is_append_only_and_existing_experiment_files_are_unchanged(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
@@ -1325,13 +1385,56 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert not (project / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
     assert (project / ".codex" / "agents" / "note-updater.toml").exists()
     assert (project / ".codex" / "agents" / "experiment-logger.toml").exists()
+    assert (project / ".codex" / "agents" / "experiment-corrector.toml").exists()
+    assert (project / ".codex" / "agents" / "branch-committer.toml").exists()
+    assert (project / ".codex" / "agents" / "branch-commit-status.toml").exists()
+    assert (project / ".codex" / "agents" / "branch-integrator.toml").exists()
     assert not (project / ".codex" / "agents" / "research-coordinator.toml").exists()
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START name=research-coordinator -->" in instruction_text
+    assert "<!-- AGENTIC-RESEARCHER-SUBAGENTS-START -->" in instruction_text
+    assert "## Available Subagents" in instruction_text
+    assert "- `experiment-logger`:" in instruction_text
+    assert "- `experiment-corrector`:" in instruction_text
+    assert "- `branch-committer`:" in instruction_text
+    assert "- `branch-commit-status`:" in instruction_text
+    assert "Request: `" not in instruction_text
+    assert "Contract: `" in instruction_text
     assert "# Research Coordinator Instructions" in instruction_text
     assert "### Agentic Notes" in instruction_text
     assert "## Agentic Notes" in instruction_text
     assert "Org body." in instruction_text
+
+
+def test_launcher_renders_builtin_systems_developer_main_agent(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = base_env(tmp_path)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = run(
+        [
+            str(AGENTIC_RESEARCHER),
+            "--sandbox",
+            "none",
+            "--tool",
+            "codex",
+            "--main-agent",
+            "systems-developer",
+            str(project),
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert not (project / ".codex" / "agents" / "systems-developer.toml").exists()
+    instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "<!-- AGENTIC-RESEARCHER-MAIN-AGENT-START name=systems-developer -->" in instruction_text
+    assert "# Systems Developer Instructions" in instruction_text
+    assert "This is not a research experiment workflow." in instruction_text
 
 
 def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path) -> None:

@@ -102,7 +102,7 @@ Use `${AR_NOTES_CLI:-scripts/ar-notes} replace-note --scope project --agent-type
 
 ## Note Updates
 
-Working agents do not edit note files directly. When a reusable lesson is learned, they spawn the `note-updater` subagent with a `note_update_request`. The subagent updates exactly one note, pulls latest, semantically merges concise text, commits, pushes, and refreshes the parent worktree instructions. It never force-pushes.
+Working agents do not edit note files directly. When a reusable lesson is learned, they spawn the `note-updater` subagent and follow its rendered contract. The subagent updates exactly one note, pulls latest, semantically merges concise text, commits, pushes, and refreshes the parent worktree instructions. It never force-pushes.
 
 If a push is rejected, the updater fetches latest, re-reads the target note, reapplies the semantic merge, recommits, and pushes again. If a semantic conflict remains, it stops and reports the conflict.
 
@@ -125,9 +125,11 @@ kernel-search/E0001_triton-power2-shape-test
 
 Agent and user metadata, including topic, `user_id`, `source.actor_id`, invocation IDs, branch names, commits, commands, metrics, and artifacts, lives inside the YAML file.
 
-Working agents do not write experiment-log state directly. When a completed meaningful experiment should be recorded, they spawn the `experiment-logger` subagent with an `experiment_result_request`. For corrections, they spawn the same subagent with an `experiment_correction_request`.
+Working agents do not write experiment-log state directly. When a completed meaningful experiment should be recorded without a code/report commit handoff, they spawn the `experiment-logger` subagent and follow its rendered contract. For committed experiment change sets, the top-level agent first captures a `branch-snapshot` with an `after_commit.experiment_log` payload, then `branch-committer` finalizes and logs the experiment result automatically after the commit hash exists. For corrections, agents spawn the `experiment-corrector` subagent and follow its rendered contract.
 
 `COUNTER.yaml` tracks `next_experiment_number` for one topic. When logging an experiment, the experiment logger pulls latest, reads the topic counter, writes one YAML file, increments the counter, appends one row to the topic `SUMMARY.md`, commits, and pushes.
+
+If the experiment request sets `success: true` and includes `code.commit`, the experiment logger creates a local Git tag named `exp/<topic>/<experiment-id>-success` at that commit after the experiment log is pushed. Completed negative or neutral experiments should omit `success` or set it to `false`.
 
 `SUMMARY.md` is append-maintained during normal logging. It is not regenerated from all experiment files. Agents should read the active topic's `SUMMARY.md` first and open detailed experiment YAML files only when needed.
 
@@ -149,7 +151,20 @@ later from the topic logs.
 
 ## Commands
 
-Inside launched agents, `$AR_NOTES_CLI` points at the invocation's Agentic Notes helper (`scripts/ar-notes` in none mode, `/opt/agentic-researcher/scripts/ar-notes` in container mode). From an AR source checkout you can also run `scripts/ar-notes` directly. It provides these commands:
+Inside launched agents, `$AR_TOOL_CLI` points at the invocation's agent-facing tool runner (`scripts/ar-tool` in none mode, `/opt/agentic-researcher/scripts/ar-tool` in container mode). Agent-facing tools read YAML from stdin:
+
+```text
+ar-tool run branch-snapshot
+ar-tool run branch-commit
+ar-tool run branch-commit-status
+ar-tool run note-update
+ar-tool run experiment-log
+ar-tool run experiment-correct
+```
+
+The optional org notes repo may provide additional tools under `agent-tools/<tool>/bin/<tool>`; org tools win over built-in tools with the same name.
+
+Inside launched agents, `$AR_NOTES_CLI` also points at the low-level Agentic Notes helper (`scripts/ar-notes` in none mode, `/opt/agentic-researcher/scripts/ar-notes` in container mode). From an AR source checkout you can also run `scripts/ar-notes` directly. It provides setup, rendering, and state-management commands:
 
 ```text
 init-org-notes --repo PATH_OR_URL
@@ -157,15 +172,12 @@ refresh --project-dir PATH
 generate-instructions --project-dir PATH --agent-type AGENT_TYPE --tool TOOL
 read-note --project-dir PATH --agent-type AGENT_TYPE TOPIC
 list-notes --scope org|project --agent-type AGENT_TYPE
-update-note --request REQUEST.yaml
 replace-note --scope org|project --agent-type AGENT_TYPE --note-name NAME --note-file FILE
 ensure-project-state --project-dir PATH
 acquire-topic --project-dir PATH --topic TOPIC --session-id SESSION
 release-topic --project-dir PATH --topic TOPIC --session-id SESSION
-log-experiment --request REQUEST.yaml --project-dir PATH --topic TOPIC
-log-correction --request REQUEST.yaml --project-dir PATH --topic TOPIC
 ```
 
-These are low-level helper commands used by generated subagents and hooks. Working agents normally route note updates through `note-updater` and experiment log writes through `experiment-logger`.
+Working agents normally route note updates through `note-updater`, experiment result writes through `experiment-logger`, experiment corrections through `experiment-corrector`, and branch commit mechanics through `branch-snapshot` plus `branch-committer`.
 
 All networked Git operations are ordinary Git clone, fetch, pull, commit, and push operations. There is no shared inbox, no org resolver process, no live overlay, and no generated learned skill tree.

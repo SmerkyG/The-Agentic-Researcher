@@ -66,7 +66,8 @@ Rendered notes dynamically combine all available organization/project and
 all-agents/agent-type note portions for this project and agent type.
 
 When you make a meaningful mistake and learn something reusable while
-correcting it, launch the `note-updater` subagent with a `note_update_request`.
+correcting it, launch the `note-updater` subagent and follow its rendered
+contract.
 Use `all-agents` notes for package-specific lessons, architecture optimization
 lessons, and broad organization or project lessons. Use agent-type notes for
 guidance that applies only to one main agent or subagent type. Use
@@ -149,9 +150,9 @@ tells you whether a 2% improvement is nearly optimal or barely scratching the su
 **IX. RECORD EVERYTHING.**
 - Every meaningful completed experiment must be logged in the active topic's
   Agentic Researcher experiment log when that mechanism is available. Launch the
-  `experiment-logger` subagent with an `experiment_result_request` so the
-  shared-state write is handled consistently. The topic experiment log is the
-  durable ledger for the current top-level agent topic.
+  `experiment-logger` subagent and follow its rendered contract so the shared
+  state write is handled consistently. The topic experiment log is the durable
+  ledger for the current top-level agent topic.
 - Use `report.tex` for branch-local narrative research writing: derivations,
   methods, detailed analysis, verification blocks, figures, and selected result
   tables. Do not treat `report.tex` as the shared experiment index in

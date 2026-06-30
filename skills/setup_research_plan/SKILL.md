@@ -146,6 +146,6 @@ This commits the agent-type-specific project instructions to `.agentic/agent-not
      - `report.tex` with full preamble (amsmath, amsthm, booktabs, graphicx, tcolorbox with verification box, theorem environments), title/date, and a baseline subsection for branch-local narrative analysis
      - `TODO.md` with initial branch-local open questions and deferred checks
      - `mkdir -p scripts images` for verification/plotting scripts and figures
-   - **Log baseline**: If the Agentic Researcher experiment log is available, launch the `experiment-logger` subagent with an `experiment_result_request` so the shared summary table receives the assigned experiment ID
+   - **Log baseline**: If the Agentic Researcher experiment log is available, launch the `experiment-logger` subagent and follow its rendered contract so the shared summary table receives the assigned experiment ID
    - **Commit**: Commit completed setup/report changes. If an experiment ID was assigned, use it in the commit message.
    - **Begin the autonomous experiment loop** as described in the research workflow

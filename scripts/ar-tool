@@ -1,0 +1,92 @@
+#!/usr/bin/env -S uv run --script
+"""Dispatch agent-facing Agentic Researcher tools."""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+class ArToolError(RuntimeError):
+    pass
+
+
+def state_root() -> Path:
+    return Path(os.environ.get("AR_STATE_ROOT", "~/.cache/agentic-researcher")).expanduser()
+
+
+def validate_tool_name(name: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+        raise ArToolError(f"invalid tool name: {name}")
+    return name
+
+
+def tool_candidates(name: str) -> list[Path]:
+    org_root = state_root() / "repos" / "org-agentic-notes" / "agent-tools" / name
+    return [
+        org_root / "bin" / name,
+        org_root / name,
+        SCRIPT_DIR / "tools" / name,
+        SCRIPT_DIR / "tools" / name / "bin" / name,
+    ]
+
+
+def find_tool(name: str) -> Path:
+    candidates = tool_candidates(name)
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    searched = "\n  ".join(str(path) for path in candidates)
+    raise ArToolError(f"unknown tool: {name}\nsearched:\n  {searched}")
+
+
+def request_text(args: argparse.Namespace) -> str:
+    if args.request:
+        return Path(args.request).expanduser().read_text(encoding="utf-8")
+    return sys.stdin.read()
+
+
+def run_tool(args: argparse.Namespace) -> int:
+    tool_name = validate_tool_name(args.tool)
+    executable = find_tool(tool_name)
+    text = request_text(args)
+    if not text.strip():
+        raise ArToolError("request YAML is required on stdin")
+
+    env = os.environ.copy()
+    env["AR_TOOL_NAME"] = tool_name
+    env["AR_TOOL_EXECUTABLE"] = str(executable)
+    result = subprocess.run([str(executable)], input=text, text=True, env=env)
+    return int(result.returncode)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = sub.add_parser("run", help="Run a tool with YAML from stdin")
+    run_parser.add_argument("tool")
+    run_parser.add_argument("--request", help=argparse.SUPPRESS)
+    run_parser.set_defaults(func=run_tool)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return int(args.func(args))
+    except ArToolError as exc:
+        print(f"ar-tool: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

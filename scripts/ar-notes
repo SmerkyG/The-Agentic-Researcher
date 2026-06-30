@@ -1070,6 +1070,52 @@ def short_commit(request: dict[str, Any]) -> str:
     return ""
 
 
+def request_successful(request: dict[str, Any]) -> bool:
+    value = request.get("success", False)
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "success", "successful"}
+
+
+def code_commit(request: dict[str, Any]) -> str:
+    code = request.get("code")
+    if isinstance(code, dict):
+        return str(code.get("commit") or "").strip()
+    return ""
+
+
+def success_tag_name(topic: str, experiment_id: str) -> str:
+    return f"exp/{agent_topic(topic)}/{experiment_id}-success"
+
+
+def tag_successful_experiment(request: dict[str, Any], project_dir: Path, topic: str, generated_id: str) -> None:
+    if not request_successful(request):
+        return
+    if str(request.get("status") or "completed").strip().lower() not in {"completed", "success", "successful"}:
+        raise ArNotesError("success tags require a completed/successful experiment status")
+
+    _, experiment_id = split_experiment_ref(generated_id, topic)
+    commit = code_commit(request)
+    if not commit:
+        raise ArNotesError("success tags require code.commit in the experiment request")
+
+    tag_name = success_tag_name(topic, experiment_id)
+    git(project_dir, "check-ref-format", f"refs/tags/{tag_name}")
+    resolved_commit = git(project_dir, "rev-parse", "--verify", f"{commit}^{{commit}}").stdout.strip()
+    tag_ref = f"refs/tags/{tag_name}"
+    existing = git(project_dir, "rev-parse", "--verify", f"{tag_ref}^{{commit}}", check=False)
+    if existing.returncode == 0:
+        existing_commit = existing.stdout.strip()
+        if existing_commit == resolved_commit:
+            return
+        raise ArNotesError(
+            f"success tag {tag_name} already points to {existing_commit}, not {resolved_commit}"
+        )
+    git(project_dir, "tag", tag_name, resolved_commit)
+
+
 def summary_cell(value: Any) -> str:
     text = " ".join(str(value or "").split())
     return text.replace("|", "\\|")
@@ -1089,6 +1135,7 @@ def final_experiment_doc(request: dict[str, Any], topic: str, experiment_id: str
         "code": request.get("code") or {},
         "command": request.get("command") or "",
         "status": request.get("status") or "completed",
+        "success": request_successful(request),
         "key_result": request.get("key_result") or "",
         "metrics": request.get("metrics") or {},
         "artifacts": request.get("artifacts") or {},
@@ -1131,12 +1178,21 @@ def log_experiment_once(request: dict[str, Any], project_dir: Path, topic: str) 
     return repo, qualified_experiment_ref(topic, experiment_id)
 
 
-def retry_generated_log(operation: str, func: Any, request: dict[str, Any], project_dir: Path, topic: str) -> None:
+def retry_generated_log(
+    operation: str,
+    func: Any,
+    request: dict[str, Any],
+    project_dir: Path,
+    topic: str,
+    after_push: Callable[[dict[str, Any], Path, str, str], None] | None = None,
+) -> None:
     repo: Path | None = None
     generated_id = ""
     for attempt in range(2):
         repo, generated_id = func(request, project_dir, topic)
         if push(repo, state_branch()):
+            if after_push is not None:
+                after_push(request, project_dir, topic, generated_id)
             print(generated_id)
             return
         if attempt == 0:
@@ -1149,7 +1205,14 @@ def log_experiment(args: argparse.Namespace) -> None:
     request = safe_load_yaml(Path(args.request))
     if request.get("kind") != "experiment_result_request":
         raise ArNotesError("request kind must be experiment_result_request")
-    retry_generated_log("experiment", log_experiment_once, request, Path(args.project_dir).resolve(), agent_topic(args.topic or request.get("topic")))
+    retry_generated_log(
+        "experiment",
+        log_experiment_once,
+        request,
+        Path(args.project_dir).resolve(),
+        agent_topic(args.topic or request.get("topic")),
+        tag_successful_experiment,
+    )
 
 
 def experiment_path_for_id(log_dir: Path, experiment_id: str) -> Path:
@@ -1233,7 +1296,7 @@ def log_correction_once(request: dict[str, Any], project_dir: Path, topic: str) 
 
 def log_correction(args: argparse.Namespace) -> None:
     request = safe_load_yaml(Path(args.request))
-    if request.get("kind") not in {"experiment_correction_request", "correction_request"}:
+    if request.get("kind") != "experiment_correction_request":
         raise ArNotesError("request kind must be experiment_correction_request")
     topic_value = args.topic
     experiment_ref = str(request.get("experiment_id") or "")

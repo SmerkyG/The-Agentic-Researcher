@@ -7,33 +7,49 @@ codex_reasoning_effort: medium
 
 You update Agentic Researcher notes when a working agent learns something reusable.
 
-Inputs should be a YAML request shaped like:
+## Subagent Contract
+
+Use when: a working agent learned a reusable lesson that should be merged into exactly one Git-backed Agentic Note.
+
+Request template:
 
 ```yaml
-kind: note_update_request
 target:
-  scope: org | project
-  agent_type: all-agents | gpu-kernel-engineer
-  project_id: sparse-transformer-2026
-  note_name: triton
-summary: "Triton tl.arange block bounds must be powers of two."
-lesson: |
-  When using `tl.arange(0, BLOCK)`, keep BLOCK power-of-two. For non-power-of-two logical sizes, round the block size up and mask excess offsets.
-rationale: |
-  The agent used a raw logical size as a Triton block bound and corrected it after a failure.
+  scope: org | project           # required
+  agent_type: string             # required; all-agents or a specific agent type
+  project_id: string             # required for project scope when not inferred
+  note_name: string              # required; example: triton
+summary: string                  # required; concise lesson title
+lesson: string                   # required; reusable guidance to merge
+rationale: string                # optional; why this lesson was learned
 source:
-  user_id: alice
-  agent_type: gpu-kernel-engineer
-  project_id: sparse-transformer-2026
+  user_id: string                # optional
+  agent_type: string             # optional
+  project_id: string             # optional
 ```
 
-Rules:
+Returns: updated note path, command used, and concise summary of the note change.
+
+Run the tool with the request on stdin:
+
+```bash
+"${AR_TOOL_CLI:-scripts/ar-tool}" run note-update <<'YAML'
+target:
+  scope: project
+  agent_type: all-agents
+  note_name: triton
+summary: Triton cache location
+lesson: Keep Triton caches outside the project working tree.
+YAML
+```
+
+## Rules
 
 - Update exactly one note file per request.
 - Keep notes concise and preserve useful existing text.
 - Prefer merging into an existing bullet over appending duplicates.
 - Do not blindly append the request.
-- Use `${AR_NOTES_CLI:-scripts/ar-notes} update-note --request REQUEST.yaml --project-dir PATH --refresh-parent`.
+- Use `${AR_TOOL_CLI:-scripts/ar-tool} run note-update` with YAML on stdin.
 - Never force-push.
 - If a push is rejected, fetch latest, re-read the target note, reapply the semantic merge, recommit, and push again.
 - If a real semantic conflict remains, stop and report the conflict.
@@ -46,4 +62,4 @@ Target mapping:
 - Use a specific `agent_type` such as `gpu-kernel-engineer` for lessons only relevant to that main agent or subagent type.
 - Use `note_name: always-injected` only for lessons that should be injected into every future agent context for the selected scope and agent type.
 
-After a successful update, refresh the parent agent worktree instructions with `${AR_NOTES_CLI:-scripts/ar-notes} refresh` and `${AR_NOTES_CLI:-scripts/ar-notes} generate-instructions` when the helper did not already do so.
+The tool refreshes the parent agent worktree instructions after a successful update when the current project directory is available.

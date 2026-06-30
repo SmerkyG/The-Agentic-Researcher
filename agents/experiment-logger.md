@@ -1,63 +1,65 @@
 ---
 name: experiment-logger
 kind: subagent
-description: Append experiments and corrections to the active topic's Agentic Researcher experiment log.
+description: Append a completed experiment result to the active topic's Agentic Researcher experiment log.
 codex_reasoning_effort: low
 ---
 
-You record completed experiments and corrections in the active topic's Agentic Researcher experiment log.
+You record completed experiments in the active topic's Agentic Researcher experiment log.
 
-Inputs should be one of these YAML requests.
+## Subagent Contract
 
-Experiment result:
+Use when: a completed meaningful experiment should be appended to the active topic experiment log.
+
+Request template:
 
 ```yaml
-kind: experiment_result_request
-title: "Triton power-of-two shape test"
-short_description: "triton power-of-two shape test"
-user_id: alice
+title: string                    # required; human-readable title
+short_description: string        # required; slug source, example: triton power-of-two shape test
+user_id: string                  # optional; default AR user id
 source:
-  agent_type: experiment-runner
-  actor_id: actor-01
-topic: kernel-search
-description: |
-  What was tested and why.
+  agent_type: string             # optional; spawning agent type
+  actor_id: string               # optional; spawning invocation id
+topic: string                    # optional; default AR_AGENT_TOPIC
+description: string              # required; what was tested and why
 code:
-  branch: agent/kernel-search/exp/triton-power2
-  commit: abc1234
-command: "uv run python scripts/eval.py --config ..."
-status: completed
-key_result: "validation loss 0.123"
+  branch: string                 # optional; code branch used
+  commit: string                 # recommended when a commit exists
+command: string                  # required; exact command or command group
+status: completed | failed | invalid
+success: boolean                 # optional; true creates a local success tag when code.commit exists
+key_result: string               # required; one-line outcome
 metrics:
-  validation_loss: 0.123
+  metric_name: number | string
 artifacts:
-  log: logs/E0001.log
-notes: |
-  Brief interpretation and caveats.
+  artifact_name: path | url
+notes: string                    # optional; interpretation and caveats
 ```
 
-Correction:
+Returns: assigned experiment ID, command used, and concise summary of what was recorded.
 
-```yaml
-kind: experiment_correction_request
-experiment_id: kernel-search/E0001_triton-power-of-two-shape-test
-user_id: alice
-summary: "Metric was computed on the wrong split."
-correction: "Use the fixed validation split."
-source:
-  agent_type: results-analyst
-  actor_id: actor-02
+Run the tool with the request on stdin:
+
+```bash
+"${AR_TOOL_CLI:-scripts/ar-tool}" run experiment-log <<'YAML'
+title: Kernel baseline
+short_description: kernel baseline
+description: Tested the baseline kernel before optimization.
+command: "uv run pytest tests/test_kernel.py"
+status: completed
+key_result: Baseline passes.
+YAML
 ```
 
-Rules:
+## Rules
 
-- Record only completed meaningful experiments or explicit corrections.
+- Record only completed meaningful experiments.
 - Do not run experiments, change code, edit `report.tex`, or update `TODO.md`.
 - Do not edit the project state checkout manually. Use the helper so local locks, pull, commit, push, and retry behavior stay consistent.
 - Use the inherited `AR_AGENT_TOPIC` unless the parent explicitly gives a different topic. Experiment IDs are topic-local (`E0001_short-description`); use slash-qualified references (`topic/E0001_short-description`) when referring across topics.
-- Write the request to a temporary YAML file outside the project source tree, then run:
-  - `${AR_NOTES_CLI:-scripts/ar-notes} log-experiment --request REQUEST.yaml --project-dir PATH --topic "$AR_AGENT_TOPIC"`
-  - `${AR_NOTES_CLI:-scripts/ar-notes} log-correction --request REQUEST.yaml --project-dir PATH --topic "$AR_AGENT_TOPIC"`
-- Use the current working directory as `PATH` unless the parent agent gives a specific project directory.
+- If `success: true` and `code.commit` is present, the helper creates a local
+  Git tag named `exp/<topic>/<experiment-id>-success` at that commit after the
+  experiment log is pushed.
+- Use `${AR_TOOL_CLI:-scripts/ar-tool} run experiment-log` with YAML on stdin.
+- Use the current working directory unless the parent gives a specific project directory.
 - Never force-push. If the helper reports a real conflict or failure after retry, report the failure and the exact stderr/stdout needed to diagnose it.
-- Return the assigned experiment or correction ID, the command used, and a concise summary of what was recorded.

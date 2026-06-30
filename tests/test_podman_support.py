@@ -312,6 +312,7 @@ def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str]
     assert "AR_SANDBOX=podman" in podman_log
     assert "AR_INSTALL_DIR=/opt/agentic-researcher" in podman_log
     assert "AR_NOTES_CLI=/opt/agentic-researcher/scripts/ar-notes" in podman_log
+    assert "AR_TOOL_CLI=/opt/agentic-researcher/scripts/ar-tool" in podman_log
     assert "--entrypoint /bin/bash" in podman_log
     assert "/test_sandbox.sh" in podman_log
 
@@ -1013,6 +1014,7 @@ def test_launcher_podman_runs_pi_tool(base_env: dict[str, str], tmp_path: Path) 
     assert "SANDBOX_TOOL=pi" in podman_log
     assert f"{REPO_ROOT}:/opt/agentic-researcher:ro" in podman_log
     assert "AR_NOTES_CLI=/opt/agentic-researcher/scripts/ar-notes" in podman_log
+    assert "AR_TOOL_CLI=/opt/agentic-researcher/scripts/ar-tool" in podman_log
     # pi reads AGENTS.md; the launcher must seed it into the workspace.
     assert (workspace / "AGENTS.md").exists()
     # pi uses the shared agent-compatible project skill path.

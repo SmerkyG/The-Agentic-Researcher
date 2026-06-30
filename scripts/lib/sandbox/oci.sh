@@ -95,6 +95,7 @@ oci_launch() {
         -e "AR_SANDBOX_HOME=$AR_SANDBOX_HOME"
         -e "AR_INSTALL_DIR=$(ar_install_env_path)"
         -e "AR_NOTES_CLI=$(ar_notes_cli_env_path)"
+        -e "AR_TOOL_CLI=$(ar_tool_cli_env_path)"
         -e "AR_JOB_BACKEND=${JOB_BACKEND:-none}"
         -e "AR_STATE_ROOT=$STATE_ROOT"
         -e "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"

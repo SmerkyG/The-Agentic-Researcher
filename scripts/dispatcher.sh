@@ -61,6 +61,7 @@ build_apptainer_args() {
         --env AR_SANDBOX=apptainer
         --env "AR_INSTALL_DIR=$AR_INSTALL_CONTAINER"
         --env "AR_NOTES_CLI=$AR_INSTALL_CONTAINER/scripts/ar-notes"
+        --env "AR_TOOL_CLI=$AR_INSTALL_CONTAINER/scripts/ar-tool"
         --env "AR_JOB_BACKEND=remote-run"
         --env "AR_STATE_ROOT=$STATE_ROOT"
         --env "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"

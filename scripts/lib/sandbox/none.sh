@@ -21,6 +21,8 @@ sandbox_none_setup_environment() {
     AR_INSTALL_DIR="$(ar_install_env_path)"
     export AR_NOTES_CLI
     AR_NOTES_CLI="$(ar_notes_cli_env_path)"
+    export AR_TOOL_CLI
+    AR_TOOL_CLI="$(ar_tool_cli_env_path)"
     export AR_JOB_BACKEND="${JOB_BACKEND:-none}"
     export AR_CLI_TOOL="$AR_CLI_TOOL"
     export AR_STATE_ROOT="$STATE_ROOT"

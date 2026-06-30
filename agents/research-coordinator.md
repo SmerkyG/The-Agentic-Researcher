@@ -120,13 +120,13 @@ Do this every session or after context compaction:
 3. **Implement** minimal, focused changes. Keep diffs small.
 4. **Evaluate** using the three-tier strategy from the shared commitments.
 5. **Analyze** honestly. Write a hypothesis for why it worked or did not.
-6. **Record** the completed meaningful experiment in the active topic's
-   experiment log when available by launching the `experiment-logger` subagent with an
-   `experiment_result_request`. Add or update `report.tex` analysis for
-   methods, derivations, figures, verification, and interpretation that should
-   live with the branch.
-7. **Commit** completed code/report changes. When an experiment ID is assigned,
-   use format: `exp(EXXX): <description> -- <metric>=<value> (<delta>)`.
+6. **Update branch-local records**: keep analysis and follow-ups in
+   `report.tex` and `TODO.md`, and prepare experiment-log request content when
+   the result is meaningful.
+7. **Hand off completed change sets and finalize logging** by launching the
+   appropriate subagent described in the Experiment Logging and Research Record
+   plus Git Discipline sections below. Keep code, scripts, tests, `report.tex`,
+   and `TODO.md` together when they describe one experiment.
 8. **Iterate**. Build on success. After 3 failed variations of one idea, move
    on.
 
@@ -145,13 +145,14 @@ Do this every session or after context compaction:
 The active topic's Agentic Researcher experiment log is the durable experiment
 ledger when available. It lives under `.agentic/topics/$AR_AGENT_TOPIC/` on the
 project state branch, not in the normal code worktree. Log completed meaningful
-experiments by launching the `experiment-logger` subagent with an
-`experiment_result_request`; for corrections, launch it with an
-`experiment_correction_request`. The subagent uses the provided helper so the
-topic-local counter, per-experiment YAML file, and topic `SUMMARY.md` row are
-updated under the topic lock. Do not regenerate `SUMMARY.md`, manually edit the
-state checkout, or manually alter existing experiment fields. Experiment IDs
-are local to the topic; use slash-qualified references like
+experiments by launching the `experiment-logger` subagent. Append corrections
+by launching the `experiment-corrector` subagent. Before launching either one,
+read its rendered subagent definition and use its `## Subagent Contract`
+section for the exact request shape. The subagent uses the provided helper so
+the topic-local counter, per-experiment YAML file, and topic `SUMMARY.md` row
+are updated under the topic lock. Do not regenerate `SUMMARY.md`, manually edit
+the state checkout, or manually alter existing experiment fields. Experiment
+IDs are local to the topic; use slash-qualified references like
 `$AR_AGENT_TOPIC/E0001_short-description` when referring across topics.
 
 `report.tex` is the branch-local narrative research record. It is for
@@ -159,6 +160,36 @@ derivations, methods, detailed analysis, figures, verification blocks, and
 selected result tables. It is a normal project file and is not locked by
 Agentic Researcher, so concurrent agents in separate worktrees may diverge and
 merge it through ordinary Git workflows. Do NOT compile it.
+
+For experiments that include code or report changes, prefer the commit handoff
+path:
+
+1. Create the snapshot yourself with `${AR_TOOL_CLI:-scripts/ar-tool} run
+   branch-snapshot` and YAML on stdin. Include explicit paths, commit message,
+   focused checks, and `report.tex`/`TODO.md` when their updates belong to that
+   experiment. Never use `.` or glob paths.
+2. If the completed change set is a meaningful experiment result that belongs in
+   the active topic experiment log, read the rendered `experiment-logger`
+   contract and include its experiment-log payload under
+   `after_commit.experiment_log` in the snapshot request. The commit
+   helper logs it automatically after the commit hash exists.
+3. Inspect the snapshot result's `name_status` or `name_status_path`. If it
+   contains unexpected files, stop and ask for help instead of committing.
+4. After the snapshot succeeds, launch `branch-committer` with only the returned
+   `snapshot_dir` and optional `background` value. The commit can finish while
+   you continue useful work or prepare the final response. Any edits made after
+   the snapshot, even to the same paths, are follow-up work and are not part of
+   the queued commit.
+5. Do not separately launch `experiment-logger` for that same committed result.
+   Use `branch-commit-status` only when you need progress, the commit hash, or
+   an error report. If status reports an experiment-log error, surface it to the
+   user or retry the logging follow-up deliberately.
+
+This keeps the experiment log tied to the final code commit without blocking
+the main agent during checks after the snapshot has been captured.
+
+For meaningful completed experiments that have no code/report commit, launch
+`experiment-logger` directly after reading its rendered contract.
 
 ### Preamble
 
@@ -236,19 +267,27 @@ Include in `report.tex`:
 
 ## 5. Git Discipline
 
-- Commit completed work, not WIP. One idea per commit.
-- Format: `exp(EXXX): <description> -- <metric>=<value> (<delta> vs baseline)`
 - Work only on `agent/$AR_AGENT_TOPIC` or child branches such as
   `agent/$AR_AGENT_TOPIC/exp/<experiment-name>`.
-- Never commit to `main` or `master` unless the user explicitly asks.
-- Tag successes: `git tag exp-EXXX-success`
-- Clean state before new experiments: `git checkout .` or `git stash`
-- Never force-push or rewrite shared history
-- **Never `git add .`, `git add -A`, or `git add --all`.** Always stage files
-  by name. Accidentally staged large binaries create git objects that persist
-  even after unstaging and can fill disk quota.
-- **Before committing**, run `git diff --cached --stat` and check that no
-  unexpectedly large files are staged.
+- Do not directly stage, commit, tag, reset, stash, or otherwise mutate Git
+  history/index state for normal research workflow. Launch the appropriate
+  subagent instead.
+- For completed experiment change sets, create an explicit-path snapshot with
+  `ar-tool run branch-snapshot`, inspect it, then launch `branch-committer` to
+  run checks, create the commit, and log the experiment result after the commit
+  hash exists.
+- Use `branch-commit-status` to check a background branch commit that has
+  already been started.
+- When the user asks to integrate completed topic work into `dev`, `main`, or
+  another development branch, launch the `branch-integrator` subagent instead
+  of switching this top-level session onto the target branch.
+- If the user explicitly asks you to bypass the subagent workflow and perform
+  Git operations yourself, first confirm that they really want this exception.
+  Never force-push or rewrite shared history unless they explicitly ask for
+  that too.
+- Do not create success tags directly. When an experiment is a genuine success,
+  mark that in the experiment-log payload; the experiment logging flow creates
+  the local success tag after the experiment ID and commit hash are both known.
 
 ## 6. Directory and File Conventions
 

@@ -125,6 +125,9 @@ agentic-researcher --project-id my-project-2026 ~/my-project
 # Use a different top-level agent for this launch
 agentic-researcher --main-agent research-paper-author ~/my-project
 
+# Interactive Linux-focused systems/tooling development
+agentic-researcher --main-agent systems-developer ~/my-project
+
 # Override the inferred topic only when needed
 agentic-researcher --agent-topic my-topic .
 ```
@@ -164,6 +167,10 @@ Each top-level agent works in one topic at a time. There must be only one active
 
 Multiple top-level agents should work in separate Git worktrees of the same project repo. Their code branches and materialized instruction files stay independent, while project notes and project agent-type notes are serialized through the shared cached `agentic/state` checkout. Experiment logs are scoped and locked per topic under `.agentic/topics/<topic>/experiment-log/`. Subagents rendered by a top-level launch inherit the same project id, topic, and state checkout as their parent agent.
 
+When the top-level agent has a coherent change set ready to commit, it first captures an explicit-path snapshot with `ar-tool run branch-snapshot` and inspects the returned `name_status`. After that short barrier succeeds, it can launch the `branch-committer` subagent with the returned `snapshot_dir`; checks and commit creation run from a temporary worktree while the topic branch is advanced with normal Git compare-and-swap semantics. For research experiments, the snapshot can include an experiment-log payload that is finalized after the commit hash exists. Use `branch-commit-status` to check a background commit job or surface any logging error.
+
+When completed topic work should land in a development branch such as `dev` or `main`, ask the top-level agent to launch the `branch-integrator` subagent. It uses a unique temporary worktree and normal Git merge or cherry-pick behavior rather than relaxing the top-level agent's topic-branch guard.
+
 Example with a coordinator and a paper author sharing one project:
 
 ```bash
@@ -190,7 +197,7 @@ Agentic Researcher can render project skills for job placement and execution bac
 
 Skill definitions start from neutral Agentic Researcher sources. Always-on skills live in `skills/`; selectable skills live in `optional-skills/`. Both are rendered into the selected CLI's project discovery path: `.claude/skills` for Claude, `.gemini/skills` for Gemini, `.opencode/skills` for OpenCode, and `.agents/skills` for Codex/pi. If a selected skill has `INSTRUCTIONS.md`, that file is also injected into the workspace instruction file.
 
-Agent definitions start from neutral Markdown files in AR's built-in `agents/` directory and optional org repo `agents/` directory. A definition with `kind: main` can be selected with `AR_MAIN_AGENT` and is inserted into the top-level instruction file. A definition with `kind: subagent` is rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Org repo agents render after built-ins, so org agents win on name conflict. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that agent where supported. To add agents and agent types, see [docs/extending-ar.md](docs/extending-ar.md#agents-and-agent-types).
+Agent definitions start from neutral Markdown files in AR's built-in `agents/` directory and optional org repo `agents/` directory. A definition with `kind: main` can be selected with `AR_MAIN_AGENT` and is inserted into the top-level instruction file. Built-in main agents include `research-coordinator` for experiment-driven research and `systems-developer` for interactive Linux-focused systems/tooling development. A definition with `kind: subagent` is rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Built-in subagents include helpers such as `note-updater`, `experiment-logger`, `experiment-corrector`, `code-reviewer`, `branch-committer`, `branch-commit-status`, and `branch-integrator`. The top-level instruction file also gets a compact generated subagent catalog with each subagent's rendered definition path; the agent reads the rendered subagent contract on demand before launching that subagent. Org repo agents render after built-ins, so org agents win on name conflict. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that agent where supported. To add agents and agent types, see [docs/extending-ar.md](docs/extending-ar.md#agents-and-agent-types).
 
 ```bash
 agentic-researcher --optional-skill cluster-run
@@ -220,6 +227,10 @@ For immediate useful guidance, seed the repo from the example layout in [example
 agents/
   data-curator.md          # kind: subagent rendered for every install
   research-paper-author.md # kind: main selectable with AR_MAIN_AGENT
+agent-tools/
+  my-tool/
+    bin/
+      my-tool              # executable callable with ar-tool run my-tool
 agent-notes/
   all-agents/
     always-injected.md    # short organization-wide guidance injected every time
@@ -232,9 +243,9 @@ agent-notes/
 
 Put only short, high-value guidance in `always-injected.md`. Put longer or situational details in topic notes such as `agent-notes/all-agents/git.md`, `agent-notes/all-agents/slurm.md`, `agent-notes/all-agents/pytorch.md`, or `agent-notes/gpu-kernel-engineer/benchmarking.md`; AR lists those topics so agents can read the rendered note only when relevant.
 
-Org-provided agents in `agents/*.md` use the same neutral Markdown format as AR's built-in agents. They are rendered after built-ins, so an org agent with the same `name` as a built-in agent wins. `AR_MAIN_AGENT` selects both the top-level main-agent definition and the agent-type-specific notes for that top-level agent. Subagents use their own `name` as the agent type for agent-type notes.
+Org-provided agents in `agents/*.md` use the same neutral Markdown format as AR's built-in agents. They are rendered after built-ins, so an org agent with the same `name` as a built-in agent wins. Org-provided tools in `agent-tools/<tool>/bin/<tool>` are callable through `ar-tool run <tool>` and similarly override built-in tools with the same name. `AR_MAIN_AGENT` selects both the top-level main-agent definition and the agent-type-specific notes for that top-level agent. Subagents use their own `name` as the agent type for agent-type notes.
 
-See [docs/agentic-notes.md](docs/agentic-notes.md) for the full notes layout and [docs/extending-ar.md](docs/extending-ar.md#agents-and-agent-types) for the agent format.
+See [docs/agentic-notes.md](docs/agentic-notes.md) for the full notes layout and [docs/extending-ar.md](docs/extending-ar.md#agents-and-agent-types) for the agent format and tool extension point.
 
 ## Supported CLI Tools
 
