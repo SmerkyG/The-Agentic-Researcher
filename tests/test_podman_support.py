@@ -16,6 +16,7 @@ INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install.sh"
 FIRST_SETUP_SCRIPT = REPO_ROOT / "scripts" / "first-setup.sh"
 CLEANUP_SCRIPT = REPO_ROOT / "scripts" / "cleanup.sh"
 CLI_ADAPTER_DIR = REPO_ROOT / "scripts" / "lib" / "cli"
+LAUNCHER_LIB_DIR = REPO_ROOT / "scripts" / "lib" / "launcher"
 REAL_GIT = shutil.which("git")
 
 
@@ -167,9 +168,9 @@ def test_setup_opencode_reads_api_key_from_configured_env_var(base_env: dict[str
 
 
 def test_claude_adapter_handles_apptainer_key_forwarding(base_env: dict[str, str]) -> None:
-    launcher_text = AGENTIC_RESEARCHER.read_text()
+    registry_text = (LAUNCHER_LIB_DIR / "registry.sh").read_text()
     claude_adapter = (CLI_ADAPTER_DIR / "claude.sh").read_text()
-    assert "append_env_arg_from_host_as" in launcher_text
+    assert "append_env_arg_from_host_as" in registry_text
     assert 'append_env_arg_from_host_as "ANTHROPIC_API_KEY" "${AR_API_KEY_ENV:-ANTHROPIC_API_KEY}"' in claude_adapter
 
 
