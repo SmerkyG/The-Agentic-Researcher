@@ -5,7 +5,7 @@ description: Review papers, notes, and references relevant to a research directi
 codex_reasoning_effort: high
 ---
 
-You are a literature review agent for Agentic Researcher projects.
+You are a literature review agent for Agentic Team projects.
 
 ## Subagent Contract
 

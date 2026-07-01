@@ -3,7 +3,7 @@
 # dispatcher.sh: Host-side daemon that watches for job requests from the
 # containerized agent and dispatches them to remote nodes via srun + apptainer.
 #
-# Started by the remote-run optional skill before launching the container.
+# Started by the remote-run capability before launching the container.
 # Killed automatically when the container exits.
 #
 # Usage: dispatcher.sh <dispatch-config-file>
@@ -58,31 +58,12 @@ build_apptainer_args() {
         --env "TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
         --env "WANDB_DIR=$WANDB_DIR"
         --env "TERM=${TERM:-xterm-256color}"
-        --env AR_SANDBOX=apptainer
-        --env "AR_INSTALL_DIR=$AR_INSTALL_CONTAINER"
-        --env "AR_NOTES_CLI=$AR_INSTALL_CONTAINER/scripts/tools/ar-notes"
-        --env "AR_TOOL_CLI=$AR_INSTALL_CONTAINER/scripts/ar-tool"
-        --env "AR_PROVIDER_REFRESH_CLI=$AR_INSTALL_CONTAINER/scripts/provider-refresh"
-        --env "AR_JOB_BACKEND=remote-run"
-        --env "AR_STATE_ROOT=$STATE_ROOT"
-        --env "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
-        --env "AR_MAIN_AGENT=${AR_MAIN_AGENT:-research-coordinator}"
-        --env "AR_INSTRUCTION_PROVIDERS=${AR_INSTRUCTION_PROVIDERS:-agentic-notes,experiment-log}"
-        --env "AR_AGENT_BRANCH=${AR_AGENT_BRANCH:-}"
-        --env "AR_AGENT_BRANCH_ID=${AR_AGENT_BRANCH_ID:-}"
-        --env "AR_AGENT_TOPIC=${AR_AGENT_TOPIC:-}"
-        --env "AR_AGENT_BRANCH_PREFIX=${AR_AGENT_BRANCH_PREFIX:-}"
-        --env "AR_BRANCH_OWNERSHIP=${AR_BRANCH_OWNERSHIP:-exclusive}"
-        --env "AR_SESSION_ID=${AR_SESSION_ID:-}"
-        --env "AR_USER_ID=${AR_USER_ID:-}"
-        --env "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
-        --env "AR_AGENTIC_STATE_BRANCH=${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
-        --env "AR_NOTES_AUTO_REFRESH=${AR_NOTES_AUTO_REFRESH:-true}"
-        --env "AR_RESOLVER_GIT_NAME=${AR_RESOLVER_GIT_NAME:-}"
-        --env "AR_RESOLVER_GIT_EMAIL=${AR_RESOLVER_GIT_EMAIL:-}"
-        --env "AR_NOTES_GIT_NAME=${AR_NOTES_GIT_NAME:-}"
-        --env "AR_NOTES_GIT_EMAIL=${AR_NOTES_GIT_EMAIL:-}"
     )
+
+    local env_pair
+    for env_pair in "${AR_RUNTIME_ENV_PAIRS[@]}"; do
+        [[ -n "$env_pair" ]] && args+=(--env "$env_pair")
+    done
 
     # Proxy
     if [[ -n "${HTTPS_PROXY:-}" ]]; then

@@ -1,21 +1,21 @@
 ---
 name: branch-integrator
 kind: subagent
-description: Integrate an agent branch into a target development branch using normal Git merge or cherry-pick workflows.
+description: Integrate a work branch into a target development branch using normal Git merge or cherry-pick workflows.
 codex_reasoning_effort: high
 ---
 
-You integrate completed agent-branch work into a target development branch.
+You integrate completed work-branch changes into a target development branch.
 
 ## Subagent Contract
 
-Use when: completed agent-branch work should be merged or cherry-picked into a target development branch.
+Use when: completed work-branch changes should be merged or cherry-picked into a target development branch.
 
 Request template:
 
 ```yaml
 project_dir: path                 # optional; default current directory
-source_branch: string             # required; example: agent/my-topic
+source_branch: string             # required; example: feature/kernel-search
 target_branch: string             # required; example: dev
 remote: string                    # optional; default origin
 strategy: merge | cherry-pick     # required
@@ -32,7 +32,7 @@ Returns: source and target branches, temporary worktree path, integration strate
   integration conflicts when reasonable, run checks, and report the result.
 - Use the project directory from the request, or the current working directory
   if none is provided.
-- Use normal Git optimistic concurrency. Do not take AR state locks for code
+- Use normal Git optimistic concurrency. Do not take Agentic Team state locks for code
   integration.
 - Never force-push or rewrite target branch history unless the user explicitly
   asks.
@@ -41,7 +41,7 @@ Returns: source and target branches, temporary worktree path, integration strate
 - Do not integrate uncommitted work. If the source branch has unstaged or staged
   changes, stop and report what must be committed or cleaned first.
 - Prefer a unique temporary worktree outside the source tree, such as
-  `${AR_STATE_ROOT:-$HOME/.cache/agentic-researcher}/integration/<session-id>/<target-branch>/`.
+  `${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/integration/<session-id>/<target-branch>/`.
   Do not reuse a shared integration worktree path.
 - Fetch the remote target branch immediately before integration.
 - If `strategy: merge`, merge the source branch into the target worktree with a

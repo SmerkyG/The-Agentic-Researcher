@@ -29,8 +29,8 @@ cli_claude_setup_storage() {
 }
 
 cli_claude_validate_auth() {
-    # Tool-managed auth and OAuth are handled inside Claude itself.
-    if [[ "${AR_AUTH_MODE:-tool}" == "tool" || "${AR_AUTH_MODE:-tool}" == "oauth" ]]; then
+    # CLI-managed auth and OAuth are handled inside Claude itself.
+    if [[ "${AR_AUTH_MODE:-cli-tool}" == "cli-tool" || "${AR_AUTH_MODE:-cli-tool}" == "oauth" ]]; then
         return
     fi
     local key_var="${AR_API_KEY_ENV:-ANTHROPIC_API_KEY}"
@@ -41,7 +41,7 @@ cli_claude_validate_auth() {
         echo "  export $key_var='your-api-key-here'"
         echo ""
         echo "Or switch to OAuth login:"
-        echo "  agentic-researcher --setup  (select 'oauth' for authentication)"
+        echo "  agentic-team --setup  (select 'oauth' for authentication)"
         exit 1
     fi
 }
@@ -86,18 +86,18 @@ cli_claude_render_agent() {
 }
 
 cli_claude_setup_compaction_hooks() {
-    local script_path="$WORKSPACE_DIR/.claude/hooks/agentic-researcher-compaction.py"
+    local script_path="$WORKSPACE_DIR/.claude/hooks/agentic-team-compaction.py"
     render_compaction_context_hook_script "$script_path" || return 0
 
-    local script_runtime instruction_runtime provider_refresh_runtime project_runtime agent_type_runtime tool_runtime python_runtime command patch_json
-    script_runtime="$(workspace_runtime_path ".claude/hooks/agentic-researcher-compaction.py")"
+    local script_runtime instruction_runtime capability_refresh_runtime project_runtime agent_type_runtime cli_runtime python_runtime command patch_json
+    script_runtime="$(workspace_runtime_path ".claude/hooks/agentic-team-compaction.py")"
     instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
-    provider_refresh_runtime="$(provider_refresh_cli_env_path)"
+    capability_refresh_runtime="$(ar_core_bin_env_path)/capability-refresh"
     project_runtime="$(workspace_root_runtime_path)"
     agent_type_runtime="${AR_MAIN_AGENT:-research-coordinator}"
-    tool_runtime="$AR_CLI_TOOL"
+    cli_runtime="$AR_CLI"
     python_runtime="$(python_runtime_command_string)"
-    command="$python_runtime $(shell_quote "$script_runtime") $(shell_quote "$instruction_runtime") $(shell_quote "$provider_refresh_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$tool_runtime")"
+    command="$python_runtime $(shell_quote "$script_runtime") $(shell_quote "$instruction_runtime") $(shell_quote "$capability_refresh_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$cli_runtime")"
     patch_json=$(cat <<EOF
 {
   "hooks": {
@@ -117,17 +117,17 @@ cli_claude_setup_compaction_hooks() {
 }
 EOF
 )
-    if ! merge_managed_hook_json "$WORKSPACE_DIR/.claude/settings.local.json" "agentic-researcher-compaction" "$patch_json"; then
+    if ! merge_managed_hook_json "$WORKSPACE_DIR/.claude/settings.local.json" "agentic-team-compaction" "$patch_json"; then
         echo "Warning: Could not update Claude compaction hook settings."
     fi
 }
 
-cli_claude_translate_tool_args() {
+cli_claude_translate_cli_args() {
     if [[ "$MODEL_SPECIFIED" == "false" && -n "${AR_DEFAULT_MODEL:-}" ]]; then
-        TOOL_ARGS+=("--model" "$AR_DEFAULT_MODEL")
+        CLI_ARGS+=("--model" "$AR_DEFAULT_MODEL")
     fi
     if [[ "$YOLO_MODE" == "true" ]]; then
-        TOOL_ARGS+=("--dangerously-skip-permissions")
+        CLI_ARGS+=("--dangerously-skip-permissions")
     fi
 }
 

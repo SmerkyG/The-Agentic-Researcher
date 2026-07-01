@@ -2,7 +2,7 @@
 #
 # test_sandbox.sh: Validate the sandbox environment
 #
-# Runs inside the container to check CLI tools, filesystem, network, and GPU.
+# Runs inside the container to check CLIs, filesystem, network, and GPU.
 # Exit 0 if all required checks pass; GPU failure is a warning only.
 #
 
@@ -25,21 +25,21 @@ warn() {
     ((WARN++))
 }
 
-# --- CLI Tools ---
-echo "=== CLI Tools ==="
-for tool in claude opencode gemini codex uv git gh jq rg yq python3; do
-    if command -v "$tool" &>/dev/null; then
-        pass "$tool found ($(command -v "$tool"))"
+# --- CLIs and Required Commands ---
+echo "=== CLIs and Required Commands ==="
+for command in claude opencode gemini codex uv git gh jq rg yq python3; do
+    if command -v "$command" &>/dev/null; then
+        pass "$command found ($(command -v "$command"))"
     else
-        fail "$tool not found"
+        fail "$command not found"
     fi
 done
 
-for tool in gemini codex; do
-    if ! "$tool" --version >/dev/null 2>&1; then
-        fail "$tool is installed but not runnable"
+for cli in gemini codex; do
+    if ! "$cli" --version >/dev/null 2>&1; then
+        fail "$cli is installed but not runnable"
     else
-        pass "$tool --version works"
+        pass "$cli --version works"
     fi
 done
 echo ""
@@ -108,10 +108,10 @@ else
 fi
 echo ""
 
-# --- Tool-specific checks ---
-ACTIVE_TOOL="${AR_CLI_TOOL:-claude}"
-echo "=== Active Tool: $ACTIVE_TOOL ==="
-case "$ACTIVE_TOOL" in
+# --- CLI-specific checks ---
+ACTIVE_CLI="${AR_CLI:-claude}"
+echo "=== Active CLI: $ACTIVE_CLI ==="
+case "$ACTIVE_CLI" in
     claude)
         if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
             pass "ANTHROPIC_API_KEY is set"

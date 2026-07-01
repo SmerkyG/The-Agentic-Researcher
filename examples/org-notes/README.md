@@ -1,17 +1,18 @@
-# Example Org Notes Repo
+# Example Org Repo
 
-This directory is a starter layout for an optional Agentic Researcher org notes
-repo. Copy these files into a separate Git repo when you want organization-wide
-or agent-type-specific guidance shared across AR projects.
+This directory is a starter layout for an optional Agentic Team org repo. Copy
+these files into a separate Git repo when you want organization-wide or
+agent-type-specific guidance shared across Agentic Team projects.
 
-An empty org notes repo is a valid blank shared memory: AR can create org and
-agent-type notes there over time via the note-updater flow. These starter files are
-useful when you want initial guidance to be injected or listed immediately.
+An empty org repo is a valid blank shared memory: Agentic Team can create org
+and agent-type notes there over time via the note-updater flow. These starter
+files are useful when you want initial guidance to be injected or listed
+immediately.
 
 Recommended starter files:
 
 - `agents/<agent_name>.md`: optional org-provided main agents or subagents
-  shared by every AR installation configured with this org repo.
+  shared by every Agentic Team installation configured with this org repo.
 - `agent-notes/all-agents/always-injected.md`: short guidance every agent in
   the org should see.
 - `agent-notes/all-agents/<topic>.md`: on-demand notes for packages,
@@ -23,7 +24,7 @@ Recommended starter files:
 Keep `always-injected.md` concise. Put detailed or rarely needed information in
 topic notes so agents can read it only when relevant.
 
-Org-provided agents render after AR's built-in agents. If an org agent has the
+Org-provided agents render after Agentic Team's built-in agents. If an org agent has the
 same `name` as a built-in agent, the org agent wins. Use `kind: main` for
 top-level agents selectable with `AR_MAIN_AGENT`, and `kind: subagent` for
 delegate agents rendered into each CLI's subagent directory.

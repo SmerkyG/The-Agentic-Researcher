@@ -1,29 +1,29 @@
 #!/bin/bash
 #
-# first-setup.sh: Interactive setup wizard for Agentic Researcher.
+# first-setup.sh: Interactive setup wizard for Agentic Team.
 #
-# Generates ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh
+# Generates ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-team/config.sh
 #
 # Usage:
-#   agentic-researcher --setup                          # Full interactive wizard
-#   agentic-researcher --setup KEY=VALUE [KEY=VALUE...]  # Set individual values
-#   agentic-researcher --setup auth                      # Toggle oauth / api-key
+#   agentic-team --setup                          # Full interactive wizard
+#   agentic-team --setup KEY=VALUE [KEY=VALUE...]  # Set individual values
+#   agentic-team --setup auth                      # Toggle oauth / api-key
 #
 # Examples:
-#   agentic-researcher --setup AR_CLI_TOOL=gemini
-#   agentic-researcher --setup AR_EXTRA_BIND_DIRS="/data/models, /shared/datasets"
-#   agentic-researcher --setup auth                      # Switch between subscription and custom endpoint
+#   agentic-team --setup AR_CLI=gemini
+#   agentic-team --setup AR_EXTRA_BIND_DIRS="/data/models, /shared/datasets"
+#   agentic-team --setup auth                      # Switch between subscription and custom endpoint
 #
 
 set -e
 
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/agentic-team"
 CONFIG_FILE="$CONFIG_DIR/config.sh"
 
 # ── Quick auth toggle mode ────────────────────────────────────────
 if [[ $# -eq 1 && "$1" == "auth" ]]; then
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "Error: No config file found. Run 'agentic-researcher --setup' first."
+        echo "Error: No config file found. Run 'agentic-team --setup' first."
         exit 1
     fi
     source "$CONFIG_FILE"
@@ -78,7 +78,7 @@ fi
 # ── Individual key=value mode ──────────────────────────────────────
 if [[ $# -gt 0 && "$1" == *=* ]]; then
     if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "Error: No config file found. Run 'agentic-researcher --setup' first (without arguments)."
+        echo "Error: No config file found. Run 'agentic-team --setup' first (without arguments)."
         exit 1
     fi
     for arg in "$@"; do
@@ -102,7 +102,7 @@ fi
 # ── Full interactive wizard ────────────────────────────────────────
 
 echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║          Agentic Researcher - Setup Wizard                    ║"
+echo "║          Agentic Team - Setup Wizard                    ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -110,8 +110,8 @@ if [[ -f "$CONFIG_FILE" ]]; then
     echo "Existing configuration found: $CONFIG_FILE"
     echo ""
     echo "Tip: To change individual settings without re-running the full wizard:"
-    echo "  agentic-researcher --setup KEY=VALUE"
-    echo "  e.g., agentic-researcher --setup AR_CLI_TOOL=gemini"
+    echo "  agentic-team --setup KEY=VALUE"
+    echo "  e.g., agentic-team --setup AR_CLI=gemini"
     echo ""
     read -rp "Re-run full wizard? [y/N] " overwrite
     if [[ ! "$overwrite" =~ ^[Yy]$ ]]; then
@@ -139,61 +139,61 @@ esac
 echo "  → $AR_SANDBOX"
 echo ""
 
-# ── 2. CLI Tool ──────────────────────────────────────────────────────
+# ── 2. CLI Tool ───────────────────────────────────────────────────────────
 echo "─── CLI Tool ───"
 echo "  1) claude    (Claude Code — default)"
 echo "  2) opencode  (OpenCode — open-source, any LLM)"
 echo "  3) gemini    (Gemini CLI — Google)"
 echo "  4) codex     (Codex CLI — OpenAI)"
-echo "  5) pi        (pi — any provider)"
+echo "  5) pi        (pi — any model backend)"
 echo ""
-read -rp "Select [1]: " tool_choice
-case "${tool_choice:-1}" in
+read -rp "Select [1]: " cli__choice
+case "${cli__choice:-1}" in
     1)
-        AR_CLI_TOOL=claude
+        AR_CLI=claude
         AR_DEFAULT_MODEL_DEFAULT=sonnet
         AR_AUTH_MODE=oauth
         AR_API_PROVIDER=anthropic
         AR_API_KEY_ENV=ANTHROPIC_API_KEY
         ;;
     2)
-        AR_CLI_TOOL=opencode
+        AR_CLI=opencode
         AR_DEFAULT_MODEL_DEFAULT=""
-        AR_AUTH_MODE=tool
+        AR_AUTH_MODE=cli-tool
         AR_API_PROVIDER=""
         AR_API_KEY_ENV=""
         ;;
     3)
-        AR_CLI_TOOL=gemini
+        AR_CLI=gemini
         AR_DEFAULT_MODEL_DEFAULT=""
-        AR_AUTH_MODE=tool
+        AR_AUTH_MODE=cli-tool
         AR_API_PROVIDER=""
         AR_API_KEY_ENV=""
         ;;
     4)
-        AR_CLI_TOOL=codex
+        AR_CLI=codex
         AR_DEFAULT_MODEL_DEFAULT=""
-        AR_AUTH_MODE=tool
+        AR_AUTH_MODE=cli-tool
         AR_API_PROVIDER=""
         AR_API_KEY_ENV=""
         ;;
     5)
-        AR_CLI_TOOL=pi
+        AR_CLI=pi
         AR_DEFAULT_MODEL_DEFAULT=""
-        AR_AUTH_MODE=tool
+        AR_AUTH_MODE=cli-tool
         AR_API_PROVIDER=""
         AR_API_KEY_ENV=""
         ;;
     *)
         echo "Invalid choice, defaulting to claude"
-        AR_CLI_TOOL=claude
+        AR_CLI=claude
         AR_DEFAULT_MODEL_DEFAULT=sonnet
         AR_AUTH_MODE=oauth
         AR_API_PROVIDER=anthropic
         AR_API_KEY_ENV=ANTHROPIC_API_KEY
         ;;
 esac
-echo "  → $AR_CLI_TOOL"
+echo "  → $AR_CLI"
 echo ""
 
 # Default model
@@ -201,7 +201,7 @@ if [[ -n "$AR_DEFAULT_MODEL_DEFAULT" ]]; then
     read -rp "Default model [$AR_DEFAULT_MODEL_DEFAULT]: " AR_DEFAULT_MODEL
     AR_DEFAULT_MODEL="${AR_DEFAULT_MODEL:-$AR_DEFAULT_MODEL_DEFAULT}"
 else
-    read -rp "Default model (leave empty for tool default): " AR_DEFAULT_MODEL
+    read -rp "Default model (leave empty for CLI default): " AR_DEFAULT_MODEL
 fi
 if [[ -n "$AR_DEFAULT_MODEL" ]]; then
     echo "  → $AR_DEFAULT_MODEL"
@@ -220,7 +220,7 @@ echo ""
 
 # ── 4. Local State ──────────────────────────────────────────────────
 echo "─── Local State ───"
-STATE_ROOT_DEFAULT="$HOME/.cache/agentic-researcher"
+STATE_ROOT_DEFAULT="$HOME/.cache/agentic-team"
 read -rp "State/cache directory [$STATE_ROOT_DEFAULT]: " AR_STATE_ROOT
 AR_STATE_ROOT="${AR_STATE_ROOT:-$STATE_ROOT_DEFAULT}"
 echo "  → $AR_STATE_ROOT"
@@ -229,7 +229,7 @@ echo ""
 # ── 5. Extra sandbox directories ───────────────────────────────────
 echo "─── Extra Sandbox Directories ───"
 if [[ "$AR_SANDBOX" == "none" ]]; then
-    echo "  No-sandbox mode has no Agentic Researcher filesystem isolation."
+    echo "  No-sandbox mode has no Agentic Team filesystem isolation."
     echo "  Extra bind directories are not used."
     AR_EXTRA_BIND_DIRS=""
 else
@@ -246,12 +246,12 @@ else
 fi
 echo ""
 
-# ── 6. Org notes repo ────────────────────────────────────────────────
-echo "─── Org Notes Repo ───"
+# ── 6. Org repo ──────────────────────────────────────────────────────
+echo "─── Org Repo ───"
 echo "  Optional shared Git repo for organization-wide notes, agent-type notes, and"
-echo "  org-provided agents. Leave empty to use only project-local state."
+echo "  org-provided agents and capabilities. Leave empty to use only project-local state."
 echo ""
-read -rp "Org notes repo Git URL or local path [none]: " AR_ORG_NOTES_REPO
+read -rp "Org repo Git URL or local path [none]: " AR_ORG_NOTES_REPO
 if [[ -n "$AR_ORG_NOTES_REPO" ]]; then
     echo "  → $AR_ORG_NOTES_REPO"
 else
@@ -259,10 +259,26 @@ else
 fi
 echo ""
 
-# ── 7. Main agent ────────────────────────────────────────────────────
+# ── 7. Git identity ──────────────────────────────────────────────────
+echo "─── Git Identity ───"
+echo "  Used for Agentic Team-created commits when a project repo does not"
+echo "  already have Git user.name/user.email configured."
+echo ""
+AR_GIT_NAME_DEFAULT="$(git config --global --get user.name 2>/dev/null || true)"
+AR_GIT_NAME_DEFAULT="${AR_GIT_NAME_DEFAULT:-${USER:-Agentic Team}}"
+AR_GIT_EMAIL_DEFAULT="$(git config --global --get user.email 2>/dev/null || true)"
+AR_GIT_EMAIL_DEFAULT="${AR_GIT_EMAIL_DEFAULT:-${USER:-agentic-team}@example.invalid}"
+read -rp "Git commit name [$AR_GIT_NAME_DEFAULT]: " AR_GIT_NAME
+AR_GIT_NAME="${AR_GIT_NAME:-$AR_GIT_NAME_DEFAULT}"
+read -rp "Git commit email [$AR_GIT_EMAIL_DEFAULT]: " AR_GIT_EMAIL
+AR_GIT_EMAIL="${AR_GIT_EMAIL:-$AR_GIT_EMAIL_DEFAULT}"
+echo "  → $AR_GIT_NAME <$AR_GIT_EMAIL>"
+echo ""
+
+# ── 8. Main agent ────────────────────────────────────────────────────
 echo "─── Main Agent ───"
 echo "  Top-level agent definition to render into the workspace instruction file."
-echo "  Keep the default unless your AR install or org notes repo provides another"
+echo "  Keep the default unless your Agentic Team install or org repo provides another"
 echo "  agents/*.md definition with kind: main."
 echo ""
 AR_MAIN_AGENT_DEFAULT="research-coordinator"
@@ -278,16 +294,16 @@ echo ""
 # ── Write config (all values quoted for safety) ────────────────────
 mkdir -p "$CONFIG_DIR"
 cat > "$CONFIG_FILE" << EOF
-# Agentic Researcher configuration
-# Generated by: agentic-researcher --setup ($(date +%Y-%m-%d))
+# Agentic Team configuration
+# Generated by: agentic-team --setup ($(date +%Y-%m-%d))
 
 # Sandbox: apptainer | docker | podman | none
 AR_SANDBOX="$AR_SANDBOX"
 
-# Authentication: oauth | tool | api-key
+# Authentication: oauth | cli-tool | api-key
 AR_AUTH_MODE="$AR_AUTH_MODE"
 
-# Optional provider metadata
+# Optional API provider metadata
 AR_API_PROVIDER="$AR_API_PROVIDER"
 
 # Optional env var name for launcher-managed API key validation
@@ -297,8 +313,8 @@ AR_API_KEY_ENV="$AR_API_KEY_ENV"
 AR_CUSTOM_ENDPOINT="$AR_CUSTOM_ENDPOINT"
 AR_CUSTOM_ANTHROPIC_ENDPOINT="$AR_CUSTOM_ANTHROPIC_ENDPOINT"
 
-# CLI tool: claude | opencode | gemini | codex | pi
-AR_CLI_TOOL="$AR_CLI_TOOL"
+# CLI: claude | opencode | gemini | codex | pi
+AR_CLI="$AR_CLI"
 
 # Default model
 AR_DEFAULT_MODEL="$AR_DEFAULT_MODEL"
@@ -313,41 +329,45 @@ AR_STATE_ROOT="$AR_STATE_ROOT"
 # Extra directories to bind into the sandbox (colon-separated)
 AR_EXTRA_BIND_DIRS="$AR_EXTRA_BIND_DIRS"
 
-# Agentic Notes and main-agent configuration. AR derives project identity from
+# Agentic Notes and main-agent configuration. Agentic Team derives project identity from
 # the git origin remote by default; set AR_PROJECT_ID only when you need an override.
 AR_ORG_NOTES_REPO="$AR_ORG_NOTES_REPO"
 AR_MAIN_AGENT="$AR_MAIN_AGENT"
 AR_USER_ID="\$USER"
 AR_PROJECT_ID=""
-AR_AGENTIC_STATE_BRANCH="agentic/state"
+AR_PROJECT_STATE_BRANCH="agentic/project-state"
 AR_NOTES_AUTO_REFRESH="true"
+# Git identity for Agentic Team-created commits when a repo lacks identity.
+AR_GIT_NAME="$AR_GIT_NAME"
+AR_GIT_EMAIL="$AR_GIT_EMAIL"
+# Optional override for Agentic State commits. Blank means use AR_GIT_*.
 AR_NOTES_GIT_NAME=""
 AR_NOTES_GIT_EMAIL=""
 AR_AUTO_BUILD="true"
 
-# Optional skills from optional-skills/ to install at launch (comma-separated)
-AR_OPTIONAL_SKILLS=""
+# Enabled capabilities from capabilities/ (comma-separated)
+AR_CAPABILITIES="agentic-notes,experiment-log"
 EOF
 
 echo "════════════════════════════════════════════════════════════════"
 echo "Configuration saved to: $CONFIG_FILE"
 echo ""
 echo "Tip: Change individual settings later with:"
-echo "  agentic-researcher --setup KEY=VALUE"
+echo "  agentic-team --setup KEY=VALUE"
 echo ""
 echo "Next steps:"
 if [[ "$AR_SANDBOX" == "none" ]]; then
-    echo "  1. Make sure '$AR_CLI_TOOL' is installed on PATH"
-    echo "  2. Launch from your project Git checkout: agentic-researcher ~/your-project"
-    echo "     If you are on main/master, AR can prompt to create an agent branch."
-elif [[ "$AR_CLI_TOOL" == "claude" ]]; then
-    echo "  1. Launch from your project Git checkout: agentic-researcher ~/your-project  (will prompt for OAuth login)"
-    echo "     If you are on main/master, AR can prompt to create an agent branch."
+    echo "  1. Make sure '$AR_CLI' is installed on PATH"
+    echo "  2. Launch from your project Git checkout: agentic-team ~/your-project"
+    echo "     If you are on main/master, Agentic Team can prompt to create a work branch."
+elif [[ "$AR_CLI" == "claude" ]]; then
+    echo "  1. Launch from your project Git checkout: agentic-team ~/your-project  (will prompt for OAuth login)"
+    echo "     If you are on main/master, Agentic Team can prompt to create a work branch."
     echo "     The container image builds automatically on first launch."
 else
-    echo "  1. Launch from your project Git checkout: agentic-researcher ~/your-project"
-    echo "     If you are on main/master, AR can prompt to create an agent branch."
+    echo "  1. Launch from your project Git checkout: agentic-team ~/your-project"
+    echo "     If you are on main/master, Agentic Team can prompt to create a work branch."
     echo "     The container image builds automatically on first launch."
-    echo "  2. If needed, export the tool's standard API key env var before launch"
+    echo "  2. If needed, export the selected CLI's standard API key env var before launch"
 fi
 echo "════════════════════════════════════════════════════════════════"

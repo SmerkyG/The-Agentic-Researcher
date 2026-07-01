@@ -1,4 +1,4 @@
-# Sourced by agentic-researcher. Project/worktree validation and branch ownership guard logic.
+# Sourced by agentic-team. Project/worktree validation and branch ownership guard logic.
 
 validate_workspace() {
     # Default to current directory
@@ -96,10 +96,10 @@ validate_project_id() {
         return
     fi
 
-    echo "Error: Agentic Researcher could not infer a project id because this project has no git remote."
+    echo "Error: Agentic Team could not infer a project id because this project has no git remote."
     echo ""
     echo "Add a git remote or provide an explicit id:"
-    echo "  agentic-researcher --project-id my-project-2026 $WORKSPACE_DIR"
+    echo "  agentic-team --project-id my-project-2026 $WORKSPACE_DIR"
     echo ""
     echo "Use the same id for all worktrees and agents that should share notes and experiment logs."
     exit 1
@@ -113,30 +113,26 @@ workspace_is_git_worktree() {
     [[ "$(git -C "$WORKSPACE_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" == "true" ]]
 }
 
-branch_name_is_agent_branch() {
-    [[ "$1" == agent/* && "$1" != "agent/" ]]
+protected_work_branch() {
+    case "$1" in
+        main|master|trunk|dev|develop|release|release/*)
+            return 0
+            ;;
+    esac
+    return 1
 }
 
-agent_owner_branch_from_branch() {
-    local branch="$1" rest owner
-    if branch_name_is_agent_branch "$branch"; then
-        rest="${branch#agent/}"
-        owner="${rest%%/*}"
-        printf 'agent/%s\n' "$owner"
+work_branch_from_branch() {
+    local branch="$1"
+    if [[ "$branch" == */exp/* ]]; then
+        printf '%s\n' "${branch%%/exp/*}"
     else
         printf '%s\n' "$branch"
     fi
 }
 
-agent_branch_id() {
-    local branch="$1" rest owner
-    if branch_name_is_agent_branch "$branch"; then
-        rest="${branch#agent/}"
-        owner="${rest%%/*}"
-        slugify_project_id "$owner"
-    else
-        slugify_project_id "$branch"
-    fi
+work_branch_id() {
+    slugify_project_id "$1"
 }
 
 git_branch_exists() {
@@ -212,12 +208,39 @@ workspace_has_uncommitted_changes() {
     [[ -n "$(git -C "$WORKSPACE_DIR" status --porcelain 2>/dev/null || true)" ]]
 }
 
+git_commit_identity_configured() {
+    git -C "$WORKSPACE_DIR" var GIT_AUTHOR_IDENT >/dev/null 2>&1 \
+        && git -C "$WORKSPACE_DIR" var GIT_COMMITTER_IDENT >/dev/null 2>&1
+}
+
+configured_at_git_name() {
+    printf '%s\n' "${AR_GIT_NAME:-${AR_NOTES_GIT_NAME:-}}"
+}
+
+configured_at_git_email() {
+    printf '%s\n' "${AR_GIT_EMAIL:-${AR_NOTES_GIT_EMAIL:-}}"
+}
+
+setup_workspace_git_identity() {
+    local name email
+
+    workspace_is_git_worktree || return 0
+    git_commit_identity_configured && return 0
+
+    name="$(configured_at_git_name)"
+    email="$(configured_at_git_email)"
+    [[ -n "$name" && -n "$email" ]] || return 0
+
+    git -C "$WORKSPACE_DIR" config user.name "$name"
+    git -C "$WORKSPACE_DIR" config user.email "$email"
+}
+
 branch_config_get() {
     local branch="$1" key="$2"
     git -C "$WORKSPACE_DIR" config --get "branch.$branch.$key" 2>/dev/null || true
 }
 
-record_agent_branch_base() {
+record_work_branch_base() {
     local branch="$1" base_ref="$2" base_commit
     [[ -n "$branch" && -n "$base_ref" ]] || return 0
     git -C "$WORKSPACE_DIR" config "branch.$branch.agentic-base" "$base_ref" || true
@@ -226,7 +249,7 @@ record_agent_branch_base() {
     fi
 }
 
-infer_agent_branch_base_ref() {
+infer_work_branch_base_ref() {
     local owner_branch="$1" current_branch="$2" value candidate upstream
 
     value="$(branch_config_get "$owner_branch" "agentic-base")"
@@ -235,7 +258,7 @@ infer_agent_branch_base_ref() {
         return 0
     fi
 
-    if [[ -n "$current_branch" ]] && ! branch_name_is_agent_branch "$current_branch"; then
+    if [[ -n "$current_branch" ]] && [[ "$current_branch" != "$owner_branch" ]]; then
         printf '%s\n' "$current_branch"
         return 0
     fi
@@ -262,9 +285,9 @@ infer_agent_branch_base_ref() {
     printf 'HEAD\n'
 }
 
-unused_agent_branch_candidate() {
+unused_work_branch_candidate() {
     local base candidate n
-    base="agent/$(slugify_project_id "${AR_USER_ID:-${USER:-agent}}")"
+    base="work/$(slugify_project_id "${AR_USER_ID:-${USER:-agent}}")"
     candidate="$base"
     n=2
     while git_branch_exists "$candidate" || branch_guard_is_occupied "$candidate"; do
@@ -274,7 +297,7 @@ unused_agent_branch_candidate() {
     printf '%s\n' "$candidate"
 }
 
-default_agent_worktree_path() {
+default_worktree_path() {
     local branch="$1" parent base slug candidate n
     parent="$(dirname "$WORKSPACE_DIR")"
     base="$(basename "$WORKSPACE_DIR")"
@@ -305,13 +328,10 @@ prompt_menu_choice() {
     done
 }
 
-prompt_agent_branch_name() {
+prompt_work_branch_name() {
     local default_branch="$1" branch
-    read -r -p "Agent branch name [$default_branch]: " branch
+    read -r -p "Work branch name [$default_branch]: " branch
     branch="${branch:-$default_branch}"
-    if [[ "$branch" != agent/* ]]; then
-        branch="agent/$branch"
-    fi
     printf '%s\n' "$branch"
 }
 
@@ -321,17 +341,16 @@ prompt_worktree_path() {
     printf '%s\n' "${path:-$default_path}"
 }
 
-set_agent_branch_vars() {
+set_work_branch_vars() {
     local owner_branch="$1" current_branch="$2"
     WORKSPACE_GIT_BRANCH="$current_branch"
-    AR_AGENT_BRANCH="$owner_branch"
-    AR_AGENT_BRANCH_ID="$(agent_branch_id "$owner_branch")"
-    AR_AGENT_BRANCH_PREFIX="$owner_branch"
-    AR_AGENT_TOPIC="$AR_AGENT_BRANCH_ID"
-    export WORKSPACE_GIT_BRANCH AR_AGENT_BRANCH AR_AGENT_BRANCH_ID AR_AGENT_BRANCH_PREFIX AR_AGENT_TOPIC
+    AR_WORK_BRANCH="$owner_branch"
+    AR_WORK_BRANCH_ID="$(work_branch_id "$owner_branch")"
+    AR_WORK_BRANCH_PREFIX="$owner_branch"
+    export WORKSPACE_GIT_BRANCH AR_WORK_BRANCH AR_WORK_BRANCH_ID AR_WORK_BRANCH_PREFIX
 }
 
-switch_to_agent_branch() {
+switch_to_work_branch() {
     local target="$1" base_ref="${2:-HEAD}" existed=false
     if ! valid_git_branch_name "$target"; then
         echo "Error: Invalid Git branch name: $target"
@@ -349,11 +368,11 @@ switch_to_agent_branch() {
         git -C "$WORKSPACE_DIR" switch -c "$target" "$base_ref"
     fi
     if [[ "$existed" != "true" ]]; then
-        record_agent_branch_base "$target" "$base_ref"
+        record_work_branch_base "$target" "$base_ref"
     fi
 }
 
-create_agent_worktree() {
+create_worktree() {
     local target_branch="$1" base_ref="$2" target_dir="$3" base_commit
     if ! valid_git_branch_name "$target_branch"; then
         echo "Error: Invalid Git branch name: $target_branch"
@@ -395,35 +414,35 @@ print_branch_decision_context() {
     echo ""
 }
 
-prepare_agent_branch_interactive() {
+prepare_work_branch_interactive() {
     local branch="$1" owner_branch="$2" occupied="$3" dirty="$4" active_guard="$5"
     local base_ref candidate choice target_branch target_path max_choice default_choice
 
-    base_ref="$(infer_agent_branch_base_ref "$owner_branch" "$branch")"
-    candidate="$(unused_agent_branch_candidate)"
+    base_ref="$(infer_work_branch_base_ref "$owner_branch" "$branch")"
+    candidate="$(unused_work_branch_candidate)"
 
-    echo "Exclusive main agent '$AR_MAIN_AGENT' should normally use its own agent branch."
+    echo "Exclusive main agent '$AR_MAIN_AGENT' should normally use its own work branch."
     print_branch_decision_context "$branch" "$occupied" "$dirty" "$base_ref" "$active_guard"
 
     if [[ "$occupied" == "yes" ]]; then
         echo "Choose how to continue:"
-        echo "  1. Create a new worktree with a new agent branch from $base_ref (recommended)"
+        echo "  1. Create a new worktree with a new work branch from $base_ref (recommended)"
         echo "  2. Use the current branch anyway and allow shared-branch work"
         echo "  3. Cancel"
         max_choice=3
         default_choice=1
     elif [[ "$dirty" == "yes" ]]; then
         echo "Choose how to continue:"
-        echo "  1. Create an agent branch in this worktree, carrying current changes (recommended)"
-        echo "  2. Create a new clean worktree with an agent branch from $base_ref"
+        echo "  1. Create a work branch in this worktree, carrying current changes (recommended)"
+        echo "  2. Create a new clean worktree with a work branch from $base_ref"
         echo "  3. Use the current branch anyway"
         echo "  4. Cancel"
         max_choice=4
         default_choice=1
     else
         echo "Choose how to continue:"
-        echo "  1. Create an agent branch in this worktree: $candidate (recommended)"
-        echo "  2. Create a new worktree with an agent branch from $base_ref"
+        echo "  1. Create a work branch in this worktree: $candidate (recommended)"
+        echo "  2. Create a new worktree with a work branch from $base_ref"
         echo "  3. Use the current branch anyway"
         echo "  4. Cancel"
         max_choice=4
@@ -433,12 +452,12 @@ prepare_agent_branch_interactive() {
     choice="$(prompt_menu_choice "$max_choice" "$default_choice")"
     case "$choice" in
         1)
-            target_branch="$(prompt_agent_branch_name "$candidate")"
+            target_branch="$(prompt_work_branch_name "$candidate")"
             if [[ "$occupied" == "yes" ]]; then
-                target_path="$(prompt_worktree_path "$(default_agent_worktree_path "$target_branch")")"
-                create_agent_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
+                target_path="$(prompt_worktree_path "$(default_worktree_path "$target_branch")")"
+                create_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
             else
-                switch_to_agent_branch "$target_branch" "HEAD" || exit 1
+                switch_to_work_branch "$target_branch" "HEAD" || exit 1
             fi
             return 0
             ;;
@@ -447,9 +466,9 @@ prepare_agent_branch_interactive() {
                 BRANCH_GUARD_OVERRIDE=true
                 return 0
             fi
-            target_branch="$(prompt_agent_branch_name "$candidate")"
-            target_path="$(prompt_worktree_path "$(default_agent_worktree_path "$target_branch")")"
-            create_agent_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
+            target_branch="$(prompt_work_branch_name "$candidate")"
+            target_path="$(prompt_worktree_path "$(default_worktree_path "$target_branch")")"
+            create_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
             return 0
             ;;
         3)
@@ -477,7 +496,7 @@ resolve_main_agent_metadata() {
 
     if ! MAIN_AGENT_SOURCE_PATH="$(find_agent_source_by_name "$main_agent")"; then
         echo "Error: Main agent definition not found: $main_agent"
-        echo "Add agents/$main_agent.md with frontmatter 'kind: main' to AR or the org notes repo."
+        echo "Add agents/$main_agent.md with frontmatter 'kind: main' to Agentic Team or the org repo."
         exit 1
     fi
 
@@ -503,7 +522,7 @@ resolve_main_agent_metadata() {
 }
 
 ensure_branch_session_id() {
-    AR_SESSION_ID="${AR_SESSION_ID:-$AR_PROJECT_ID-${AR_AGENT_BRANCH_ID:-branch}-$$-$(date +%s)}"
+    AR_SESSION_ID="${AR_SESSION_ID:-$AR_PROJECT_ID-${AR_WORK_BRANCH_ID:-branch}-$$-$(date +%s)}"
     export AR_SESSION_ID
 }
 
@@ -514,7 +533,7 @@ write_branch_guard_file() {
     mkdir -p "$(dirname "$BRANCH_GUARD_FILE")"
     {
         printf 'project_id=%s\n' "$AR_PROJECT_ID"
-        printf 'branch=%s\n' "$AR_AGENT_BRANCH"
+        printf 'branch=%s\n' "$AR_WORK_BRANCH"
         printf 'current_branch=%s\n' "$WORKSPACE_GIT_BRANCH"
         printf 'branch_ownership=%s\n' "$AR_BRANCH_OWNERSHIP"
         printf 'override=%s\n' "$BRANCH_GUARD_OVERRIDE"
@@ -535,7 +554,7 @@ register_branch_guard() {
     [[ "$AR_BRANCH_OWNERSHIP" == "exclusive" ]] || return 0
     [[ "$TEST_MODE" == "true" || "$RENDER_ONLY" == "true" ]] && return 0
     ensure_branch_session_id
-    guard_dir="$(branch_guard_dir_for "$AR_AGENT_BRANCH")"
+    guard_dir="$(branch_guard_dir_for "$AR_WORK_BRANCH")"
     BRANCH_GUARD_FILE="$guard_dir/$AR_SESSION_ID.guard"
     BRANCH_GUARD_STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     write_branch_guard_file
@@ -566,14 +585,14 @@ cleanup_branch_guard() {
     fi
 }
 
-prepare_agent_branch() {
+prepare_work_branch() {
     local branch owner_branch active_guard candidate base_ref target_path occupied dirty
 
     [[ "$TEST_MODE" == "true" ]] && return 0
 
     if ! workspace_is_git_worktree; then
         [[ "$RENDER_ONLY" == "true" || "$AR_BRANCH_OWNERSHIP" == "readonly" ]] && return 0
-        echo "Error: Agentic Researcher branch ownership requires launching from a Git worktree."
+        echo "Error: Agentic Team branch ownership requires launching from a Git worktree."
         echo ""
         echo "Create or enter a project Git checkout, then relaunch."
         exit 1
@@ -582,21 +601,21 @@ prepare_agent_branch() {
     branch="$(current_workspace_git_branch)"
     if [[ -z "$branch" ]]; then
         [[ "$RENDER_ONLY" == "true" || "$AR_BRANCH_OWNERSHIP" == "readonly" ]] && return 0
-        echo "Error: Agentic Researcher branch ownership requires a named Git branch, but this worktree is detached."
+        echo "Error: Agentic Team branch ownership requires a named Git branch, but this worktree is detached."
         exit 1
     fi
 
-    if [[ -n "${AR_AGENT_BRANCH:-}" ]]; then
-        if [[ "$RENDER_ONLY" != "true" && "$branch" != "$AR_AGENT_BRANCH" ]]; then
-            switch_to_agent_branch "$AR_AGENT_BRANCH" || exit 1
+    if [[ -n "${AR_WORK_BRANCH:-}" ]]; then
+        if [[ "$RENDER_ONLY" != "true" && "$branch" != "$AR_WORK_BRANCH" ]]; then
+            switch_to_work_branch "$AR_WORK_BRANCH" || exit 1
             branch="$(current_workspace_git_branch)"
         elif [[ "$RENDER_ONLY" == "true" ]]; then
-            branch="$AR_AGENT_BRANCH"
+            branch="$AR_WORK_BRANCH"
         fi
     fi
 
-    owner_branch="$(agent_owner_branch_from_branch "$branch")"
-    set_agent_branch_vars "$owner_branch" "$branch"
+    owner_branch="$(work_branch_from_branch "$branch")"
+    set_work_branch_vars "$owner_branch" "$branch"
 
     [[ "$RENDER_ONLY" == "true" ]] && return 0
 
@@ -606,7 +625,7 @@ prepare_agent_branch() {
             ;;
     esac
 
-    if branch_name_is_agent_branch "$branch" && ! branch_guard_is_occupied "$AR_AGENT_BRANCH"; then
+    if ! protected_work_branch "$branch" && ! branch_guard_is_occupied "$AR_WORK_BRANCH"; then
         register_branch_guard
         return 0
     fi
@@ -618,7 +637,7 @@ prepare_agent_branch() {
     fi
 
     active_guard=""
-    if active_guard="$(branch_guard_first_active_file "$AR_AGENT_BRANCH")"; then
+    if active_guard="$(branch_guard_first_active_file "$AR_WORK_BRANCH")"; then
         occupied="yes"
     else
         occupied="no"
@@ -630,27 +649,27 @@ prepare_agent_branch() {
     fi
 
     if ! launch_is_interactive; then
-        echo "Error: Exclusive main agent '$AR_MAIN_AGENT' is not on an unoccupied agent/* branch."
+        echo "Error: Exclusive main agent '$AR_MAIN_AGENT' is not on an unoccupied work branch."
         echo "Current branch: $branch"
         echo "Another active agent: $occupied"
         echo "Uncommitted changes: $dirty"
         if [[ -n "$active_guard" ]]; then
             echo ""
-            echo "Another active local agent appears to be using branch '$AR_AGENT_BRANCH':"
+            echo "Another active local agent appears to be using branch '$AR_WORK_BRANCH':"
             branch_guard_summary "$active_guard"
         fi
-        candidate="$(unused_agent_branch_candidate)"
-        base_ref="$(infer_agent_branch_base_ref "$AR_AGENT_BRANCH" "$branch")"
-        target_path="$(default_agent_worktree_path "$candidate")"
+        candidate="$(unused_work_branch_candidate)"
+        base_ref="$(infer_work_branch_base_ref "$AR_WORK_BRANCH" "$branch")"
+        target_path="$(default_worktree_path "$candidate")"
         echo ""
         if [[ "$occupied" == "yes" ]]; then
-            echo "Create a new worktree with an unused agent branch:"
+            echo "Create a new worktree with an unused work branch:"
             echo "  git worktree add -b $candidate $target_path $base_ref"
-            echo "  agentic-researcher $target_path"
+            echo "  agentic-team $target_path"
         else
-            echo "Create or switch to an unused agent branch first:"
+            echo "Create or switch to an unused work branch first:"
             echo "  git switch -c $candidate"
-            echo "  agentic-researcher $WORKSPACE_DIR"
+            echo "  agentic-team $WORKSPACE_DIR"
         fi
         if [[ "$dirty" == "yes" && "$occupied" == "yes" ]]; then
             echo ""
@@ -658,30 +677,29 @@ prepare_agent_branch() {
         fi
         echo ""
         echo "Or choose an explicit branch before launch:"
-        echo "  agentic-researcher --agent-branch $candidate $WORKSPACE_DIR"
+        echo "  agentic-team --work-branch $candidate $WORKSPACE_DIR"
         echo ""
         echo "Or continue intentionally with shared-branch work:"
-        echo "  agentic-researcher --allow-shared-branch $WORKSPACE_DIR"
+        echo "  agentic-team --allow-shared-branch $WORKSPACE_DIR"
         exit 1
     fi
 
-    prepare_agent_branch_interactive "$branch" "$AR_AGENT_BRANCH" "$occupied" "$dirty" "$active_guard"
+    prepare_work_branch_interactive "$branch" "$AR_WORK_BRANCH" "$occupied" "$dirty" "$active_guard"
     branch="$(current_workspace_git_branch)"
-    owner_branch="$(agent_owner_branch_from_branch "$branch")"
-    set_agent_branch_vars "$owner_branch" "$branch"
+    owner_branch="$(work_branch_from_branch "$branch")"
+    set_work_branch_vars "$owner_branch" "$branch"
 
     if [[ "$BRANCH_GUARD_OVERRIDE" == "true" ]]; then
         register_branch_guard
         return 0
     fi
 
-    if branch_guard_is_occupied "$AR_AGENT_BRANCH"; then
-        echo "Error: Branch '$AR_AGENT_BRANCH' appears to have another active local agent session."
-        branch_guard_summary "$(branch_guard_first_active_file "$AR_AGENT_BRANCH")"
+    if branch_guard_is_occupied "$AR_WORK_BRANCH"; then
+        echo "Error: Branch '$AR_WORK_BRANCH' appears to have another active local agent session."
+        branch_guard_summary "$(branch_guard_first_active_file "$AR_WORK_BRANCH")"
         exit 1
     fi
 
     register_branch_guard
     return 0
 }
-

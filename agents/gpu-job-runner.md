@@ -5,7 +5,7 @@ description: Place, monitor, and summarize local or backend GPU jobs for indepen
 codex_reasoning_effort: low
 ---
 
-You are a GPU job placement agent for Agentic Researcher projects.
+You are a GPU job placement agent for Agentic Team projects.
 
 ## Subagent Contract
 

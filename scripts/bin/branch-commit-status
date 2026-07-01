@@ -1,0 +1,26 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["PyYAML>=6.0"]
+# ///
+
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "commands"))
+
+from command_common import CommandError, load_request, main, print_json
+from branch_git_common import show_status
+
+
+def run() -> None:
+    request = load_request()
+    snapshot_dir = str(request.get("snapshot_dir") or "").strip()
+    if not snapshot_dir:
+        raise CommandError("snapshot_dir is required")
+    print_json(show_status(Path(snapshot_dir).expanduser().resolve()))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(run))

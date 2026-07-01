@@ -1,16 +1,16 @@
 #!/bin/bash
 #
-# install.sh: Install agentic-researcher locally and create a launcher symlink.
+# install.sh: Install agentic-team locally and create a launcher symlink.
 #
 
 set -euo pipefail
 
-DEFAULT_INSTALL_DIR="$HOME/.local/share/agentic-researcher"
+DEFAULT_INSTALL_DIR="$HOME/.local/share/agentic-team"
 DEFAULT_BIN_DIR="$HOME/.local/bin"
-DEFAULT_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher"
-DEFAULT_REPO_URL="https://github.com/ZIB-IOL/The-Agentic-Researcher.git"
+DEFAULT_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/agentic-team"
+DEFAULT_REPO_URL="https://github.com/ZIB-IOL/The-Agentic-Team.git"
 DEFAULT_REPO_REF="main"
-INSTALL_MARKER=".agentic-researcher-install"
+INSTALL_MARKER=".agentic-team-install"
 
 INSTALL_DIR="$DEFAULT_INSTALL_DIR"
 BIN_DIR="$DEFAULT_BIN_DIR"
@@ -18,10 +18,18 @@ CONFIG_DIR="$DEFAULT_CONFIG_DIR"
 REPO_URL="$DEFAULT_REPO_URL"
 REPO_REF="$DEFAULT_REPO_REF"
 SANDBOX=""
-TOOL="claude"
-STATE_ROOT="$HOME/.cache/agentic-researcher"
+CLI="claude"
+STATE_ROOT="$HOME/.cache/agentic-team"
 WRITE_CONFIG=false
 FORCE=false
+
+default_git_name() {
+    git config --global --get user.name 2>/dev/null || printf '%s\n' "${USER:-Agentic Team}"
+}
+
+default_git_email() {
+    git config --global --get user.email 2>/dev/null || printf '%s@example.invalid\n' "${USER:-agentic-team}"
+}
 
 detect_default_sandbox() {
     if command -v docker >/dev/null 2>&1; then
@@ -44,9 +52,9 @@ Options:
   --repo-url URL      Git repository to clone for bootstrap installs
   --ref NAME          Git branch or tag to clone for bootstrap installs
   --sandbox NAME      Default sandbox in generated config (docker|podman|apptainer|none)
-  --tool NAME         Default tool in generated config (claude|opencode|gemini|codex|pi)
+  --cli NAME         Default CLI in generated config (claude|opencode|gemini|codex|pi)
   --state-root DIR    State/cache root in generated config
-  --write-config      Write initial config at ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh
+  --write-config      Write initial config at ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-team/config.sh
                       without running the setup wizard
   --force             Overwrite existing install and symlink
   --help              Show this help
@@ -54,9 +62,9 @@ Options:
 Examples:
   ./scripts/install.sh
   ./scripts/install.sh --write-config
-  ./scripts/install.sh --sandbox apptainer --tool codex --write-config
+  ./scripts/install.sh --sandbox apptainer --cli codex --write-config
   ./scripts/install.sh --sandbox podman --write-config
-  ./scripts/install.sh --sandbox none --tool codex --write-config
+  ./scripts/install.sh --sandbox none --cli codex --write-config
 EOF
 }
 
@@ -82,8 +90,8 @@ while [[ $# -gt 0 ]]; do
             SANDBOX="$2"
             shift 2
             ;;
-        --tool)
-            TOOL="$2"
+        --cli)
+            CLI="$2"
             shift 2
             ;;
         --state-root)
@@ -126,10 +134,10 @@ case "$SANDBOX" in
         ;;
 esac
 
-case "$TOOL" in
+case "$CLI" in
     claude|opencode|gemini|codex|pi) ;;
     *)
-        echo "Error: Unsupported tool: $TOOL" >&2
+        echo "Error: Unsupported CLI: $CLI" >&2
         exit 1
         ;;
 esac
@@ -143,7 +151,7 @@ if [[ -n "$SCRIPT_SOURCE" && -f "$SCRIPT_SOURCE" ]]; then
 fi
 
 is_local_checkout() {
-    [[ -n "$REPO_ROOT" && -f "$REPO_ROOT/agentic-researcher" && -d "$REPO_ROOT/container" ]]
+    [[ -n "$REPO_ROOT" && -f "$REPO_ROOT/agentic-team" && -d "$REPO_ROOT/container" ]]
 }
 
 stage_local_checkout() {
@@ -166,7 +174,7 @@ stage_local_checkout() {
     if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse HEAD >/dev/null 2>&1; then
         install_commit="$(git -C "$REPO_ROOT" rev-parse HEAD)"
     fi
-    printf 'managed_by=agentic-researcher\nsource=local-checkout\nsource_path=%s\ninstall_commit=%s\n' \
+    printf 'managed_by=agentic-team\nsource=local-checkout\nsource_path=%s\ninstall_commit=%s\n' \
         "$REPO_ROOT" "$install_commit" > "$INSTALL_DIR/$INSTALL_MARKER"
 }
 
@@ -185,13 +193,17 @@ bootstrap_remote_checkout() {
     else
         git clone "$REPO_URL" "$INSTALL_DIR"
     fi
-    printf 'managed_by=agentic-researcher\nsource=%s\nref=%s\n' "$REPO_URL" "$REPO_REF" > "$INSTALL_DIR/$INSTALL_MARKER"
+    printf 'managed_by=agentic-team\nsource=%s\nref=%s\n' "$REPO_URL" "$REPO_REF" > "$INSTALL_DIR/$INSTALL_MARKER"
 }
 
 write_config() {
     local auth_mode api_provider api_key_env default_model
+    local git_name git_email
 
-    case "$TOOL" in
+    git_name="$(default_git_name)"
+    git_email="$(default_git_email)"
+
+    case "$CLI" in
         claude)
             auth_mode="oauth"
             api_provider="anthropic"
@@ -199,25 +211,25 @@ write_config() {
             default_model="sonnet"
             ;;
         opencode)
-            auth_mode="tool"
+            auth_mode="cli-tool"
             api_provider=""
             api_key_env=""
             default_model=""
             ;;
         gemini)
-            auth_mode="tool"
+            auth_mode="cli-tool"
             api_provider=""
             api_key_env=""
             default_model=""
             ;;
         codex)
-            auth_mode="tool"
+            auth_mode="cli-tool"
             api_provider=""
             api_key_env=""
             default_model=""
             ;;
         pi)
-            auth_mode="tool"
+            auth_mode="cli-tool"
             api_provider=""
             api_key_env="ANTHROPIC_API_KEY"
             default_model=""
@@ -226,14 +238,14 @@ write_config() {
 
     mkdir -p "$CONFIG_DIR"
     cat > "$CONFIG_DIR/config.sh" <<EOF
-# Agentic Researcher configuration
+# Agentic Team configuration
 AR_SANDBOX="$SANDBOX"
 AR_AUTH_MODE="$auth_mode"
 AR_API_PROVIDER="$api_provider"
 AR_API_KEY_ENV="$api_key_env"
 AR_CUSTOM_ENDPOINT=""
 AR_CUSTOM_ANTHROPIC_ENDPOINT=""
-AR_CLI_TOOL="$TOOL"
+AR_CLI="$CLI"
 AR_DEFAULT_MODEL="$default_model"
 AR_HTTPS_PROXY=""
 AR_HTTP_PROXY=""
@@ -243,16 +255,20 @@ AR_ORG_NOTES_REPO=""
 AR_MAIN_AGENT="research-coordinator"
 AR_USER_ID="\$USER"
 AR_PROJECT_ID=""
-AR_AGENTIC_STATE_BRANCH="agentic/state"
+AR_PROJECT_STATE_BRANCH="agentic/project-state"
 AR_NOTES_AUTO_REFRESH="true"
-AR_OPTIONAL_SKILLS=""
+AR_GIT_NAME="$git_name"
+AR_GIT_EMAIL="$git_email"
+AR_NOTES_GIT_NAME=""
+AR_NOTES_GIT_EMAIL=""
+AR_CAPABILITIES="agentic-notes,experiment-log"
 AR_AUTO_BUILD="true"
 EOF
 }
 
 install_symlink() {
-    local target="$INSTALL_DIR/agentic-researcher"
-    local link_path="$BIN_DIR/agentic-researcher"
+    local target="$INSTALL_DIR/agentic-team"
+    local link_path="$BIN_DIR/agentic-team"
 
     mkdir -p "$BIN_DIR"
 
@@ -304,13 +320,13 @@ print_path_hint
 echo ""
 echo "Next steps:"
 if [[ "$SANDBOX" == "none" ]]; then
-    echo "  1. Configure defaults:  agentic-researcher --setup"
-    echo "  2. Make sure your selected CLI tool is installed on PATH"
-    echo "  3. Start from your project Git checkout: agentic-researcher ~/your-project"
-    echo "     If you are on main/master, AR can prompt to create an agent branch."
+    echo "  1. Configure defaults:  agentic-team --setup"
+    echo "  2. Make sure your selected CLI is installed on PATH"
+    echo "  3. Start from your project Git checkout: agentic-team ~/your-project"
+    echo "     If you are on main/master, Agentic Team can prompt to create a work branch."
 else
-    echo "  1. Configure defaults:  agentic-researcher --setup"
-    echo "  2. Start from your project Git checkout: agentic-researcher ~/your-project"
-    echo "     If you are on main/master, AR can prompt to create an agent branch."
+    echo "  1. Configure defaults:  agentic-team --setup"
+    echo "  2. Start from your project Git checkout: agentic-team ~/your-project"
+    echo "     If you are on main/master, Agentic Team can prompt to create a work branch."
     echo "     The container image builds automatically on first launch."
 fi

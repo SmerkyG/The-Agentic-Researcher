@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# entrypoint.sh: Docker entrypoint for Agentic Researcher container.
+# entrypoint.sh: Docker entrypoint for Agentic Team container.
 # Equivalent to Apptainer %runscript.
 #
 
@@ -124,32 +124,32 @@ setup_home_layout() {
     export XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 }
 
-link_tool_binary() {
-    local tool_name="$1"
+link_cli__binary() {
+    local cli__name="$1"
     local target_path="$2"
-    local tool_bin
+    local cli__bin
 
-    tool_bin="$(command -v "$tool_name" 2>/dev/null || true)"
-    if [[ -n "$tool_bin" ]]; then
-        ln -sf "$tool_bin" "$target_path" 2>/dev/null
+    cli__bin="$(command -v "$cli__name" 2>/dev/null || true)"
+    if [[ -n "$cli__bin" ]]; then
+        ln -sf "$cli__bin" "$target_path" 2>/dev/null
     fi
 }
 
 setup_home_layout
 
 # Create symlinks so tools find binaries at native install paths
-link_tool_binary claude "$HOME/.local/bin/claude"
-link_tool_binary opencode "$HOME/.opencode/bin/opencode"
-link_tool_binary gemini "$HOME/.local/bin/gemini"
-link_tool_binary codex "$HOME/.local/bin/codex"
-link_tool_binary pi "$HOME/.local/bin/pi"
+link_cli__binary claude "$HOME/.local/bin/claude"
+link_cli__binary opencode "$HOME/.opencode/bin/opencode"
+link_cli__binary gemini "$HOME/.local/bin/gemini"
+link_cli__binary codex "$HOME/.local/bin/codex"
+link_cli__binary pi "$HOME/.local/bin/pi"
 
-# Multi-tool dispatch: check SANDBOX_TOOL env var
-case "${SANDBOX_TOOL:-claude}" in
+# Multi-CLI dispatch: check SANDBOX_CLI env var
+case "${SANDBOX_CLI:-claude}" in
     claude)   exec claude "$@" ;;
     opencode) exec opencode "$@" ;;
     gemini)   exec gemini "$@" ;;
     codex)    exec codex "$@" ;;
     pi)       exec pi "$@" ;;
-    *)        echo "Unknown tool: $SANDBOX_TOOL"; exit 1 ;;
+    *)        echo "Unknown CLI: $SANDBOX_CLI"; exit 1 ;;
 esac

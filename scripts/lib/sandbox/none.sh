@@ -15,38 +15,7 @@ sandbox_none_validate() {
 }
 
 sandbox_none_setup_environment() {
-    export AR_SANDBOX="$AR_SANDBOX"
-    export AR_SANDBOX_HOME="$AR_SANDBOX_HOME"
-    export AR_INSTALL_DIR
-    AR_INSTALL_DIR="$(ar_install_env_path)"
-    export AR_NOTES_CLI
-    AR_NOTES_CLI="$(ar_notes_cli_env_path)"
-    export AR_TOOL_CLI
-    AR_TOOL_CLI="$(ar_tool_cli_env_path)"
-    export AR_PROVIDER_REFRESH_CLI
-    AR_PROVIDER_REFRESH_CLI="$(provider_refresh_cli_env_path)"
-    export AR_JOB_BACKEND="${JOB_BACKEND:-none}"
-    export AR_CLI_TOOL="$AR_CLI_TOOL"
-    export AR_STATE_ROOT="$STATE_ROOT"
-    export AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
-    export AR_MAIN_AGENT="${AR_MAIN_AGENT:-research-coordinator}"
-    export AR_INSTRUCTION_PROVIDERS="${AR_INSTRUCTION_PROVIDERS:-agentic-notes,experiment-log}"
-    export AR_AGENT_BRANCH="${AR_AGENT_BRANCH:-}"
-    export AR_AGENT_BRANCH_ID="${AR_AGENT_BRANCH_ID:-}"
-    export AR_AGENT_TOPIC="${AR_AGENT_TOPIC:-}"
-    export AR_AGENT_BRANCH_PREFIX="${AR_AGENT_BRANCH_PREFIX:-}"
-    export AR_BRANCH_OWNERSHIP="${AR_BRANCH_OWNERSHIP:-exclusive}"
-    export AR_SESSION_ID="${AR_SESSION_ID:-}"
-    export AR_USER_ID="${AR_USER_ID:-$USER}"
-    export AR_PROJECT_ID="${AR_PROJECT_ID:-}"
-    export AR_AGENTIC_STATE_BRANCH="${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
-    export AR_NOTES_AUTO_REFRESH="${AR_NOTES_AUTO_REFRESH:-true}"
-    export AR_NOTES_REFRESH_MODE="${AR_NOTES_REFRESH_MODE:-periodic}"
-    export AR_NOTES_REFRESH_INTERVAL_SECONDS="${AR_NOTES_REFRESH_INTERVAL_SECONDS:-120}"
-    export AR_RESOLVER_GIT_NAME="${AR_RESOLVER_GIT_NAME:-}"
-    export AR_RESOLVER_GIT_EMAIL="${AR_RESOLVER_GIT_EMAIL:-}"
-    export AR_NOTES_GIT_NAME="${AR_NOTES_GIT_NAME:-}"
-    export AR_NOTES_GIT_EMAIL="${AR_NOTES_GIT_EMAIL:-}"
+    export_ar_runtime_env
 
     if [[ -n "${AR_HTTPS_PROXY:-}" ]]; then
         export https_proxy="$AR_HTTPS_PROXY"
@@ -65,7 +34,7 @@ sandbox_none_setup_environment() {
 }
 
 sandbox_none_run_test() {
-    local tool_cmd="$1"
+    local cli__cmd="$1"
     local pass_count=0
     local fail_count=0
     local warn_count=0
@@ -87,7 +56,7 @@ sandbox_none_run_test() {
         native_fail "Workspace does not exist: $WORKSPACE_DIR"
     fi
 
-    local testfile="$WORKSPACE_DIR/.agentic_researcher_native_test_$$"
+    local testfile="$WORKSPACE_DIR/.agentic_team_native_test_$$"
     if touch "$testfile" 2>/dev/null; then
         native_pass "Workspace is writable"
         rm -f "$testfile"
@@ -96,11 +65,11 @@ sandbox_none_run_test() {
     fi
 
     echo ""
-    echo "=== CLI Tool ==="
-    if command -v "$tool_cmd" >/dev/null 2>&1; then
-        native_pass "$tool_cmd found ($(command -v "$tool_cmd"))"
+    echo "=== CLI ==="
+    if command -v "$cli__cmd" >/dev/null 2>&1; then
+        native_pass "$cli__cmd found ($(command -v "$cli__cmd"))"
     else
-        native_fail "$tool_cmd not found on PATH"
+        native_fail "$cli__cmd not found on PATH"
     fi
 
     echo ""
@@ -129,7 +98,7 @@ sandbox_none_run_test() {
             fi
             ;;
         remote-run)
-            native_fail "remote-run optional skill requires --sandbox apptainer"
+            native_fail "remote-run capability requires --sandbox apptainer"
             ;;
     esac
 
@@ -160,21 +129,21 @@ sandbox_none_run_test() {
 
 sandbox_none_launch() {
     local mode="${1:-run}"
-    local tool_cmd
-    tool_cmd="$(native_tool_command)"
+    local cli__cmd
+    cli__cmd="$(native_cli_command)"
 
     sandbox_none_setup_environment
 
     if [[ "$mode" == "test" ]]; then
-        sandbox_none_run_test "$tool_cmd"
+        sandbox_none_run_test "$cli__cmd"
     fi
 
-    if ! command -v "$tool_cmd" >/dev/null 2>&1; then
-        echo "Error: Sandbox none selected, but '$tool_cmd' is not installed or not on PATH."
-        echo "Install the selected CLI tool on the host or use a container sandbox."
+    if ! command -v "$cli__cmd" >/dev/null 2>&1; then
+        echo "Error: Sandbox none selected, but '$cli__cmd' is not installed or not on PATH."
+        echo "Install the selected CLI on the host or use a container sandbox."
         exit 1
     fi
 
     cd "$WORKSPACE_DIR"
-    "$tool_cmd" "${TOOL_ARGS[@]}"
+    "$cli__cmd" "${CLI_ARGS[@]}"
 }

@@ -10,7 +10,7 @@ sandbox_apptainer_validate_host() {
         echo "Error: Apptainer is only supported on Linux hosts. Current host: $host_os"
         echo ""
         echo "Use Docker on this machine instead:"
-        echo "  agentic-researcher --sandbox docker ..."
+        echo "  agentic-team --sandbox docker ..."
         echo ""
         echo "To test Apptainer, run the launcher on a Linux workstation, WSL2 instance, or cluster node."
         exit 1
@@ -26,7 +26,7 @@ sandbox_apptainer_validate_host() {
 }
 
 sandbox_apptainer_image_exists() {
-    [[ -f "$SCRIPT_DIR/container/agentic_researcher.sif" ]]
+    [[ -f "$SCRIPT_DIR/container/agentic_team.sif" ]]
 }
 
 sandbox_apptainer_build_image() {
@@ -35,14 +35,14 @@ sandbox_apptainer_build_image() {
 
 sandbox_apptainer_validate() {
     sandbox_apptainer_validate_host
-    CONTAINER_IMAGE="$SCRIPT_DIR/container/agentic_researcher.sif"
+    CONTAINER_IMAGE="$SCRIPT_DIR/container/agentic_team.sif"
     if [[ ! -f "$CONTAINER_IMAGE" ]]; then
         echo "Error: Container image not found after build: $CONTAINER_IMAGE"
         exit 1
     fi
 
     if [[ -f "$CONTAINER_IMAGE.sha256" ]]; then
-        if ! (cd "$SCRIPT_DIR/container" && sha256sum -c "agentic_researcher.sif.sha256" &>/dev/null); then
+        if ! (cd "$SCRIPT_DIR/container" && sha256sum -c "agentic_team.sif.sha256" &>/dev/null); then
             echo "Error: Container image integrity check failed!"
             echo "The container may have been tampered with."
             exit 1
@@ -76,19 +76,19 @@ sandbox_apptainer_launch() {
         "${DATASET_BINDS[@]}"
         "${EXTRA_DIR_ROOT_BIND[@]}"
         "${EXTRA_DIR_BINDS[@]}"
-        "${OPTIONAL_SKILL_BINDS[@]}"
+        "${CAPABILITY_BINDS[@]}"
         --pwd /workspace
     )
 
     cli_call add_apptainer_binds
 
-    ENV_ARGS+=("${OPTIONAL_SKILL_ENV[@]}")
+    ENV_ARGS+=("${CAPABILITY_ENV[@]}")
 
     if [[ "$mode" == "test" ]]; then
         BIND_ARGS+=(
             --bind "$SCRIPT_DIR/scripts/test_sandbox.sh:/test_sandbox.sh:ro"
         )
-        ENV_ARGS+=(--env "AR_CLI_TOOL=$AR_CLI_TOOL")
+        ENV_ARGS+=(--env "AR_CLI=$AR_CLI")
 
         apptainer exec \
             "${BIND_ARGS[@]}" \
@@ -100,6 +100,6 @@ sandbox_apptainer_launch() {
             "${BIND_ARGS[@]}" \
             "${ENV_ARGS[@]}" \
             "$CONTAINER_IMAGE" \
-            "${TOOL_ARGS[@]}"
+            "${CLI_ARGS[@]}"
     fi
 }

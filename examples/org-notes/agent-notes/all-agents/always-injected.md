@@ -11,4 +11,4 @@ Good examples:
 - Cross-project conventions for reporting reusable lessons.
 
 Avoid project-specific experiment results here. Put those in the project's
-Agentic Notes state on `agentic/state`.
+Agentic Notes state on `agentic/project-state`.

@@ -3,7 +3,7 @@
 oci_image_exists() {
     local oci_runtime="$1"
     command -v "$oci_runtime" >/dev/null 2>&1 || return 1
-    "$oci_runtime" image inspect agentic-researcher:latest >/dev/null 2>&1
+    "$oci_runtime" image inspect agentic-team:latest >/dev/null 2>&1
 }
 
 oci_build_image() {
@@ -90,35 +90,9 @@ oci_launch() {
         -e "HOST_GID=$host_gid"
         -e "HOST_USER=$host_user"
         -e "HOST_GROUP=$host_group"
-        -e "SANDBOX_TOOL=$AR_CLI_TOOL"
-        -e "AR_SANDBOX=$AR_SANDBOX"
-        -e "AR_SANDBOX_HOME=$AR_SANDBOX_HOME"
-        -e "AR_INSTALL_DIR=$(ar_install_env_path)"
-        -e "AR_NOTES_CLI=$(ar_notes_cli_env_path)"
-        -e "AR_TOOL_CLI=$(ar_tool_cli_env_path)"
-        -e "AR_PROVIDER_REFRESH_CLI=$(provider_refresh_cli_env_path)"
-        -e "AR_JOB_BACKEND=${JOB_BACKEND:-none}"
-        -e "AR_STATE_ROOT=$STATE_ROOT"
-        -e "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
-        -e "AR_MAIN_AGENT=${AR_MAIN_AGENT:-research-coordinator}"
-        -e "AR_INSTRUCTION_PROVIDERS=${AR_INSTRUCTION_PROVIDERS:-agentic-notes,experiment-log}"
-        -e "AR_AGENT_BRANCH=${AR_AGENT_BRANCH:-}"
-        -e "AR_AGENT_BRANCH_ID=${AR_AGENT_BRANCH_ID:-}"
-        -e "AR_AGENT_TOPIC=${AR_AGENT_TOPIC:-}"
-        -e "AR_AGENT_BRANCH_PREFIX=${AR_AGENT_BRANCH_PREFIX:-}"
-        -e "AR_BRANCH_OWNERSHIP=${AR_BRANCH_OWNERSHIP:-exclusive}"
-        -e "AR_SESSION_ID=${AR_SESSION_ID:-}"
-        -e "AR_USER_ID=${AR_USER_ID:-$USER}"
-        -e "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
-        -e "AR_AGENTIC_STATE_BRANCH=${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
-        -e "AR_NOTES_AUTO_REFRESH=${AR_NOTES_AUTO_REFRESH:-true}"
-        -e "AR_NOTES_REFRESH_MODE=${AR_NOTES_REFRESH_MODE:-periodic}"
-        -e "AR_NOTES_REFRESH_INTERVAL_SECONDS=${AR_NOTES_REFRESH_INTERVAL_SECONDS:-120}"
-        -e "AR_RESOLVER_GIT_NAME=${AR_RESOLVER_GIT_NAME:-}"
-        -e "AR_RESOLVER_GIT_EMAIL=${AR_RESOLVER_GIT_EMAIL:-}"
-        -e "AR_NOTES_GIT_NAME=${AR_NOTES_GIT_NAME:-}"
-        -e "AR_NOTES_GIT_EMAIL=${AR_NOTES_GIT_EMAIL:-}"
+        -e "SANDBOX_CLI=$AR_CLI"
     )
+    append_ar_runtime_env_args OCI_ARGS -e
 
     if [[ -n "${AR_HTTPS_PROXY:-}" ]]; then
         OCI_ARGS+=(-e "https_proxy=$AR_HTTPS_PROXY" -e "http_proxy=${AR_HTTP_PROXY:-$AR_HTTPS_PROXY}")
@@ -144,9 +118,9 @@ oci_launch() {
     if [[ "$mode" == "test" ]]; then
         OCI_ARGS+=(--entrypoint /bin/bash)
         OCI_ARGS+=(-v "$SCRIPT_DIR/scripts/test_sandbox.sh:/test_sandbox.sh:ro")
-        OCI_ARGS+=(-e "AR_CLI_TOOL=$AR_CLI_TOOL")
-        "${OCI_ARGS[@]}" agentic-researcher:latest /test_sandbox.sh
+        OCI_ARGS+=(-e "AR_CLI=$AR_CLI")
+        "${OCI_ARGS[@]}" agentic-team:latest /test_sandbox.sh
     else
-        "${OCI_ARGS[@]}" agentic-researcher:latest "${TOOL_ARGS[@]}"
+        "${OCI_ARGS[@]}" agentic-team:latest "${CLI_ARGS[@]}"
     fi
 }

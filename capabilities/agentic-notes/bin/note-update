@@ -1,0 +1,49 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["PyYAML>=6.0"]
+# ///
+
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts" / "lib" / "commands"))
+
+from command_common import (
+    internal_request,
+    load_request,
+    main,
+    print_json,
+    project_dir_from,
+    request_text,
+    run_command,
+)
+
+
+def run() -> None:
+    request = load_request()
+    internal_command = Path(__file__).resolve().parents[1] / "lib" / "agentic-notes-internal"
+    command = [
+        str(internal_command),
+        "update-note",
+        "--request",
+        "-",
+        "--project-dir",
+        project_dir_from(request),
+        "--refresh-parent",
+    ]
+    result = run_command(
+        command,
+        input_text=request_text(internal_request(request, "note_update_request")),
+    )
+
+    output = result.stdout.strip()
+    response = {"command": "note-update", "state": "ok", "stdout": output}
+    if output:
+        response["note_update"] = output.splitlines()[-1]
+    print_json(response)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(run))

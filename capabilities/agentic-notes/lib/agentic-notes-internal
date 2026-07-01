@@ -1,0 +1,879 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["PyYAML>=6.0"]
+# ///
+"""Manage Agentic Team Git-backed notes."""
+
+from __future__ import annotations
+
+import argparse
+from contextlib import ExitStack
+import os
+import re
+import sys
+import textwrap
+from pathlib import Path
+from typing import Any, Callable
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[2]
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
+
+from agentic_state import (  # noqa: E402
+    AgenticStateError,
+    agent_type,
+    commit_if_changed,
+    current_branch,
+    ensure_local_git_repo,
+    ensure_org_checkout,
+    ensure_project_checkout,
+    ensure_work_state_checkout,
+    env_bool,
+    git,
+    git_remote,
+    is_remote_repo_spec,
+    lock_file_for,
+    nonblocking_state_lock,
+    org_checkout_path,
+    parse_yaml_mapping,
+    project_id,
+    project_remote_name,
+    project_state_path,
+    pull_ff,
+    push,
+    remote_branch_exists,
+    request_from_args,
+    run,
+    run_parallel_refresh,
+    slugify,
+    state_branch,
+    state_lock,
+    wait_for_refresh_interval,
+    work_branch,
+    work_branch_id,
+    work_lock_path,
+    work_state_branch,
+)
+
+ALWAYS_INJECTED_NOTE = "always-injected.md"
+ALWAYS_INJECTED_NOTE_STEM = "always-injected"
+ALL_AGENTS_TYPE = "all-agents"
+AtNotesError = AgenticStateError
+
+
+def init_org_notes(args: argparse.Namespace) -> None:
+    repo_arg = Path(args.repo).expanduser()
+    if not is_remote_repo_spec(args.repo) and not repo_arg.exists():
+        ensure_local_git_repo(repo_arg, "main")
+        notes_dir = repo_arg / "agent-notes" / ALL_AGENTS_TYPE
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        always_injected = notes_dir / ALWAYS_INJECTED_NOTE
+        if not always_injected.exists():
+            always_injected.write_text("", encoding="utf-8")
+        commit_if_changed(repo_arg, "agentic: initialize org notes")
+    checkout = ensure_org_checkout(args.repo)
+    if checkout is not None:
+        print(checkout)
+
+
+def ensure_project_state_files(repo: Path) -> list[Path]:
+    changed_paths: list[Path] = []
+    notes_dir = agent_notes_dir(repo, "project", ALL_AGENTS_TYPE)
+    notes_dir.mkdir(parents=True, exist_ok=True)
+
+    always_injected = notes_dir / ALWAYS_INJECTED_NOTE
+    if not always_injected.exists():
+        always_injected.write_text("", encoding="utf-8")
+        changed_paths.append(always_injected)
+
+    keep = notes_dir / ".gitkeep"
+    if not any(p.name != ".gitkeep" for p in notes_dir.iterdir()):
+        keep.touch()
+        changed_paths.append(keep)
+
+    return changed_paths
+
+
+def ensure_work_agent_notes_state_files(repo: Path, branch_name: str) -> list[Path]:
+    changed_paths: list[Path] = []
+    notes_dir = agent_notes_dir(repo, "work", ALL_AGENTS_TYPE)
+    notes_dir.mkdir(parents=True, exist_ok=True)
+
+    always_injected = notes_dir / ALWAYS_INJECTED_NOTE
+    if not always_injected.exists():
+        always_injected.write_text("", encoding="utf-8")
+        changed_paths.append(always_injected)
+
+    keep = notes_dir / ".gitkeep"
+    if not any(p.name != ".gitkeep" for p in notes_dir.iterdir()):
+        keep.touch()
+        changed_paths.append(keep)
+
+    return changed_paths
+
+
+def render_parent_instructions(project_dir: Path, cli: str | None) -> None:
+    command = [
+        str(REPO_ROOT / "agentic-team"),
+        "--sandbox",
+        "none",
+        "--cli",
+        cli or os.environ.get("AR_CLI", "codex"),
+        "--render-only",
+        "--main-agent",
+        agent_type(),
+    ]
+    if os.environ.get("AR_PROJECT_ID"):
+        command.extend(["--project-id", os.environ["AR_PROJECT_ID"]])
+    if os.environ.get("AR_WORK_BRANCH"):
+        command.extend(["--work-branch", os.environ["AR_WORK_BRANCH"]])
+    command.append(str(project_dir))
+    result = run(command, check=False)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise AtNotesError(f"instruction refresh failed: {detail}")
+
+
+def ensure_project_state(
+    project_dir: Path,
+    explicit_project_id: str | None = None,
+    *,
+    pull_remote: bool = True,
+    push_changes: bool = True,
+) -> Path:
+    repo = ensure_project_checkout(project_dir, explicit_project_id)
+    branch = state_branch()
+    if pull_remote and git_remote(repo):
+        pull_ff(repo, branch, missing_ok=True)
+    ensure_project_state_files(repo)
+    changed = commit_if_changed(repo, "agentic: initialize project state")
+    if push_changes and (changed or not remote_branch_exists(repo, branch)):
+        push(repo, branch)
+    return repo
+
+
+def ensure_work_agent_notes_state(
+    project_dir: Path,
+    branch_name: str,
+    explicit_project_id: str | None = None,
+    *,
+    pull_remote: bool = True,
+    push_changes: bool = True,
+) -> Path:
+    active_work_branch = work_branch(branch_name)
+    repo = ensure_work_state_checkout(project_dir, active_work_branch, explicit_project_id)
+    branch = work_state_branch(active_work_branch)
+    if pull_remote and git_remote(repo):
+        pull_ff(repo, branch, missing_ok=True)
+    ensure_work_agent_notes_state_files(repo, active_work_branch)
+    changed = commit_if_changed(repo, f"work-state: initialize {active_work_branch}")
+    if push_changes and (changed or not remote_branch_exists(repo, branch)):
+        push(repo, branch)
+    return repo
+
+
+def refresh(args: argparse.Namespace) -> None:
+    org = ensure_org_checkout()
+    project_dir = Path(args.project_dir).resolve()
+    project_repo = ensure_project_checkout(project_dir)
+    active_work_branch = os.environ.get("AR_WORK_BRANCH")
+    work_state_repo: Path | None = None
+    if active_work_branch:
+        active_work_branch = work_branch(active_work_branch)
+        work_state_repo = ensure_work_state_checkout(project_dir, active_work_branch)
+
+    refresh_tasks: list[tuple[str, Callable[[], None]]] = [
+        ("project", lambda: pull_ff(project_repo, state_branch(), missing_ok=True)),
+    ]
+    if work_state_repo is not None and active_work_branch is not None:
+        refresh_tasks.append(("work-state", lambda: pull_ff(work_state_repo, work_state_branch(active_work_branch), missing_ok=True)))
+    if org is not None:
+        refresh_tasks.append(("org", lambda: pull_ff(org)))
+    run_parallel_refresh(refresh_tasks)
+    ensure_project_state(project_dir, pull_remote=False, push_changes=False)
+    if active_work_branch:
+        ensure_work_agent_notes_state(project_dir, active_work_branch, pull_remote=False, push_changes=False)
+
+
+def refresh_loop(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    interval_seconds = max(1, int(args.interval_seconds))
+    stale_seconds = max(interval_seconds * 2, int(args.stale_seconds))
+    heartbeat_dir = Path(args.heartbeat_dir).resolve()
+    loop_lock = lock_file_for(f"refresh-loop-{project_id(project_dir)}")
+
+    with nonblocking_state_lock(loop_lock) as acquired:
+        if not acquired:
+            return
+        while wait_for_refresh_interval(heartbeat_dir, interval_seconds, stale_seconds):
+            try:
+                refresh_locks = [lock_file_for(f"project-{project_id(project_dir)}")]
+                if os.environ.get("AR_ORG_NOTES_REPO"):
+                    refresh_locks.append(lock_file_for("org-agentic-notes"))
+                active_work_branch = os.environ.get("AR_WORK_BRANCH")
+                if active_work_branch:
+                    refresh_locks.append(
+                        lock_file_for(f"project-{project_id(project_dir)}-work-{work_branch_id(active_work_branch)}")
+                    )
+                with ExitStack() as stack:
+                    for lock_path in sorted(refresh_locks):
+                        stack.enter_context(state_lock(lock_path))
+                    refresh(argparse.Namespace(project_dir=str(project_dir)))
+            except AtNotesError as exc:
+                print(f"agentic-notes-internal refresh-loop: {exc}", file=sys.stderr)
+
+
+def note_text_has_body(text: str) -> bool:
+    body_lines = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not re.match(r"^\s{0,3}#{1,6}\s+", line)
+    ]
+    return bool(body_lines)
+
+
+def note_file_has_body(path: Path) -> bool:
+    if not path.exists():
+        return False
+    return note_text_has_body(path.read_text(encoding="utf-8"))
+
+
+def strip_leading_note_title(text: str) -> str:
+    return re.sub(r"^\s*#\s+[^\n]*\n(?:[ \t]*\n)?", "", text).rstrip()
+
+
+def note_names(directory: Path) -> list[str]:
+    if not directory.exists():
+        return []
+    return sorted(
+        p.name
+        for p in directory.glob("*.md")
+        if p.name != ALWAYS_INJECTED_NOTE and note_file_has_body(p)
+    )
+
+
+def note_topics(directory: Path) -> set[str]:
+    return {name.removesuffix(".md") for name in note_names(directory)}
+
+
+def read_text_if_exists(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8").rstrip()
+    if not note_text_has_body(text):
+        return None
+    return strip_leading_note_title(text)
+
+
+def agent_notes_dir(repo: Path, scope: str, agent_type_value: str) -> Path:
+    if scope == "org":
+        return repo / "agent-notes" / agent_type_value
+    if scope == "project":
+        return repo / "agent-notes" / agent_type_value
+    if scope == "work":
+        return repo / "agent-notes" / agent_type_value
+    raise AtNotesError("scope must be org, project, or work")
+
+
+def scoped_note_sources(project_dir: Path, agent_type_value: str, note_name: str) -> list[tuple[str, Path]]:
+    project_repo = project_state_path(project_dir)
+    work_branch_value = os.environ.get("AR_WORK_BRANCH")
+    work_state_repo = ensure_work_agent_notes_state(project_dir, work_branch_value, pull_remote=False, push_changes=False) if work_branch_value else None
+    org_repo = org_checkout_path()
+    normalized_note = normalize_note_name(note_name)
+    note_file = f"{normalized_note}.md"
+
+    sources = [
+        ("Organization: all agents", agent_notes_dir(org_repo, "org", ALL_AGENTS_TYPE) / note_file),
+    ]
+    if agent_type_value != ALL_AGENTS_TYPE:
+        sources.append(
+            (
+                f"Organization: {agent_type_value}",
+                agent_notes_dir(org_repo, "org", agent_type_value) / note_file,
+            )
+        )
+    sources.append(
+        ("Project: all agents", agent_notes_dir(project_repo, "project", ALL_AGENTS_TYPE) / note_file)
+    )
+    if agent_type_value != ALL_AGENTS_TYPE:
+        sources.append(
+            (
+                f"Project: {agent_type_value}",
+                agent_notes_dir(project_repo, "project", agent_type_value) / note_file,
+            )
+        )
+    if work_state_repo is not None:
+        sources.append(
+            (f"Work branch: {work_branch(work_branch_value)} / all agents", agent_notes_dir(work_state_repo, "work", ALL_AGENTS_TYPE) / note_file)
+        )
+        if agent_type_value != ALL_AGENTS_TYPE:
+            sources.append(
+                (
+                    f"Work branch: {work_branch(work_branch_value)} / {agent_type_value}",
+                    agent_notes_dir(work_state_repo, "work", agent_type_value) / note_file,
+                )
+            )
+    return sources
+
+
+def compose_scoped_note(project_dir: Path, agent_type_value: str, note_name: str) -> list[tuple[str, str]]:
+    parts: list[tuple[str, str]] = []
+    for label, path in scoped_note_sources(project_dir, agent_type_value, note_name):
+        text = read_text_if_exists(path)
+        if text is not None:
+            parts.append((label, text))
+    return parts
+
+
+def append_composed_note(lines: list[str], title: str, parts: list[tuple[str, str]]) -> None:
+    if not parts:
+        return
+    lines.extend([f"### {title}", ""])
+    for label, text in parts:
+        lines.extend([f"#### {label}", "", text, ""])
+
+
+def scoped_on_demand_topics(project_dir: Path, agent_type_value: str) -> list[str]:
+    project_repo = project_state_path(project_dir)
+    work_branch_value = os.environ.get("AR_WORK_BRANCH")
+    work_state_repo = ensure_work_agent_notes_state(project_dir, work_branch_value, pull_remote=False, push_changes=False) if work_branch_value else None
+    org_repo = org_checkout_path()
+    directories = [
+        agent_notes_dir(org_repo, "org", ALL_AGENTS_TYPE),
+        agent_notes_dir(project_repo, "project", ALL_AGENTS_TYPE),
+    ]
+    if agent_type_value != ALL_AGENTS_TYPE:
+        directories.extend(
+            [
+                agent_notes_dir(org_repo, "org", agent_type_value),
+                agent_notes_dir(project_repo, "project", agent_type_value),
+            ]
+        )
+    if work_state_repo is not None:
+        directories.append(agent_notes_dir(work_state_repo, "work", ALL_AGENTS_TYPE))
+        if agent_type_value != ALL_AGENTS_TYPE:
+            directories.append(agent_notes_dir(work_state_repo, "work", agent_type_value))
+    topics: set[str] = set()
+    for directory in directories:
+        topics.update(note_topics(directory))
+    return sorted(topics)
+
+
+def build_notes_section(
+    project_dir: Path,
+    agent_type_value: str,
+    *,
+    include_guidance: bool = True,
+) -> str:
+    always_parts = compose_scoped_note(project_dir, agent_type_value, ALWAYS_INJECTED_NOTE_STEM)
+    topics = scoped_on_demand_topics(project_dir, agent_type_value)
+
+    lines: list[str] = []
+    if include_guidance:
+        lines.extend(
+            [
+                "## Agentic Notes",
+                "",
+                "Git-backed Agentic Notes contain helpful knowledge about packages, tools, architectures, project conventions, and agent-type-specific work.",
+                "",
+                "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed on-demand note topics, read the rendered note with `read-note --project-dir . --agent-type "
+                f"{agent_type_value} NOTE_TOPIC` if you have not read it since the last compaction. That command dynamically combines all available org/project/work-branch and all-agents/agent-type portions for this project, work branch, and agent type.",
+                "",
+                "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies across every agent in the organization, update org `all-agents` `always-injected.md`. If it applies across this agent type in the organization, update org agent-type `always-injected.md`. If it applies to every agent in this project, update project `all-agents` `always-injected.md`. If it applies only to this agent type within this project, update project agent-type `always-injected.md`. If it applies only to the active work branch, update work `all-agents` or work agent-type notes.",
+                "",
+            ]
+        )
+
+    append_composed_note(lines, "Always-Injected Notes", always_parts)
+
+    if topics:
+        lines.extend(["### Available On-Demand Note Topics", ""])
+        lines.extend([f"- `{topic}`" for topic in topics])
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def instruction_target(cli: str) -> str:
+    if cli == "gemini":
+        return "GEMINI.md"
+    if cli in {"opencode", "codex", "pi"}:
+        return "AGENTS.md"
+    return "CLAUDE.md"
+
+
+def render_instruction_template(target: Path) -> None:
+    source = REPO_ROOT / "INSTRUCTIONS.md"
+    text = source.read_text(encoding="utf-8")
+    if os.environ.get("AR_SANDBOX") in {"docker", "podman"}:
+        text = re.sub(
+            r"<!-- DOCKER-OMIT-START -->.*?<!-- DOCKER-OMIT-END -->\n?",
+            "",
+            text,
+            flags=re.S,
+        )
+    target.write_text(text, encoding="utf-8")
+
+
+def generate_instructions(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    active_agent_type = agent_type(args.agent_type)
+    target = project_dir / instruction_target(args.cli)
+    if not target.exists():
+        render_instruction_template(target)
+    text = target.read_text(encoding="utf-8")
+    if not getattr(args, "skip_ensure_project_state", False):
+        ensure_project_state(project_dir, push_changes=False)
+    notes_section = build_notes_section(project_dir, active_agent_type)
+    target.write_text(text.rstrip() + "\n\n" + notes_section, encoding="utf-8")
+
+
+def render_section(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    print(
+        build_notes_section(
+            project_dir,
+            agent_type(args.agent_type),
+            include_guidance=not getattr(args, "dynamic_only", False),
+        )
+    )
+
+
+def render_sections(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+
+    for raw_agent_type in args.agent_type:
+        active_agent_type = agent_type(raw_agent_type)
+        if active_agent_type in seen:
+            continue
+        if not re.match(r"^[A-Za-z0-9._-]+$", active_agent_type):
+            raise AtNotesError(f"invalid agent type: {active_agent_type}")
+        seen.add(active_agent_type)
+        (output_dir / f"{active_agent_type}.md").write_text(
+            build_notes_section(project_dir, active_agent_type),
+            encoding="utf-8",
+        )
+
+
+def read_note(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    active_agent_type = agent_type(args.agent_type)
+    note_name = normalize_note_name(args.note_name)
+    parts = compose_scoped_note(project_dir, active_agent_type, note_name)
+    if not parts:
+        raise AtNotesError(
+            f"no rendered note found for topic {note_name!r} and agent type {active_agent_type!r}"
+        )
+
+    lines = [
+        f"# Agentic Note: {note_name}",
+        "",
+        f"Agent type: `{active_agent_type}`",
+        "",
+        "This rendered note combines every available portion for the current project, work branch, and agent type.",
+        "",
+    ]
+    for label, text in parts:
+        lines.extend([f"## {label}", "", text, ""])
+    print("\n".join(lines).rstrip())
+
+
+def list_notes(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    active_agent_type = agent_type(args.agent_type)
+    if args.scope == "org":
+        directory = agent_notes_dir(org_checkout_path(), "org", active_agent_type)
+    elif args.scope == "project":
+        directory = agent_notes_dir(project_state_path(project_dir), "project", active_agent_type)
+    else:
+        repo = ensure_work_agent_notes_state(project_dir, work_branch(args.work_branch), pull_remote=False, push_changes=False)
+        directory = agent_notes_dir(repo, "work", active_agent_type)
+    print(f"Directory: {directory}/")
+    for name in note_names(directory):
+        print(f"- {name}")
+
+
+def normalize_note_name(raw: str) -> str:
+    name = raw.strip()
+    if name.endswith(".md"):
+        name = name[:-3]
+    return slugify(name, default=ALWAYS_INJECTED_NOTE_STEM)
+
+
+def note_path_for_target(
+    *,
+    scope: str,
+    project_dir: Path,
+    note_name: str,
+    agent_type_value: str,
+    project_id_value: str | None = None,
+    work_branch_value: str | None = None,
+) -> tuple[Path, Path]:
+    normalized_note_name = normalize_note_name(note_name)
+    if not agent_type_value:
+        raise AtNotesError("target.agent_type is required; use all-agents for broad notes")
+    req_agent_type = agent_type_value
+    if scope == "org":
+        repo = ensure_org_checkout()
+        if repo is None:
+            raise AtNotesError("AR_ORG_NOTES_REPO is required for org note updates")
+        note_path = agent_notes_dir(repo, "org", req_agent_type) / f"{normalized_note_name}.md"
+    elif scope == "project":
+        repo = ensure_project_state(project_dir, project_id_value)
+        note_path = agent_notes_dir(repo, "project", req_agent_type) / f"{normalized_note_name}.md"
+    elif scope == "work":
+        repo = ensure_work_agent_notes_state(project_dir, work_branch(work_branch_value), project_id_value)
+        note_path = agent_notes_dir(repo, "work", req_agent_type) / f"{normalized_note_name}.md"
+    else:
+        raise AtNotesError("target.scope must be org, project, or work")
+    return repo, note_path
+
+
+def note_path_for_request(request: dict[str, Any], project_dir: Path) -> tuple[Path, Path]:
+    target = request.get("target")
+    if not isinstance(target, dict):
+        raise AtNotesError("note update request requires target")
+    scope = str(target.get("scope") or "")
+    source = request.get("source") if isinstance(request.get("source"), dict) else {}
+    note_name = str(target.get("note_name") or ALWAYS_INJECTED_NOTE_STEM)
+    req_agent_type = str(target.get("agent_type") or "")
+    if not req_agent_type:
+        raise AtNotesError("note update request target.agent_type is required; use all-agents for broad notes")
+    req_project_id = target.get("project_id") or source.get("project_id")
+    req_work_branch = target.get("work_branch") or source.get("work_branch")
+    return note_path_for_target(
+        scope=scope,
+        project_dir=project_dir,
+        note_name=note_name,
+        agent_type_value=req_agent_type,
+        project_id_value=str(req_project_id) if req_project_id else None,
+        work_branch_value=str(req_work_branch) if req_work_branch else None,
+    )
+
+
+def canonical_lesson(request: dict[str, Any]) -> str:
+    lesson = str(request.get("lesson") or "").strip()
+    summary = str(request.get("summary") or "").strip()
+    if lesson:
+        return " ".join(lesson.split())
+    return " ".join(summary.split())
+
+
+def note_title(note_path: Path) -> str:
+    title = note_path.stem.replace("-", " ").replace("_", " ").title()
+    if note_path.name == ALWAYS_INJECTED_NOTE:
+        title = "Always-Injected Notes"
+    return title
+
+
+def merge_note_text(existing: str, request: dict[str, Any], note_path: Path) -> str:
+    lesson = canonical_lesson(request)
+    summary = " ".join(str(request.get("summary") or "").split())
+    rationale = " ".join(str(request.get("rationale") or "").split())
+    if not lesson and not summary:
+        raise AtNotesError("note update request requires lesson or summary")
+
+    normalized_existing = " ".join(existing.split())
+    if lesson and lesson in normalized_existing:
+        return existing.rstrip() + "\n"
+    if summary and summary in normalized_existing and not lesson:
+        return existing.rstrip() + "\n"
+
+    bullet = lesson or summary
+    if summary and lesson and summary not in bullet:
+        bullet = f"{summary}: {bullet}"
+    if rationale:
+        bullet = f"{bullet} ({rationale})"
+
+    if not existing.strip():
+        return f"# {note_title(note_path)}\n\n## Lessons\n\n- {bullet}\n"
+
+    text = existing.rstrip()
+    if "## Lessons" not in text:
+        text += "\n\n## Lessons"
+    text += f"\n\n- {bullet}\n"
+    return text
+
+
+def update_note_once(request: dict[str, Any], project_dir: Path) -> tuple[Path, bool]:
+    repo, note_path = note_path_for_request(request, project_dir)
+    pull_ff(repo)
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = note_path.read_text(encoding="utf-8") if note_path.exists() else ""
+    merged = merge_note_text(existing, request, note_path)
+    if merged == existing:
+        return repo, False
+    note_path.write_text(merged, encoding="utf-8")
+    rel = note_path.relative_to(repo)
+    changed = commit_if_changed(repo, f"notes: update {rel}", [note_path])
+    return repo, changed
+
+
+def update_note(args: argparse.Namespace) -> None:
+    request = request_from_args(args)
+    if request.get("kind") != "note_update_request":
+        raise AtNotesError("request kind must be note_update_request")
+    project_dir = Path(args.project_dir).resolve()
+    repo: Path | None = None
+    for attempt in range(2):
+        repo, changed = update_note_once(request, project_dir)
+        if not changed:
+            print("No note changes needed.")
+            return
+        if push(repo):
+            if args.refresh_parent:
+                args._post_lock_action = lambda: render_parent_instructions(
+                    project_dir,
+                    os.environ.get("AR_CLI", "codex"),
+                )
+            print(f"Updated {repo}")
+            return
+        if attempt == 0:
+            branch = current_branch(repo) or state_branch()
+            git(repo, "fetch", "origin")
+            git(repo, "reset", "--hard", f"origin/{branch}")
+    raise AtNotesError("push was rejected after retry; semantic merge may need manual help")
+
+
+def replace_note(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    repo, note_path = note_path_for_target(
+        scope=args.scope,
+        project_dir=project_dir,
+        note_name=args.note_name,
+        agent_type_value=args.agent_type,
+        project_id_value=args.project_id,
+        work_branch_value=args.work_branch,
+    )
+    text = Path(args.note_file).read_text(encoding="utf-8").rstrip() + "\n"
+    if not text.strip():
+        raise AtNotesError("replacement note cannot be empty")
+    pull_ff(repo)
+    existing = note_path.read_text(encoding="utf-8") if note_path.exists() else ""
+    if existing == text:
+        print("No note changes needed.")
+        return
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    note_path.write_text(text, encoding="utf-8")
+    changed = commit_if_changed(repo, f"notes: replace {note_path.relative_to(repo)}", [note_path])
+    if changed and not push(repo):
+        raise AtNotesError("push was rejected")
+    if args.refresh_parent:
+        args._post_lock_action = lambda: render_parent_instructions(project_dir, args.cli)
+    print(f"Updated {note_path}")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("init-org-notes")
+    p.add_argument("--repo", required=True)
+    p.set_defaults(func=init_org_notes)
+
+    p = sub.add_parser("refresh")
+    p.add_argument("--project-dir", required=True)
+    p.set_defaults(func=refresh)
+
+    p = sub.add_parser("refresh-loop")
+    p.add_argument("--project-dir", required=True)
+    p.add_argument("--interval-seconds", type=int, default=120)
+    p.add_argument("--stale-seconds", type=int, default=300)
+    p.add_argument("--heartbeat-dir", required=True)
+    p.set_defaults(func=refresh_loop)
+
+    p = sub.add_parser("generate-instructions")
+    p.add_argument("--project-dir", required=True)
+    p.add_argument("--agent-type", default=None)
+    p.add_argument("--cli", required=True, choices=["claude", "gemini", "opencode", "codex", "pi"])
+    p.add_argument("--skip-ensure-project-state", action="store_true")
+    p.set_defaults(func=generate_instructions)
+
+    p = sub.add_parser("render-sections")
+    p.add_argument("--project-dir", required=True)
+    p.add_argument("--output-dir", required=True)
+    p.add_argument("--agent-type", action="append", required=True)
+    p.set_defaults(func=render_sections)
+
+    p = sub.add_parser("read-note")
+    p.add_argument("note_name")
+    p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
+    p.add_argument("--agent-type", default=None)
+    p.set_defaults(func=read_note)
+
+    p = sub.add_parser("list-notes")
+    p.add_argument("--scope", required=True, choices=["org", "project", "work"])
+    p.add_argument("--project-dir", default=".")
+    p.add_argument("--agent-type", required=True)
+    p.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH"))
+    p.set_defaults(func=list_notes)
+
+    p = sub.add_parser("update-note")
+    p.add_argument("--request", required=True)
+    p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
+    p.add_argument("--refresh-parent", action="store_true")
+    p.set_defaults(func=update_note)
+
+    p = sub.add_parser("replace-note")
+    p.add_argument("--scope", required=True, choices=["org", "project", "work"])
+    p.add_argument("--note-name", required=True)
+    p.add_argument("--note-file", required=True)
+    p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
+    p.add_argument("--agent-type", required=True)
+    p.add_argument("--project-id", default=None)
+    p.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH"))
+    p.add_argument("--refresh-parent", action="store_true")
+    p.add_argument("--cli", default=os.environ.get("AR_CLI", "codex"), choices=["claude", "gemini", "opencode", "codex", "pi"])
+    p.set_defaults(func=replace_note)
+
+    p = sub.add_parser("ensure-project-state")
+    p.add_argument("--project-dir", required=True)
+    p.add_argument("--skip-pull", action="store_true")
+    p.add_argument("--no-push", action="store_true")
+    p.set_defaults(
+        func=lambda args: print(
+            ensure_project_state(
+                Path(args.project_dir).resolve(),
+                pull_remote=not args.skip_pull,
+                push_changes=not args.no_push,
+            )
+        )
+    )
+
+    return parser
+
+
+def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
+    command = getattr(args, "command", "")
+    project_dir = Path(getattr(args, "project_dir", ".")).resolve()
+    paths: list[Path] = []
+
+    def add_project_lock(explicit_project_id: str | None = None) -> None:
+        pid = project_id(project_dir, explicit_project_id)
+        paths.append(lock_file_for(f"project-{pid}"))
+
+    def add_work_branch_lock(work_branch_value: str | None = None, explicit_project_id: str | None = None) -> None:
+        pid = project_id(project_dir, explicit_project_id)
+        paths.append(lock_file_for(f"project-{pid}-work-{work_branch_id(work_branch_value)}"))
+
+    def add_org_lock() -> None:
+        paths.append(lock_file_for("org-agentic-notes"))
+
+    if command == "ensure-project-state":
+        add_project_lock(None)
+    elif command == "refresh":
+        if os.environ.get("AR_ORG_NOTES_REPO"):
+            add_org_lock()
+        add_project_lock(None)
+        work_branch_value = os.environ.get("AR_WORK_BRANCH")
+        if work_branch_value:
+            add_work_branch_lock(work_branch_value)
+    elif command == "init-org-notes":
+        add_org_lock()
+    elif command in {"generate-instructions", "render-section", "render-sections", "read-note"}:
+        if os.environ.get("AR_ORG_NOTES_REPO"):
+            add_org_lock()
+        add_project_lock(None)
+        work_branch_value = os.environ.get("AR_WORK_BRANCH")
+        if work_branch_value:
+            add_work_branch_lock(work_branch_value)
+    elif command == "list-notes":
+        if getattr(args, "scope", "") == "org":
+            add_org_lock()
+        elif getattr(args, "scope", "") == "project":
+            add_project_lock(None)
+        elif getattr(args, "scope", "") == "work":
+            add_work_branch_lock(getattr(args, "work_branch", None))
+    elif command == "update-note":
+        request_path = getattr(args, "request", None)
+        request = request_from_args(args) if request_path else {}
+        target = request.get("target") if isinstance(request.get("target"), dict) else {}
+        source = request.get("source") if isinstance(request.get("source"), dict) else {}
+        scope = target.get("scope")
+        if scope == "org":
+            add_org_lock()
+        elif scope == "project":
+            explicit = target.get("project_id") or source.get("project_id")
+            add_project_lock(str(explicit) if explicit else None)
+        elif scope == "work":
+            explicit = target.get("project_id") or source.get("project_id")
+            work_branch_value = target.get("work_branch") or source.get("work_branch")
+            add_work_branch_lock(str(work_branch_value or "") or None, str(explicit) if explicit else None)
+        if getattr(args, "refresh_parent", False):
+            if os.environ.get("AR_ORG_NOTES_REPO"):
+                add_org_lock()
+            add_project_lock(None)
+            work_branch_value = os.environ.get("AR_WORK_BRANCH")
+            if work_branch_value:
+                add_work_branch_lock(work_branch_value)
+    elif command == "replace-note":
+        scope = getattr(args, "scope", "")
+        if scope == "org":
+            add_org_lock()
+        elif scope == "project":
+            add_project_lock(getattr(args, "project_id", None))
+        elif scope == "work":
+            add_work_branch_lock(getattr(args, "work_branch", None), getattr(args, "project_id", None))
+        if getattr(args, "refresh_parent", False):
+            if os.environ.get("AR_ORG_NOTES_REPO"):
+                add_org_lock()
+            add_project_lock(None)
+            work_branch_value = os.environ.get("AR_WORK_BRANCH")
+            if work_branch_value:
+                add_work_branch_lock(work_branch_value)
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in sorted(paths):
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "render-section":
+        parser = argparse.ArgumentParser(description=argparse.SUPPRESS)
+        parser.add_argument("command")
+        parser.add_argument("--project-dir", required=True)
+        parser.add_argument("--agent-type", default=None)
+        parser.add_argument("--dynamic-only", action="store_true")
+        args = parser.parse_args(argv)
+        try:
+            with ExitStack() as stack:
+                for lock_path in lock_paths_for_args(args):
+                    stack.enter_context(state_lock(lock_path))
+                render_section(args)
+        except AtNotesError as exc:
+            print(f"agentic-notes-internal: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        if getattr(args, "request", None) == "-":
+            args._request_text = sys.stdin.read()
+            args._request_data = parse_yaml_mapping(args._request_text, "stdin request")
+        post_lock_action: Callable[[], None] | None = None
+        with ExitStack() as stack:
+            for lock_path in lock_paths_for_args(args):
+                stack.enter_context(state_lock(lock_path))
+            args.func(args)
+            post_lock_action = getattr(args, "_post_lock_action", None)
+        if post_lock_action is not None:
+            post_lock_action()
+    except AtNotesError as exc:
+        print(f"agentic-notes-internal: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

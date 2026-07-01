@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Load config if available
-CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh"
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/agentic-team/config.sh"
 if [[ -f "$CONFIG_FILE" ]]; then
     source "$CONFIG_FILE"
 fi
@@ -34,7 +34,7 @@ show_help() {
 Usage:
   container/build.sh [--runtime docker|podman|apptainer]
 
-Build the Agentic Researcher container image for the selected container runtime.
+Build the Agentic Team container image for the selected container runtime.
 EOF
 }
 
@@ -95,12 +95,12 @@ if [[ "$RUNTIME" == "docker" || "$RUNTIME" == "podman" ]]; then
     runtime_name="${first_char_upper}${rest}"
     echo "Building ${runtime_name} container..."
     if [[ "$RUNTIME" == "podman" ]]; then
-        "$RUNTIME" build --format docker -t agentic-researcher:latest "$SCRIPT_DIR"
+        "$RUNTIME" build --format docker -t agentic-team:latest "$SCRIPT_DIR"
     else
-        "$RUNTIME" build -t agentic-researcher:latest "$SCRIPT_DIR"
+        "$RUNTIME" build -t agentic-team:latest "$SCRIPT_DIR"
     fi
     echo ""
-    echo "${runtime_name} image built: agentic-researcher:latest"
+    echo "${runtime_name} image built: agentic-team:latest"
 else
     if [[ "$(uname -s)" != "Linux" ]]; then
         echo "Error: Apptainer builds are only supported on Linux hosts. Current host: $(uname -s)"
@@ -118,7 +118,7 @@ else
     fi
 
     # Apptainer needs writable tmp with enough space for the build
-    STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-researcher}"
+    STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}"
     export APPTAINER_CACHEDIR="${APPTAINER_CACHEDIR:-$STATE_ROOT/apptainer_cache}"
     export APPTAINER_TMPDIR="${APPTAINER_TMPDIR:-$STATE_ROOT/apptainer_tmp}"
     mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
@@ -129,17 +129,17 @@ else
 
     apptainer build \
         --force \
-        "$SCRIPT_DIR/agentic_researcher.sif" \
-        "$SCRIPT_DIR/agentic_researcher.def"
+        "$SCRIPT_DIR/agentic_team.sif" \
+        "$SCRIPT_DIR/agentic_team.def"
 
     echo ""
-    echo "Container built successfully: $SCRIPT_DIR/agentic_researcher.sif"
+    echo "Container built successfully: $SCRIPT_DIR/agentic_team.sif"
 
     # SECURITY: Generate integrity checksum
     echo "Generating integrity checksum..."
-    (cd "$SCRIPT_DIR" && sha256sum agentic_researcher.sif > agentic_researcher.sif.sha256)
-    echo "Checksum saved to: $SCRIPT_DIR/agentic_researcher.sif.sha256"
+    (cd "$SCRIPT_DIR" && sha256sum agentic_team.sif > agentic_team.sif.sha256)
+    echo "Checksum saved to: $SCRIPT_DIR/agentic_team.sif.sha256"
 fi
 
 echo ""
-echo "Run with: agentic-researcher ~/your-project"
+echo "Run with: agentic-team ~/your-project"

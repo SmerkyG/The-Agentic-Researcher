@@ -5,7 +5,7 @@ description: Review code changes for correctness, research validity, and missing
 codex_reasoning_effort: high
 ---
 
-You are a code review agent for Agentic Researcher projects.
+You are a code review agent for Agentic Team projects.
 
 ## Subagent Contract
 

@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ $# -eq 0 || "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    cat <<'EOF'
+Usage: read-note [--project-dir PATH] [--agent-type AGENT_TYPE] NOTE_TOPIC
+
+Read the rendered Agentic Note for NOTE_TOPIC by combining organization,
+project, and active work-branch note portions for all-agents plus the selected
+agent type.
+EOF
+    exit 0
+fi
+
+exec "$SCRIPT_DIR/../lib/agentic-notes-internal" read-note "$@"

@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# uninstall.sh: Remove an installed agentic-researcher setup.
+# uninstall.sh: Remove an installed agentic-team setup.
 #
 
 set -euo pipefail
 
-DEFAULT_INSTALL_DIR="$HOME/.local/share/agentic-researcher"
+DEFAULT_INSTALL_DIR="$HOME/.local/share/agentic-team"
 DEFAULT_BIN_DIR="$HOME/.local/bin"
-INSTALL_MARKER=".agentic-researcher-install"
+INSTALL_MARKER=".agentic-team-install"
 
 INSTALL_DIR="$DEFAULT_INSTALL_DIR"
 BIN_DIR="$DEFAULT_BIN_DIR"
@@ -17,7 +17,7 @@ ASSUME_YES=false
 show_help() {
     cat <<'EOF'
 Usage:
-  agentic-researcher --uninstall [OPTIONS]
+  agentic-team --uninstall [OPTIONS]
 
 Options:
   --install-dir DIR  Remove checkout from DIR
@@ -59,12 +59,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-LINK_PATH="$BIN_DIR/agentic-researcher"
+LINK_PATH="$BIN_DIR/agentic-team"
 
 if [[ -L "$LINK_PATH" ]]; then
     link_target="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$LINK_PATH")"
     inferred_install_dir="$(cd "$(dirname "$link_target")" && pwd 2>/dev/null || true)"
-    if [[ -n "$inferred_install_dir" && -f "$inferred_install_dir/agentic-researcher" ]]; then
+    if [[ -n "$inferred_install_dir" && -f "$inferred_install_dir/agentic-team" ]]; then
         INSTALL_DIR="$inferred_install_dir"
     fi
 fi

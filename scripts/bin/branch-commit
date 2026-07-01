@@ -1,0 +1,55 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["PyYAML>=6.0"]
+# ///
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "commands"))
+
+from command_common import CommandError, bool_from, load_request, main, print_json
+from branch_git_common import commit_snapshot_foreground, start_background_commit
+
+
+def run_from_stdin() -> None:
+    request = load_request()
+    snapshot_dir = str(request.get("snapshot_dir") or "").strip()
+    if not snapshot_dir:
+        raise CommandError("snapshot_dir is required")
+
+    if bool_from(request.get("background"), default=True):
+        result = start_background_commit(
+            Path(snapshot_dir).expanduser().resolve(),
+            [sys.executable, str(Path(__file__).resolve()), "--worker", "--snapshot-dir", snapshot_dir],
+        )
+    else:
+        result = commit_snapshot_foreground(Path(snapshot_dir).expanduser().resolve())
+    response = {"command": "branch-commit", "commit_result": result}
+    response.update(result)
+    print_json(response)
+
+
+def run_worker(snapshot_dir: str) -> None:
+    result = commit_snapshot_foreground(Path(snapshot_dir).expanduser().resolve())
+    print_json(result)
+
+
+def cli() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--snapshot-dir", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.worker:
+        if not args.snapshot_dir:
+            print("branch-commit: --snapshot-dir is required for worker mode", file=sys.stderr)
+            return 1
+        return main(lambda: run_worker(args.snapshot_dir))
+    return main(run_from_stdin)
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

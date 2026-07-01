@@ -1,0 +1,98 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["PyYAML>=6.0"]
+# ///
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import sys
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+from agentic_state import parse_yaml_mapping, safe_load_yaml  # noqa: E402
+from command_common import CommandError, internal_request, load_request, main, print_json, project_dir_from  # noqa: E402
+from experiment_log_common import ExperimentLogError, log_correction  # noqa: E402
+
+
+def request_from_path(path: str) -> dict[str, object]:
+    if path == "-":
+        return parse_yaml_mapping(sys.stdin.read(), "stdin request")
+    return safe_load_yaml(Path(path))
+
+
+def command_project_dir(request: dict[str, object], explicit: str | None) -> Path:
+    if explicit:
+        return Path(explicit).resolve()
+    return Path(project_dir_from(request)).resolve()
+
+
+def run_request(
+    request: dict[str, object],
+    *,
+    project_dir: Path,
+    branch_name: str | None,
+    json_response: bool,
+) -> None:
+    if "kind" not in request:
+        request = internal_request(request, "experiment_correction_request")
+    correction_ref = log_correction(request, project_dir, branch_name)
+    if json_response:
+        print_json(
+            {
+                "command": "experiment-correct",
+                "state": "ok",
+                "stdout": correction_ref,
+                "correction_id": correction_ref,
+            }
+        )
+    else:
+        print(correction_ref)
+
+
+def run_stdin_request() -> None:
+    request = internal_request(load_request(), "experiment_correction_request")
+    run_request(
+        request,
+        project_dir=command_project_dir(request, None),
+        branch_name=str(request.get("work_branch") or os.environ.get("AR_WORK_BRANCH") or ""),
+        json_response=True,
+    )
+
+
+def run_cli(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(description="Correct an Agentic Team experiment log entry.")
+    parser.add_argument("--request", required=True, help="YAML experiment_correction_request file, or '-' for stdin.")
+    parser.add_argument("--project-dir", default=None)
+    parser.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH"))
+    args = parser.parse_args(argv)
+
+    try:
+        request = request_from_path(args.request)
+        run_request(
+            request,
+            project_dir=command_project_dir(request, args.project_dir),
+            branch_name=args.work_branch or str(request.get("work_branch") or ""),
+            json_response=False,
+        )
+    except ExperimentLogError as exc:
+        raise CommandError(str(exc)) from exc
+
+
+def dispatch() -> None:
+    if len(sys.argv) == 1:
+        try:
+            run_stdin_request()
+        except ExperimentLogError as exc:
+            raise CommandError(str(exc)) from exc
+        return
+    run_cli(sys.argv[1:])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(dispatch))

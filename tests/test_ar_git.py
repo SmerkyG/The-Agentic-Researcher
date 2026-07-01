@@ -1,13 +1,14 @@
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-AR_TOOL = REPO_ROOT / "scripts" / "ar-tool"
+BIN_DIR = REPO_ROOT / "scripts" / "bin"
 
 
 def run(
@@ -34,8 +35,8 @@ def write_yaml(path: Path, data: dict) -> None:
     path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
-def run_tool(tool: str, data: dict, *, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:
-    return run([str(AR_TOOL), "run", tool], env=env, input=yaml.safe_dump(data, sort_keys=False), check=check)
+def run_agent_command(command_name: str, data: dict, *, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:
+    return run([str(BIN_DIR / command_name)], env=env, input=yaml.safe_dump(data, sort_keys=False), check=check)
 
 
 def init_repo(tmp_path: Path) -> Path:
@@ -47,39 +48,66 @@ def init_repo(tmp_path: Path) -> Path:
     (repo / "README.md").write_text("initial\n", encoding="utf-8")
     git(repo, "add", "README.md")
     git(repo, "commit", "-m", "initial")
-    git(repo, "switch", "-c", "agent/kernel-search")
+    git(repo, "switch", "-c", "kernel-search")
     return repo
 
 
-def test_commit_snapshot_uses_temp_index_and_advances_topic_branch(tmp_path: Path) -> None:
+def init_repo_without_persistent_identity(tmp_path: Path) -> Path:
+    repo = tmp_path / "project"
+    repo.mkdir()
+    run(["git", "init"], cwd=repo)
+    (repo / "README.md").write_text("initial\n", encoding="utf-8")
+    git(repo, "add", "README.md")
+    run(
+        [
+            "git",
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "initial",
+        ],
+        cwd=repo,
+    )
+    git(repo, "switch", "-c", "kernel-search")
+    return repo
+
+
+def test_commit_snapshot_uses_temp_index_and_advances_work_branch(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     env = os.environ.copy()
     env["AR_STATE_ROOT"] = str(tmp_path / "state")
-    env["AR_AGENT_TOPIC"] = "kernel-search"
-    notes_call = tmp_path / "notes-call.json"
-    fake_notes = tmp_path / "fake-ar-notes"
-    fake_notes.write_text(
+    env["AR_WORK_BRANCH"] = "kernel-search"
+    experiment_log_call = tmp_path / "experiment-log-request.yaml"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_experiment_log = fake_bin / "experiment-log"
+    fake_experiment_log.write_text(
         "#!/usr/bin/env python3\n"
         "import json, os, pathlib, sys\n"
-        "pathlib.Path(os.environ['FAKE_NOTES_CALL']).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n"
-        "print('kernel-search/E0001_snapshot-experiment')\n",
+        "pathlib.Path(os.environ['FAKE_EXPERIMENT_LOG_CALL']).write_text(sys.stdin.read(), encoding='utf-8')\n"
+        "print(json.dumps({'experiment_id': 'kernel-search::E0001_snapshot-experiment'}))\n",
         encoding="utf-8",
     )
-    fake_notes.chmod(0o755)
-    env["AR_NOTES_CLI"] = str(fake_notes)
-    env["FAKE_NOTES_CALL"] = str(notes_call)
+    fake_experiment_log.chmod(0o755)
+    env["PATH"] = f"{fake_bin}:{BIN_DIR}:{env['PATH']}"
+    env["FAKE_EXPERIMENT_LOG_CALL"] = str(experiment_log_call)
 
     (repo / "staged.txt").write_text("keep staged\n", encoding="utf-8")
     git(repo, "add", "staged.txt")
     (repo / "README.md").write_text("snapshotted\n", encoding="utf-8")
-    (repo / "TODO.md").write_text("- [ ] follow up\n", encoding="utf-8")
+    src = repo / "src"
+    src.mkdir()
+    (src / "kernel.py").write_text("print('snap')\n", encoding="utf-8")
 
     request = {
         "project_dir": str(repo),
-        "topic": "kernel-search",
-        "paths": ["README.md", "TODO.md"],
+        "work_branch": "kernel-search",
+        "paths": ["README.md", "src/kernel.py"],
         "commit_message": "test: commit snapshot",
-        "checks": ["test -f TODO.md"],
+        "checks": ["test -f src/kernel.py"],
         "after_commit": {
             "experiment_log": {
                 "title": "Snapshot experiment",
@@ -90,16 +118,16 @@ def test_commit_snapshot_uses_temp_index_and_advances_topic_branch(tmp_path: Pat
         },
     }
 
-    snapshot = json.loads(run_tool("branch-snapshot", request, env=env).stdout)
+    snapshot = json.loads(run_agent_command("branch-snapshot", request, env=env).stdout)
 
-    assert snapshot["name_status"] == ["M\tREADME.md", "A\tTODO.md"]
+    assert snapshot["name_status"] == ["M\tREADME.md", "A\tsrc/kernel.py"]
     assert Path(snapshot["name_status_path"]).exists()
     assert git(repo, "diff", "--cached", "--name-only") == "staged.txt"
 
     (repo / "README.md").write_text("continued work after snapshot\n", encoding="utf-8")
 
     committed = json.loads(
-        run_tool(
+        run_agent_command(
             "branch-commit",
             {"snapshot_dir": snapshot["snapshot_dir"], "background": False},
             env=env,
@@ -108,57 +136,57 @@ def test_commit_snapshot_uses_temp_index_and_advances_topic_branch(tmp_path: Pat
 
     assert committed["state"] == "committed"
     assert committed["experiment_log_state"] == "logged"
-    assert committed["experiment_log_id"] == "kernel-search/E0001_snapshot-experiment"
+    assert committed["experiment_log_id"] == "kernel-search::E0001_snapshot-experiment"
     assert git(repo, "log", "-1", "--format=%s") == "test: commit snapshot"
     assert git(repo, "show", "HEAD:README.md") == "snapshotted"
-    assert git(repo, "show", "HEAD:TODO.md") == "- [ ] follow up"
+    assert git(repo, "show", "HEAD:src/kernel.py") == "print('snap')"
     assert (repo / "README.md").read_text(encoding="utf-8") == "continued work after snapshot\n"
     assert git(repo, "diff", "--cached", "--name-only") == "staged.txt"
     assert "README.md" in git(repo, "status", "--short", "--", "README.md")
-    assert git(repo, "status", "--short", "--", "TODO.md") == ""
+    assert git(repo, "status", "--short", "--", "src/kernel.py") == ""
 
     experiment_request = yaml.safe_load(
         Path(committed["experiment_request_path"]).read_text(encoding="utf-8")
     )
-    assert experiment_request["code"]["branch"] == "agent/kernel-search"
+    assert experiment_request["code"]["branch"] == "kernel-search"
     assert experiment_request["code"]["commit"] == committed["commit"]
-    assert experiment_request["topic"] == "kernel-search"
-    notes_args = json.loads(notes_call.read_text(encoding="utf-8"))
-    assert notes_args[:2] == ["log-experiment", "--request"]
-    assert notes_args[2] != committed["experiment_request_path"]
-    assert "--project-dir" in notes_args
-    assert str(repo) in notes_args
-    assert "--topic" in notes_args
-    assert "kernel-search" in notes_args
+    assert experiment_request["work_branch"] == "kernel-search"
+    logged_request = yaml.safe_load(experiment_log_call.read_text(encoding="utf-8"))
+    assert logged_request["code"]["branch"] == "kernel-search"
+    assert logged_request["code"]["commit"] == committed["commit"]
+    assert logged_request["project_dir"] == str(repo)
+    assert logged_request["work_branch"] == "kernel-search"
 
     status = json.loads(
-        run_tool("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
+        run_agent_command("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
     )
     assert status["state"] == "committed"
     assert status["commit"] == committed["commit"]
     assert status["experiment_log_state"] == "logged"
-    assert status["experiment_log_id"] == "kernel-search/E0001_snapshot-experiment"
+    assert status["experiment_log_id"] == "kernel-search::E0001_snapshot-experiment"
 
 
 def test_commit_snapshot_reports_experiment_log_failure_after_commit(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     env = os.environ.copy()
     env["AR_STATE_ROOT"] = str(tmp_path / "state")
-    env["AR_AGENT_TOPIC"] = "kernel-search"
-    fake_notes = tmp_path / "fake-ar-notes-fail"
-    fake_notes.write_text(
+    env["AR_WORK_BRANCH"] = "kernel-search"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_experiment_log = fake_bin / "experiment-log"
+    fake_experiment_log.write_text(
         "#!/bin/sh\n"
         "echo 'simulated experiment log failure'\n"
         "exit 17\n",
         encoding="utf-8",
     )
-    fake_notes.chmod(0o755)
-    env["AR_NOTES_CLI"] = str(fake_notes)
+    fake_experiment_log.chmod(0o755)
+    env["PATH"] = f"{fake_bin}:{BIN_DIR}:{env['PATH']}"
 
     (repo / "README.md").write_text("snapshotted\n", encoding="utf-8")
     request = {
         "project_dir": str(repo),
-        "topic": "kernel-search",
+        "work_branch": "kernel-search",
         "paths": ["README.md"],
         "commit_message": "test: commit despite log failure",
         "after_commit": {
@@ -171,9 +199,9 @@ def test_commit_snapshot_reports_experiment_log_failure_after_commit(tmp_path: P
         },
     }
 
-    snapshot = json.loads(run_tool("branch-snapshot", request, env=env).stdout)
+    snapshot = json.loads(run_agent_command("branch-snapshot", request, env=env).stdout)
     committed = json.loads(
-        run_tool(
+        run_agent_command(
             "branch-commit",
             {"snapshot_dir": snapshot["snapshot_dir"], "background": False},
             env=env,
@@ -185,26 +213,219 @@ def test_commit_snapshot_reports_experiment_log_failure_after_commit(tmp_path: P
     assert "simulated experiment log failure" in committed["experiment_log_error"]
     assert git(repo, "log", "-1", "--format=%s") == "test: commit despite log failure"
     status = json.loads(
-        run_tool("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
+        run_agent_command("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
     )
     assert status["state"] == "committed"
     assert status["experiment_log_state"] == "failed"
     assert "simulated experiment log failure" in status["experiment_log_error"]
 
 
+def test_background_commit_reports_running_check_and_streams_log(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    env = os.environ.copy()
+    env["AR_STATE_ROOT"] = str(tmp_path / "state")
+    env["AR_WORK_BRANCH"] = "kernel-search"
+    env["PATH"] = f"{BIN_DIR}:{env['PATH']}"
+    (repo / "README.md").write_text("background commit\n", encoding="utf-8")
+
+    snapshot = json.loads(
+        run_agent_command(
+            "branch-snapshot",
+            {
+                "project_dir": str(repo),
+                "work_branch": "kernel-search",
+                "paths": ["README.md"],
+                "commit_message": "test: background commit",
+                "checks": ["printf 'begin check\\n'; sleep 1; printf 'end check\\n'"],
+            },
+            env=env,
+        ).stdout
+    )
+
+    started = json.loads(
+        run_agent_command(
+            "branch-commit",
+            {"snapshot_dir": snapshot["snapshot_dir"], "background": True},
+            env=env,
+        ).stdout
+    )
+    assert started["state"] == "queued"
+
+    running_status: dict | None = None
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        status = json.loads(
+            run_agent_command("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
+        )
+        if status.get("current_check"):
+            running_status = status
+            break
+        time.sleep(0.05)
+
+    assert running_status is not None
+    assert running_status["state"] == "running"
+    assert running_status["pid_alive"] is True
+    assert running_status["current_check_index"] == 1
+    assert "begin check" in Path(running_status["check_log"]).read_text(encoding="utf-8")
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        status = json.loads(
+            run_agent_command("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
+        )
+        if status.get("state") == "committed":
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError(f"background commit did not finish: {status}")
+
+    assert status["commit"]
+    assert status["checks"][0]["returncode"] == 0
+    check_log = Path(status["check_log"]).read_text(encoding="utf-8")
+    assert "begin check" in check_log
+    assert "end check" in check_log
+    assert git(repo, "log", "-1", "--format=%s") == "test: background commit"
+
+
+def test_commit_snapshot_times_out_stuck_check(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    env = os.environ.copy()
+    env["AR_STATE_ROOT"] = str(tmp_path / "state")
+    env["AR_WORK_BRANCH"] = "kernel-search"
+    env["PATH"] = f"{BIN_DIR}:{env['PATH']}"
+    (repo / "README.md").write_text("timeout check\n", encoding="utf-8")
+
+    snapshot = json.loads(
+        run_agent_command(
+            "branch-snapshot",
+            {
+                "project_dir": str(repo),
+                "work_branch": "kernel-search",
+                "paths": ["README.md"],
+                "commit_message": "test: timeout check",
+                "checks": ["sleep 5"],
+                "check_timeout_seconds": 1,
+            },
+            env=env,
+        ).stdout
+    )
+
+    result = run_agent_command(
+        "branch-commit",
+        {"snapshot_dir": snapshot["snapshot_dir"], "background": False},
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "check timed out after 1 seconds" in result.stderr
+    status = json.loads(
+        run_agent_command("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
+    )
+    assert status["state"] == "failed"
+    assert "check timed out after 1 seconds" in status["error"]
+    assert "[timeout after 1 seconds]" in Path(status["check_log"]).read_text(encoding="utf-8")
+    assert git(repo, "log", "-1", "--format=%s") == "initial"
+
+
+def test_commit_snapshot_checks_git_identity_before_running_checks(tmp_path: Path) -> None:
+    repo = init_repo_without_persistent_identity(tmp_path)
+    isolated_home = tmp_path / "home"
+    isolated_home.mkdir()
+    check_ran = tmp_path / "check-ran"
+    env = os.environ.copy()
+    env["AR_STATE_ROOT"] = str(tmp_path / "state")
+    env["AR_WORK_BRANCH"] = "kernel-search"
+    env["HOME"] = str(isolated_home)
+    env["PATH"] = f"{BIN_DIR}:{env['PATH']}"
+    (repo / "README.md").write_text("identity check\n", encoding="utf-8")
+
+    snapshot = json.loads(
+        run_agent_command(
+            "branch-snapshot",
+            {
+                "project_dir": str(repo),
+                "work_branch": "kernel-search",
+                "paths": ["README.md"],
+                "commit_message": "test: missing identity",
+                "checks": [f"touch {check_ran}"],
+            },
+            env=env,
+        ).stdout
+    )
+
+    result = run_agent_command(
+        "branch-commit",
+        {"snapshot_dir": snapshot["snapshot_dir"], "background": False},
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Git commit identity is not configured" in result.stderr
+    assert not check_ran.exists()
+    status = json.loads(
+        run_agent_command("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
+    )
+    assert status["state"] == "failed"
+    assert "Git commit identity is not configured" in status["error"]
+    assert git(repo, "log", "-1", "--format=%s") == "initial"
+
+
+def test_commit_snapshot_uses_configured_agentic_team_identity(tmp_path: Path) -> None:
+    repo = init_repo_without_persistent_identity(tmp_path)
+    isolated_home = tmp_path / "home"
+    isolated_home.mkdir()
+    env = os.environ.copy()
+    env["AR_STATE_ROOT"] = str(tmp_path / "state")
+    env["AR_WORK_BRANCH"] = "kernel-search"
+    env["AR_GIT_NAME"] = "Agentic Test"
+    env["AR_GIT_EMAIL"] = "agentic-test@example.com"
+    env["HOME"] = str(isolated_home)
+    env["PATH"] = f"{BIN_DIR}:{env['PATH']}"
+    (repo / "README.md").write_text("identity from setup\n", encoding="utf-8")
+
+    snapshot = json.loads(
+        run_agent_command(
+            "branch-snapshot",
+            {
+                "project_dir": str(repo),
+                "work_branch": "kernel-search",
+                "paths": ["README.md"],
+                "commit_message": "test: configured identity",
+            },
+            env=env,
+        ).stdout
+    )
+
+    committed = json.loads(
+        run_agent_command(
+            "branch-commit",
+            {"snapshot_dir": snapshot["snapshot_dir"], "background": False},
+            env=env,
+        ).stdout
+    )
+
+    assert committed["state"] == "committed"
+    assert git(repo, "log", "-1", "--format=%s") == "test: configured identity"
+    assert git(repo, "log", "-1", "--format=%an <%ae>") == "Agentic Test <agentic-test@example.com>"
+    assert git(repo, "config", "--get", "user.name") == "Agentic Test"
+    assert git(repo, "config", "--get", "user.email") == "agentic-test@example.com"
+
+
 def test_snapshot_rejects_broad_paths(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     env = os.environ.copy()
     env["AR_STATE_ROOT"] = str(tmp_path / "state")
-    env["AR_AGENT_TOPIC"] = "kernel-search"
+    env["AR_WORK_BRANCH"] = "kernel-search"
     (repo / "README.md").write_text("changed\n", encoding="utf-8")
 
     for broad_path in [".", "./", "*", "src/*.py"]:
-        result = run_tool(
+        result = run_agent_command(
             "branch-snapshot",
             {
                 "project_dir": str(repo),
-                "topic": "kernel-search",
+                "work_branch": "kernel-search",
                 "paths": [broad_path],
                 "commit_message": "test: rejected broad path",
             },

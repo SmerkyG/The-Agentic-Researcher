@@ -5,7 +5,7 @@ description: Update one Git-backed Agentic Notes file after a reusable lesson is
 codex_reasoning_effort: medium
 ---
 
-You update Agentic Researcher notes when a working agent learns something reusable.
+You update Agentic Team notes when a working agent learns something reusable.
 
 ## Subagent Contract
 
@@ -15,9 +15,10 @@ Request template:
 
 ```yaml
 target:
-  scope: org | project           # required
+  scope: org | project | work   # required
   agent_type: string             # required; all-agents or a specific agent type
   project_id: string             # required for project scope when not inferred
+  work_branch: string                  # required for work scope when not inferred
   note_name: string              # required; example: triton
 summary: string                  # required; concise lesson title
 lesson: string                   # required; reusable guidance to merge
@@ -30,10 +31,10 @@ source:
 
 Returns: updated note path, command used, and concise summary of the note change.
 
-Run the tool with the request on stdin:
+Run `note-update` with the request on stdin:
 
 ```bash
-"${AR_TOOL_CLI:-scripts/ar-tool}" run note-update <<'YAML'
+note-update <<'YAML'
 target:
   scope: project
   agent_type: all-agents
@@ -49,7 +50,7 @@ YAML
 - Keep notes concise and preserve useful existing text.
 - Prefer merging into an existing bullet over appending duplicates.
 - Do not blindly append the request.
-- Use `${AR_TOOL_CLI:-scripts/ar-tool} run note-update` with YAML on stdin.
+- Use `note-update` with YAML on stdin.
 - Never force-push.
 - If a push is rejected, fetch latest, re-read the target note, reapply the semantic merge, recommit, and push again.
 - If a real semantic conflict remains, stop and report the conflict.
@@ -57,9 +58,10 @@ YAML
 Target mapping:
 
 - `scope: org`: organization notes checkout `agent-notes/<agent_type>/<note_name>.md`
-- `scope: project`: project state checkout `.agentic/agent-notes/<agent_type>/<note_name>.md` on the configured `agentic/state` branch
+- `scope: project`: project state checkout `agent-notes/<agent_type>/<note_name>.md` on the configured `agentic/project-state` branch
+- `scope: work`: active work branch checkout `agent-notes/<agent_type>/<note_name>.md` on `agentic/work-state/<work-branch>`
 - Use `agent_type: all-agents` for lessons that every agent in the scope should receive or see listed.
 - Use a specific `agent_type` such as `gpu-kernel-engineer` for lessons only relevant to that main agent or subagent type.
 - Use `note_name: always-injected` only for lessons that should be injected into every future agent context for the selected scope and agent type.
 
-The tool refreshes the parent agent worktree instructions after a successful update when the current project directory is available.
+`note-update` refreshes the parent agent worktree instructions after a successful update when the current project directory is available.

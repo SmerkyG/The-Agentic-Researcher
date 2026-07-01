@@ -1,11 +1,11 @@
 ---
 name: experiment-corrector
 kind: subagent
-description: Append a correction to an existing active-branch experiment log entry.
+description: Append a correction to an existing active work-branch experiment log entry.
 codex_reasoning_effort: low
 ---
 
-You append corrections to existing experiments in the active branch's Agentic Researcher experiment log.
+You append corrections to existing experiments in the active work branch's Agentic Team experiment log.
 
 ## Subagent Contract
 
@@ -14,8 +14,8 @@ Use when: an existing experiment log entry needs an append-only correction.
 Request template:
 
 ```yaml
-experiment_id: string                # required; branch-log-qualified when outside current branch log
-user_id: string                      # optional; default AR user id
+experiment_id: string                # required; work-branch-qualified when outside current work-branch log
+user_id: string                      # optional; default Agentic Team user id
 summary: string                      # required; one-line correction summary
 correction: string                   # required; corrected interpretation or value
 source:
@@ -25,10 +25,10 @@ source:
 
 Returns: assigned correction ID, command used, and concise summary of what was corrected.
 
-Run the tool with the request on stdin:
+Run `experiment-correct` with the request on stdin:
 
 ```bash
-"${AR_TOOL_CLI:-scripts/ar-tool}" run experiment-correct <<'YAML'
+experiment-correct <<'YAML'
 experiment_id: E0001_kernel-baseline
 summary: Corrected baseline metric
 correction: The reported metric was from the debug scale, not the decision scale.
@@ -38,9 +38,9 @@ YAML
 ## Rules
 
 - Record only explicit corrections to existing experiments.
-- Do not run experiments, change code, edit `report.tex`, or update `TODO.md`.
-- Do not edit the project state checkout manually. Use the helper so local locks, pull, commit, push, and retry behavior stay consistent.
-- Use the inherited `AR_AGENT_BRANCH_ID` unless the parent explicitly gives a different branch log id. Experiment IDs are branch-log-local (`E0001_short-description`); use slash-qualified references (`branch-log/E0001_short-description`) when referring across branch logs.
-- Use `${AR_TOOL_CLI:-scripts/ar-tool} run experiment-correct` with YAML on stdin.
+- Do not run experiments, change code, edit work-branch `report.tex`, or update work-branch `TODO.md`.
+- Do not edit the work state checkout manually. Use the helper so local locks, pull, commit, push, and retry behavior stay consistent.
+- Use the inherited `AR_WORK_BRANCH` unless the parent explicitly gives a different work branch. Experiment IDs are work-branch-local (`E0001_short-description`); use `::`-qualified references (`work_branch::E0001_short-description`) when referring across work-branch logs.
+- Use `experiment-correct` with YAML on stdin.
 - Use the current working directory unless the parent gives a specific project directory.
 - Never force-push. If the helper reports a real conflict or failure after retry, report the failure and the exact stderr/stdout needed to diagnose it.

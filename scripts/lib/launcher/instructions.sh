@@ -1,7 +1,7 @@
-# Sourced by agentic-researcher. Instruction, module, skill, and managed agent rendering.
+# Sourced by agentic-team. Instruction, module, skill, and managed agent rendering.
 
 setup_storage() {
-    STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-researcher}"
+    STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}"
 
     UV_CACHE_DIR="${UV_CACHE_DIR:-$STATE_ROOT/uv/cache}"
     UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$STATE_ROOT/uv/python}"
@@ -18,7 +18,7 @@ setup_storage() {
     fi
 
     # Sandbox-specific config directory (isolated from host)
-    AR_CONFIG_STORE="$STATE_ROOT/agentic-researcher-config"
+    AR_CONFIG_STORE="$STATE_ROOT/agentic-team-config"
 
     mkdir -p "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$UV_TOOL_DIR" \
              "$AR_CONFIG_STORE"
@@ -67,17 +67,15 @@ expand_modules_from_stdin() {
     done
 }
 
-render_instruction_template() {
-    local output_path="$1"
-
+render_instruction_template_part() {
     if [[ "$AR_SANDBOX" == "docker" || "$AR_SANDBOX" == "podman" ]]; then
         awk '
             /<!-- DOCKER-OMIT-START -->/ { skip=1; next }
             /<!-- DOCKER-OMIT-END -->/   { skip=0; next }
             !skip { print }
-        ' "$SCRIPT_DIR/INSTRUCTIONS.md" | expand_modules_from_stdin > "$output_path"
+        ' "$SCRIPT_DIR/INSTRUCTIONS.md" | expand_modules_from_stdin
     else
-        expand_modules_from_stdin < "$SCRIPT_DIR/INSTRUCTIONS.md" > "$output_path"
+        expand_modules_from_stdin < "$SCRIPT_DIR/INSTRUCTIONS.md"
     fi
 }
 
@@ -136,12 +134,9 @@ find_agent_source_by_name() {
     return 1
 }
 
-setup_main_agent_instruction_block() {
-    local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
+render_main_agent_instruction_part() {
     local main_agent="${AR_MAIN_AGENT:-research-coordinator}"
-    local source_path kind temp_path
-
-    [[ -f "$instruction_path" ]] || return 0
+    local source_path kind
 
     if ! valid_agent_name "$main_agent"; then
         echo "Error: Invalid AR_MAIN_AGENT: $main_agent"
@@ -152,7 +147,7 @@ setup_main_agent_instruction_block() {
         source_path="$MAIN_AGENT_SOURCE_PATH"
     elif ! source_path="$(find_agent_source_by_name "$main_agent")"; then
         echo "Error: Main agent definition not found: $main_agent"
-        echo "Add agents/$main_agent.md with frontmatter 'kind: main' to AR or the org notes repo."
+        echo "Add agents/$main_agent.md with frontmatter 'kind: main' to Agentic Team or the org repo."
         exit 1
     fi
 
@@ -162,49 +157,7 @@ setup_main_agent_instruction_block() {
         exit 1
     fi
 
-    temp_path="${instruction_path}.tmp"
-    cp "$instruction_path" "$temp_path"
-    {
-        printf '\n'
-        strip_frontmatter "$source_path" | expand_modules_from_stdin
-    } >> "$temp_path"
-    mv "$temp_path" "$instruction_path"
-}
-
-setup_branch_instruction_block() {
-    local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
-    local temp_path
-
-    [[ -f "$instruction_path" ]] || return 0
-    [[ -n "${AR_AGENT_BRANCH:-}" ]] || return 0
-
-    temp_path="${instruction_path}.tmp"
-    cp "$instruction_path" "$temp_path"
-
-    {
-        printf '\n'
-        printf '## Agent Branch\n\n'
-        printf 'Active branch: `%s`.\n\n' "$WORKSPACE_GIT_BRANCH"
-        printf 'Branch ownership mode: `%s`.\n\n' "${AR_BRANCH_OWNERSHIP:-exclusive}"
-        case "${AR_BRANCH_OWNERSHIP:-exclusive}" in
-            readonly)
-                printf 'This invocation is read-only. Do not modify project files, stage changes, commit, or push. If sandbox support is available, the launcher may enforce read-only access; otherwise treat this as an instruction-level constraint.\n\n'
-                ;;
-            shared)
-                printf 'This invocation may share the branch with other agents or humans. Use ordinary Git collaboration: inspect status before editing, pull/rebase/merge when appropriate, and resolve conflicts explicitly.\n\n'
-                ;;
-            *)
-                if [[ "${BRANCH_GUARD_OVERRIDE:-false}" == "true" ]]; then
-                    printf 'This invocation was explicitly allowed to use a branch that is not an unoccupied `agent/*` branch. Another local agent may also be writing here, so use normal Git conflict checks and do not assume exclusive ownership.\n\n'
-                else
-                    printf 'This invocation is expected to be the only mutating top-level agent for this branch on this AR installation. The launcher uses a local soft branch guard to catch accidental duplicate writers; Git remains the source of truth for conflicts.\n\n'
-                fi
-                printf 'Work on `%s` or child branches such as `%s/exp/<experiment-name>`. Do not commit to `main` or `master` unless the user explicitly asks.\n\n' "$AR_AGENT_BRANCH" "$AR_AGENT_BRANCH"
-                ;;
-        esac
-    } >> "$temp_path"
-
-    mv "$temp_path" "$instruction_path"
+    strip_frontmatter "$source_path" | expand_modules_from_stdin
 }
 
 workspace_display_path_for_target() {
@@ -225,10 +178,9 @@ workspace_display_path_for_target() {
 SUBAGENT_CATALOG_EMITTED=false
 
 append_subagent_catalog_source_dir() {
-    local output_path="$1"
-    local agent_root="$2"
-    local source_dir="$3"
-    local override_dir="${4:-}"
+    local agent_root="$1"
+    local source_dir="$2"
+    local override_dir="${3:-}"
     local source_path agent_name kind description target_path contract_path
 
     [[ -d "$source_dir" ]] || return 0
@@ -252,63 +204,90 @@ append_subagent_catalog_source_dir() {
         {
             printf -- '- `%s`: %s' "$agent_name" "$description"
             printf ' Contract: `%s`.\n' "$contract_path"
-        } >> "$output_path"
+        }
         SUBAGENT_CATALOG_EMITTED=true
     done
 }
 
-setup_subagent_catalog_instruction_block() {
-    local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
-    local temp_path agent_root org_agent_dir=""
+render_subagent_catalog_instruction_part() {
+    local agent_root org_agent_dir=""
 
-    [[ -f "$instruction_path" ]] || return 0
-
-    temp_path="${instruction_path}.tmp"
-    cp "$instruction_path" "$temp_path"
-
-    agent_root="$(project_agent_root_for_tool)"
+    agent_root="$(project_agent_root_for_cli)"
     if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
         org_agent_dir="$STATE_ROOT/repos/org-agentic-notes/agents"
     fi
 
-    {
-        printf '\n'
-        printf '## Available Subagents\n\n'
-        printf 'Subagents are delegated tools. Use this catalog to decide when a subagent exists, but do not infer the full input shape from memory. Before launching a subagent, read its rendered definition file and use that file'\''s `## Subagent Contract` section for the typed request template. Each subagent has exactly one request template; if a workflow needs a different request shape, use a different subagent.\n\n'
-    } >> "$temp_path"
+    printf '## Available Subagents\n\n'
+    printf 'Subagents are delegated tools. Use this catalog to decide when a subagent exists, but do not infer the full input shape from memory. Before launching a subagent, read its rendered definition file and use that file'\''s `## Subagent Contract` section for the typed request template. Each subagent has exactly one request template; if a workflow needs a different request shape, use a different subagent.\n\n'
 
     SUBAGENT_CATALOG_EMITTED=false
     if [[ -n "$agent_root" ]]; then
-        append_subagent_catalog_source_dir "$temp_path" "$agent_root" "$SCRIPT_DIR/agents" "$org_agent_dir"
+        append_subagent_catalog_source_dir "$agent_root" "$SCRIPT_DIR/agents" "$org_agent_dir"
         if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
-            append_subagent_catalog_source_dir "$temp_path" "$agent_root" "$org_agent_dir" ""
+            append_subagent_catalog_source_dir "$agent_root" "$org_agent_dir" ""
         fi
     fi
     if [[ "$SUBAGENT_CATALOG_EMITTED" != "true" ]]; then
-        printf '(none)\n' >> "$temp_path"
+        printf '(none)\n'
     fi
-    mv "$temp_path" "$instruction_path"
 }
 
-setup_instruction_file() {
+render_agentic_state_instruction_part() {
+    [[ -n "${AR_WORK_BRANCH:-}" ]] || return 0
+
+    printf '## Agentic State\n\n'
+    printf 'Agentic State stores shared agent memory and capability-owned records in Git-backed state checkouts under `$AR_STATE_ROOT`.\n\n'
+    printf '| Scope | Storage |\n'
+    printf '| --- | --- |\n'
+    printf '| Organization | Org repo configured by `AR_ORG_NOTES_REPO`, when present |\n'
+    printf '| Project | Project repo orphan branch `%s` |\n' "${AR_PROJECT_STATE_BRANCH:-agentic/project-state}"
+    printf '| Work branch | Project repo orphan branch `agentic/work-state/%s` |\n\n' "$AR_WORK_BRANCH"
+    printf 'Local state checkouts for this invocation:\n\n'
+    printf '```bash\n'
+    printf 'PROJECT_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/agentic-state"\n'
+    printf 'WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/${AR_WORK_BRANCH:?}"\n'
+    printf '```\n\n'
+    printf 'Capabilities own the files they place in those checkouts. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `report.tex` and `TODO.md` at the work-state checkout root.\n'
+}
+
+setup_instruction_target() {
     local target
     target="$(cli_call_required instruction_target)"
 
     INSTRUCTION_FILE_REGENERATED=false
-
-    if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
-        render_instruction_template "$WORKSPACE_DIR/$target"
-        INSTRUCTION_FILE_REGENERATED=true
-    fi
-
     INSTRUCTION_TARGET="$target"
+}
+
+render_instruction_document() {
+    [[ -n "${INSTRUCTION_TARGET:-}" ]] || setup_instruction_target
+
+    local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
+    local temp_path="${instruction_path}.tmp"
+
+    {
+        if [[ -f "$SCRIPT_DIR/INSTRUCTIONS.md" ]]; then
+            render_instruction_template_part
+        fi
+        printf '\n'
+        render_main_agent_instruction_part
+        printf '\n'
+        render_skill_instruction_parts
+        printf '\n'
+        render_subagent_catalog_instruction_part
+        printf '\n'
+        render_agentic_state_instruction_part
+        printf '\n'
+        render_capability_instruction_parts
+    } > "$temp_path"
+
+    mv "$temp_path" "$instruction_path"
+    INSTRUCTION_FILE_REGENERATED=true
 }
 
 normalize_markdown_file() {
     local target_path="$1"
     [[ -f "$target_path" ]] || return 0
-    resolve_python_cmd || return 0
-    "${AR_PYTHON_CMD[@]}" - "$target_path" <<'PY'
+    python3 - "$target_path" <<'PY'
 import sys
 from pathlib import Path
 
@@ -372,23 +351,77 @@ frontmatter_value() {
     ' "$source_path"
 }
 
-project_skill_roots_for_tool() {
+frontmatter_list_values() {
+    local source_path="$1"
+    local key="$2"
+
+    awk -v key="$key" '
+        function clean(value) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            gsub(/^["\047]|["\047]$/, "", value)
+            return value
+        }
+        function emit_values(value,    n, i, parts) {
+            gsub(/^\[/, "", value)
+            gsub(/\]$/, "", value)
+            gsub(/,/, " ", value)
+            n = split(value, parts, /[[:space:]]+/)
+            for (i = 1; i <= n; i++) {
+                parts[i] = clean(parts[i])
+                if (parts[i] != "") {
+                    print parts[i]
+                }
+            }
+        }
+        NR == 1 && $0 == "---" { in_frontmatter=1; next }
+        in_frontmatter && $0 == "---" { exit }
+        in_frontmatter {
+            key_pattern = "^[[:space:]]*" key ":[[:space:]]*"
+            if (collecting) {
+                if ($0 ~ /^[[:space:]]*-[[:space:]]*/) {
+                    value = $0
+                    sub(/^[[:space:]]*-[[:space:]]*/, "", value)
+                    value = clean(value)
+                    if (value != "") {
+                        print value
+                    }
+                    next
+                }
+                if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/) {
+                    next
+                }
+                collecting=0
+            }
+            if ($0 ~ key_pattern) {
+                value = $0
+                sub(key_pattern, "", value)
+                value = clean(value)
+                if (value == "") {
+                    collecting=1
+                } else {
+                    emit_values(value)
+                    exit
+                }
+            }
+        }
+    ' "$source_path"
+}
+
+project_skill_roots_for_cli() {
     cli_call_required project_skill_root
 }
 
 is_active_project_skill() {
     local needle="$1"
-    local source_path skill_name
+    local capability_name capability_dir source_path skill_name
 
-    for source_path in "$SCRIPT_DIR"/skills/*/SKILL.md; do
-        [[ -f "$source_path" ]] || continue
-        skill_name="$(basename "$(dirname "$source_path")")"
-        [[ "$skill_name" == "$needle" ]] && return 0
-    done
-
-    for skill_name in "${SELECTED_OPTIONAL_SKILLS[@]}"; do
-        [[ -f "$SCRIPT_DIR/optional-skills/$skill_name/SKILL.md" ]] || continue
-        [[ "$skill_name" == "$needle" ]] && return 0
+    for capability_name in $(enabled_capability_names); do
+        capability_dir="$(capability_root "$capability_name")" || continue
+        for source_path in "$capability_dir"/skills/*/SKILL.md; do
+            [[ -f "$source_path" ]] || continue
+            skill_name="$(basename "$(dirname "$source_path")")"
+            [[ "$skill_name" == "$needle" ]] && return 0
+        done
     done
 
     return 1
@@ -412,44 +445,32 @@ cleanup_inactive_managed_skills() {
 }
 
 setup_project_skills() {
-    local managed_marker="Generated by agentic-researcher"
-    local skill_root source_path skill_name skill_dir target_path
+    local managed_marker="Generated by agentic-team"
+    local skill_root source_path skill_name skill_dir target_path capability_name capability_dir
 
     while IFS= read -r skill_root; do
         [[ -n "$skill_root" ]] || continue
         mkdir -p "$skill_root"
         cleanup_inactive_managed_skills "$skill_root" "$managed_marker"
 
-        for source_path in "$SCRIPT_DIR"/skills/*/SKILL.md; do
-            [[ -f "$source_path" ]] || continue
-            skill_name="$(basename "$(dirname "$source_path")")"
-            skill_dir="$skill_root/$skill_name"
-            target_path="$skill_dir/SKILL.md"
+        for capability_name in $(enabled_capability_names); do
+            capability_dir="$(capability_root "$capability_name")" || continue
+            for source_path in "$capability_dir"/skills/*/SKILL.md; do
+                [[ -f "$source_path" ]] || continue
+                skill_name="$(basename "$(dirname "$source_path")")"
+                skill_dir="$skill_root/$skill_name"
+                target_path="$skill_dir/SKILL.md"
 
-            if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
-                echo "Warning: Skipping existing skill at $target_path (not managed by agentic-researcher)"
-                continue
-            fi
+                if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
+                    echo "Warning: Skipping existing capability skill at $target_path (not managed by agentic-team)"
+                    continue
+                fi
 
-            mkdir -p "$skill_dir"
-            render_managed_skill_file "$source_path" "$target_path"
+                mkdir -p "$skill_dir"
+                render_managed_skill_file "$source_path" "$target_path"
+            done
         done
-
-        for skill_name in "${SELECTED_OPTIONAL_SKILLS[@]}"; do
-            source_path="$SCRIPT_DIR/optional-skills/$skill_name/SKILL.md"
-            [[ -f "$source_path" ]] || continue
-            skill_dir="$skill_root/$skill_name"
-            target_path="$skill_dir/SKILL.md"
-
-            if [[ -f "$target_path" ]] && ! grep -q "$managed_marker" "$target_path"; then
-                echo "Warning: Skipping existing optional skill at $target_path (not managed by agentic-researcher)"
-                continue
-            fi
-
-            mkdir -p "$skill_dir"
-            render_managed_skill_file "$source_path" "$target_path"
-        done
-    done < <(project_skill_roots_for_tool)
+    done < <(project_skill_roots_for_cli)
 }
 
 render_managed_skill_file() {
@@ -463,7 +484,7 @@ render_managed_skill_file() {
         in_frontmatter && $0 == "---" {
             print
             print ""
-            print "<!-- Generated by agentic-researcher. Edit the source skill to change this file. -->"
+            print "<!-- Generated by agentic-team. Edit the source skill to change this file. -->"
             inserted=1
             in_frontmatter=0
             next
@@ -471,11 +492,10 @@ render_managed_skill_file() {
         { print }
         END {
             if (inserted == 0) {
-                print "<!-- Generated by agentic-researcher. Edit the source skill to change this file. -->"
+                print "<!-- Generated by agentic-team. Edit the source skill to change this file. -->"
             }
         }
     ' "$source_path" > "$temp_path"
 
     mv "$temp_path" "$target_path"
 }
-

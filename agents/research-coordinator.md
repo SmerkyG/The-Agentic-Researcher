@@ -4,6 +4,10 @@ kind: main
 description: Coordinate autonomous research work, experiments, verification, and research records.
 codex_reasoning_effort: high
 branch_ownership: exclusive
+required_capabilities:
+  - agentic-notes
+  - experiment-log
+  - research-coordinator
 ---
 
 # Research Coordinator Instructions
@@ -69,7 +73,7 @@ in detail if something looks wrong.
 ### Module: External Job Backend
 
 These apply when `$AR_JOB_BACKEND` is set to a value other than `none` and a
-matching project skill or managed instruction block is available.
+matching capability skill or managed instruction block is available.
 
 **N1. DISCOVER CAPACITY FIRST.**
 At session startup, use the active backend's status/list command before
@@ -100,12 +104,15 @@ Do this every session or after context compaction:
 2. Identify listed on-demand note topics that may be relevant to the current
    work. When you need one, use the generated `read-note` command so you read
    the rendered note for this project and agent type.
-3. If the active branch's Agentic Researcher experiment log is available, read
-   its `SUMMARY.md` first; open individual experiment YAML files only when
-   needed.
-4. Read `report.tex` for branch-local narrative analysis, derivations, and
-   detailed results.
-5. Read `TODO.md` for branch-local open questions and deferred work.
+3. Use injected work-branch Agentic Notes as the active work branch plan when present.
+4. If the active work branch experiment log is available, read its `SUMMARY.md` first
+   with `experiment-log --read-summary --project-dir .
+   --work-branch "$AR_WORK_BRANCH"`; open individual experiment YAML files only
+   when needed.
+5. Read work-branch `report.tex` and `TODO.md` from the work-state checkout
+   when needed for narrative analysis, derivations, detailed results, open
+   questions, and deferred work. These records live on the work state branch,
+   not in the code worktree.
 6. Run `git log --oneline -20` and `git status`.
 7. Check local GPUs: run `nvidia-smi`; if no usable NVIDIA GPU is visible, run
    `rocm-smi`.
@@ -118,20 +125,20 @@ Do this every session or after context compaction:
 ### Experiment Loop
 
 1. **Explore** the codebase before any experiment. Document durable
-   understanding in `report.tex` when it will matter later.
-2. **Plan** experiments in `report.tex` or `TODO.md` before implementing.
-   Start with cheap ideas. In multi-agent projects, do not use `TODO.md` as a
-   shared queue unless the user has provided a separate coordination mechanism.
+   understanding in work-branch `report.tex` when it will matter later.
+2. **Plan** experiments in injected work-branch Agentic Notes, work-branch `report.tex`,
+   or work-branch `TODO.md` before implementing. Start with cheap ideas.
 3. **Implement** minimal, focused changes. Keep diffs small.
 4. **Evaluate** using the three-tier strategy from the shared commitments.
 5. **Analyze** honestly. Write a hypothesis for why it worked or did not.
-6. **Update branch-local records**: keep analysis and follow-ups in
-   `report.tex` and `TODO.md`, and prepare experiment-log request content when
-   the result is meaningful.
+6. **Update work-branch records**: keep analysis and follow-ups in work-branch
+   `report.tex` and `TODO.md` by editing those normal files in the work-state
+   checkout, then committing and pushing only those work-state files. Prepare
+   experiment-log request content when the result is meaningful.
 7. **Hand off completed change sets and finalize logging** by launching the
    appropriate subagent described in the Experiment Logging and Research Record
-   plus Git Discipline sections below. Keep code, scripts, tests, `report.tex`,
-   and `TODO.md` together when they describe one experiment.
+   plus Git Discipline sections below. Code snapshots contain code/config/test
+   files only; work-branch records are committed separately to work state.
 8. **Iterate**. Build on success. After 3 failed variations of one idea, move
    on.
 
@@ -147,34 +154,60 @@ Do this every session or after context compaction:
 
 ## 3. Experiment Logging and Research Record
 
-The active branch's Agentic Researcher experiment log is the durable experiment
-ledger when available. It lives on the project state branch, not in the normal
-code worktree. Log completed meaningful
+The active work branch's Agentic Researcher experiment log is the durable append-only
+experiment ledger when available. It lives on the work state branch, not in
+the normal code worktree. Log completed meaningful
 experiments by launching the `experiment-logger` subagent. Append corrections
 by launching the `experiment-corrector` subagent. Before launching either one,
 read its rendered subagent definition and use its `## Subagent Contract`
 section for the exact request shape. The subagent uses the provided helper so
-the branch-local counter, per-experiment YAML file, and branch `SUMMARY.md` row
-are updated under the branch log's local state lock. Do not regenerate `SUMMARY.md`, manually edit
-the state checkout, or manually alter existing experiment fields. Experiment
-IDs are local to the branch log; use slash-qualified references like
-`$AR_AGENT_BRANCH_ID/E0001_short-description` when referring across branch logs.
+the work-branch-local counter, per-experiment YAML file, and work-branch `SUMMARY.md` row
+are updated under the work-branch log's local state lock. Do not regenerate
+`SUMMARY.md`, manually edit the state checkout, or manually alter existing
+experiment fields. Experiment IDs are local to the work-branch log; use
+`::`-qualified references like
+`$AR_WORK_BRANCH::E0001_short-description` when referring across work-branch logs.
 
-`report.tex` is the branch-local narrative research record. It is for
-derivations, methods, detailed analysis, figures, verification blocks, and
-selected result tables. It is a normal project file and is not locked by
-Agentic Researcher, so concurrent agents in separate worktrees may diverge and
-merge it through ordinary Git workflows. Do NOT compile it.
+Work-branch `report.tex` is the mutable work-branch-local narrative research record. It is
+for derivations, methods, detailed analysis, figures, verification blocks, and
+selected result tables. Work-branch `TODO.md` is the mutable work-branch-local checklist.
+Both live at the root of branch `agentic/work-state/$AR_WORK_BRANCH`.
+Do NOT compile work-branch `report.tex`.
 
-For experiments that include code or report changes, prefer the commit handoff
-path:
+Locate the work-state checkout with:
 
-1. Create the snapshot yourself with `${AR_TOOL_CLI:-scripts/ar-tool} run
-   branch-snapshot` and YAML on stdin. Include explicit paths, commit message,
-   focused checks, and `report.tex`/`TODO.md` when their updates belong to that
-   experiment. Never use `.` or glob paths.
+```bash
+WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/${AR_WORK_BRANCH:?}"
+```
+
+Read work-branch records directly from that checkout:
+
+```bash
+test -f "$WORK_STATE_DIR/report.tex" && sed -n '1,220p' "$WORK_STATE_DIR/report.tex"
+test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
+```
+
+Update work-branch records by editing files in the work-state checkout, then
+commit and push that checkout. Do not place these files in the code worktree.
+
+```bash
+git -C "$WORK_STATE_DIR" pull --ff-only
+# Edit "$WORK_STATE_DIR/report.tex" and/or "$WORK_STATE_DIR/TODO.md".
+git -C "$WORK_STATE_DIR" status --short
+git -C "$WORK_STATE_DIR" add report.tex TODO.md
+git -C "$WORK_STATE_DIR" commit -m "work-state: update $AR_WORK_BRANCH research records"
+git -C "$WORK_STATE_DIR" push
+```
+
+Skip the commit if there are no work-state changes.
+
+For experiments that include code changes, prefer the commit handoff path:
+
+1. Create the snapshot yourself with `branch-snapshot` and YAML on stdin.
+   Include explicit paths, commit message, and focused checks. Never include work-branch Agentic Notes, work-branch `report.tex`,
+   work-branch `TODO.md`, `.`, or glob paths.
 2. If the completed change set is a meaningful experiment result that belongs in
-   the active branch experiment log, read the rendered `experiment-logger`
+   the active work branch experiment log, read the rendered `experiment-logger`
    contract and include its experiment-log payload under
    `after_commit.experiment_log` in the snapshot request. The commit
    helper logs it automatically after the commit hash exists.
@@ -193,7 +226,7 @@ path:
 This keeps the experiment log tied to the final code commit without blocking
 the main agent during checks after the snapshot has been captured.
 
-For meaningful completed experiments that have no code/report commit, launch
+For meaningful completed experiments that have no code commit, launch
 `experiment-logger` directly after reading its rendered contract.
 
 ### Preamble
@@ -204,7 +237,7 @@ corollary, remark.
 
 ### Report Subsections
 
-For experiments that need narrative analysis in `report.tex`, use
+For experiments that need narrative analysis in work-branch `report.tex`, use
 `\paragraph{Label}` for each field -- never bare `\textbf{}`:
 
 - **Goal**: what problem are we solving
@@ -241,9 +274,9 @@ RIA + Recon (full) & Qwen-1.5B & 60\% & 20.09 & $-11.2\%$ \\
 
 ### TODO.md
 
-Maintain as a branch-local checklist for open questions, unverified claims, and
-deferred checks. Do not treat it as the shared queue for multiple agents unless
-the user explicitly provides a coordination protocol.
+Maintain work-branch `TODO.md` as the checklist for open questions, unverified
+claims, and deferred checks for the active work branch. Do not treat it as a
+cross-branch or project-wide work queue.
 
 Format: `- [ ] item` / `- [x] done`
 
@@ -253,10 +286,10 @@ For any change involving math, algorithms, or formal reasoning:
 
 1. **Create a verification script**: `scripts/verify_<topic>.py`
 2. **Run it** and record: command, pass/fail, key numeric results
-3. **If incomplete**: label claim as "unverified", add TODO, note in
+3. **If incomplete**: label claim as "unverified", add TODO, note in work-branch
    `report.tex`
 
-Include in `report.tex`:
+Include in work-branch `report.tex`:
 
 ```latex
 \begin{verification}
@@ -272,13 +305,14 @@ Include in `report.tex`:
 
 ## 5. Git Discipline
 
-- Work only on `$AR_AGENT_BRANCH` or child branches such as
-  `$AR_AGENT_BRANCH/exp/<experiment-name>`.
-- Do not directly stage, commit, tag, reset, stash, or otherwise mutate Git
-  history/index state for normal research workflow. Launch the appropriate
-  subagent instead.
+- Work only on `$AR_WORK_BRANCH` or child branches such as
+  `$AR_WORK_BRANCH/exp/<experiment-name>`.
+- In the code worktree, do not directly stage, commit, tag, reset, stash, or
+  otherwise mutate Git history/index state for normal research workflow. Launch
+  the appropriate subagent instead. Work-state record updates are ordinary
+  commits in the separate work-state checkout.
 - For completed experiment change sets, create an explicit-path snapshot with
-  `ar-tool run branch-snapshot`, inspect it, then launch `branch-committer` to
+  `branch-snapshot`, inspect it, then launch `branch-committer` to
   run checks, create the commit, and log the experiment result after the commit
   hash exists.
 - Use `branch-commit-status` to check a background branch commit that has
@@ -298,15 +332,17 @@ Include in `report.tex`:
 
 | Location | Purpose |
 |----------|---------|
-| Agentic experiment log | Topic-local experiment ledger and summary table on the project state branch |
-| `report.tex` | Branch-local derivations, methods, detailed analysis, verification, selected result tables |
-| `TODO.md` | Branch-local checklist for open questions, unverified claims, deferred work |
+| Agentic experiment log | Work-branch-local experiment ledger and summary table on the work state branch |
+| Work-branch Agentic Notes | Short active guidance rendered into startup instructions |
+| Work-branch `report.tex` | Work-branch-local derivations, methods, detailed analysis, verification, selected result tables |
+| Work-branch `TODO.md` | Work-branch-local checklist for open questions, unverified claims, deferred work |
 | `REVISION.md` | Agent improvement notes from `/retro`, append-only |
 | `scripts/verify_*.py` | Verification scripts |
 | `scripts/plot_*.py` | Plotting scripts, one per figure, PDF+PNG to `images/` |
 | `images/` | Generated figures |
 
-Keep workspace root clean. Only required files above belong there.
+Keep workspace root clean. Do not create canonical `report.tex` or `TODO.md` in
+the code worktree for work state.
 
 ## 7. Troubleshooting
 

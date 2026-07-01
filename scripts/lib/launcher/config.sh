@@ -1,44 +1,45 @@
-# Sourced by agentic-researcher. Argument parsing, config loading, defaults, and launcher globals.
+# Sourced by agentic-team. Argument parsing, config loading, defaults, and launcher globals.
+
+LAUNCHER_ENV_OVERRIDE_VARS=(
+    AR_SANDBOX
+    AR_CLI
+    AR_DEFAULT_MODEL
+    AR_STATE_ROOT
+    AR_EXTRA_BIND_DIRS
+    AR_EXTRA_ENV
+    AR_DOCKER_GPUS
+    AR_CAPABILITIES
+    AR_ORG_NOTES_REPO
+    AR_MAIN_AGENT
+    AR_WORK_BRANCH
+    AR_BRANCH_OWNERSHIP
+    AR_USER_ID
+    AR_PROJECT_ID
+    AR_PROJECT_STATE_BRANCH
+    AR_NOTES_AUTO_REFRESH
+    AR_NOTES_REFRESH_MODE
+    AR_NOTES_REFRESH_INTERVAL_SECONDS
+    AR_PROFILE_STARTUP
+    AR_AUTO_BUILD
+    AR_GIT_NAME
+    AR_GIT_EMAIL
+    AR_RESOLVER_GIT_NAME
+    AR_RESOLVER_GIT_EMAIL
+    AR_NOTES_GIT_NAME
+    AR_NOTES_GIT_EMAIL
+    AR_AUTH_MODE
+    AR_API_PROVIDER
+    AR_API_KEY_ENV
+    AR_CUSTOM_ENDPOINT
+    AR_CUSTOM_ANTHROPIC_ENDPOINT
+    AR_HTTPS_PROXY
+    AR_HTTP_PROXY
+)
 
 capture_env_overrides() {
     local var override_var unset_marker="__AR_UNSET__"
-    local override_vars=(
-        AR_SANDBOX
-        AR_CLI_TOOL
-        AR_DEFAULT_MODEL
-        AR_STATE_ROOT
-        AR_EXTRA_BIND_DIRS
-        AR_EXTRA_ENV
-        AR_DOCKER_GPUS
-        AR_OPTIONAL_SKILLS
-        AR_ORG_NOTES_REPO
-        AR_MAIN_AGENT
-        AR_INSTRUCTION_PROVIDERS
-        AR_AGENT_BRANCH
-        AR_AGENT_TOPIC
-        AR_BRANCH_OWNERSHIP
-        AR_USER_ID
-        AR_PROJECT_ID
-        AR_AGENTIC_STATE_BRANCH
-        AR_NOTES_AUTO_REFRESH
-        AR_NOTES_REFRESH_MODE
-        AR_NOTES_REFRESH_INTERVAL_SECONDS
-        AR_PROFILE_STARTUP
-        AR_AUTO_BUILD
-        AR_RESOLVER_GIT_NAME
-        AR_RESOLVER_GIT_EMAIL
-        AR_NOTES_GIT_NAME
-        AR_NOTES_GIT_EMAIL
-        AR_AUTH_MODE
-        AR_API_PROVIDER
-        AR_API_KEY_ENV
-        AR_CUSTOM_ENDPOINT
-        AR_CUSTOM_ANTHROPIC_ENDPOINT
-        AR_HTTPS_PROXY
-        AR_HTTP_PROXY
-    )
 
-    for var in "${override_vars[@]}"; do
+    for var in "${LAUNCHER_ENV_OVERRIDE_VARS[@]}"; do
         override_var="${var}_ENV_OVERRIDE"
         if [[ -n "${!var+x}" ]]; then
             printf -v "$override_var" '%s' "${!var}"
@@ -49,7 +50,7 @@ capture_env_overrides() {
 }
 
 config_file_path() {
-    printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh"
+    printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/agentic-team/config.sh"
 }
 
 load_config() {
@@ -63,43 +64,8 @@ load_config() {
 # Environment variables override config file values
 apply_env_overrides() {
     local var override_var
-    local override_vars=(
-        AR_SANDBOX
-        AR_CLI_TOOL
-        AR_DEFAULT_MODEL
-        AR_STATE_ROOT
-        AR_EXTRA_BIND_DIRS
-        AR_EXTRA_ENV
-        AR_DOCKER_GPUS
-        AR_OPTIONAL_SKILLS
-        AR_ORG_NOTES_REPO
-        AR_MAIN_AGENT
-        AR_INSTRUCTION_PROVIDERS
-        AR_AGENT_BRANCH
-        AR_AGENT_TOPIC
-        AR_BRANCH_OWNERSHIP
-        AR_USER_ID
-        AR_PROJECT_ID
-        AR_AGENTIC_STATE_BRANCH
-        AR_NOTES_AUTO_REFRESH
-        AR_NOTES_REFRESH_MODE
-        AR_NOTES_REFRESH_INTERVAL_SECONDS
-        AR_PROFILE_STARTUP
-        AR_AUTO_BUILD
-        AR_RESOLVER_GIT_NAME
-        AR_RESOLVER_GIT_EMAIL
-        AR_NOTES_GIT_NAME
-        AR_NOTES_GIT_EMAIL
-        AR_AUTH_MODE
-        AR_API_PROVIDER
-        AR_API_KEY_ENV
-        AR_CUSTOM_ENDPOINT
-        AR_CUSTOM_ANTHROPIC_ENDPOINT
-        AR_HTTPS_PROXY
-        AR_HTTP_PROXY
-    )
 
-    for var in "${override_vars[@]}"; do
+    for var in "${LAUNCHER_ENV_OVERRIDE_VARS[@]}"; do
         override_var="${var}_ENV_OVERRIDE"
         if [[ "${!override_var:-__AR_UNSET__}" != "__AR_UNSET__" ]]; then
             printf -v "$var" '%s' "${!override_var}"
@@ -109,11 +75,13 @@ apply_env_overrides() {
     if [[ -n "${AR_SANDBOX_OVERRIDE:-}" ]]; then
         AR_SANDBOX="$AR_SANDBOX_OVERRIDE"
     fi
-    if [[ -n "${AR_OPTIONAL_SKILLS_OVERRIDE:-}" ]]; then
-        if [[ -n "${AR_OPTIONAL_SKILLS:-}" ]]; then
-            AR_OPTIONAL_SKILLS="$AR_OPTIONAL_SKILLS,$AR_OPTIONAL_SKILLS_OVERRIDE"
+    if [[ -n "${AR_CAPABILITIES_OVERRIDE:-}" ]]; then
+        AR_CAPABILITIES="${AR_CAPABILITIES:-agentic-notes,experiment-log}"
+        [[ "$AR_CAPABILITIES" == "none" ]] && AR_CAPABILITIES=""
+        if [[ -n "$AR_CAPABILITIES" ]]; then
+            AR_CAPABILITIES="$AR_CAPABILITIES,$AR_CAPABILITIES_OVERRIDE"
         else
-            AR_OPTIONAL_SKILLS="$AR_OPTIONAL_SKILLS_OVERRIDE"
+            AR_CAPABILITIES="$AR_CAPABILITIES_OVERRIDE"
         fi
     fi
     if [[ -n "${AR_PROJECT_ID_OVERRIDE:-}" ]]; then
@@ -122,11 +90,11 @@ apply_env_overrides() {
     if [[ -n "${AR_MAIN_AGENT_OVERRIDE:-}" ]]; then
         AR_MAIN_AGENT="$AR_MAIN_AGENT_OVERRIDE"
     fi
-    if [[ -n "${AR_AGENT_BRANCH_OVERRIDE:-}" ]]; then
-        AR_AGENT_BRANCH="$AR_AGENT_BRANCH_OVERRIDE"
+    if [[ -n "${AR_WORK_BRANCH_OVERRIDE:-}" ]]; then
+        AR_WORK_BRANCH="$AR_WORK_BRANCH_OVERRIDE"
     fi
-    if [[ -n "${AR_CLI_TOOL_OVERRIDE:-}" ]]; then
-        AR_CLI_TOOL="$AR_CLI_TOOL_OVERRIDE"
+    if [[ -n "${AR_CLI_OVERRIDE:-}" ]]; then
+        AR_CLI="$AR_CLI_OVERRIDE"
     fi
     if [[ -n "${AR_DEFAULT_MODEL_OVERRIDE:-}" ]]; then
         AR_DEFAULT_MODEL="$AR_DEFAULT_MODEL_OVERRIDE"
@@ -150,26 +118,26 @@ apply_defaults() {
             echo "Docker not found, falling back to Podman."
         fi
     fi
-    AR_CLI_TOOL="${AR_CLI_TOOL:-claude}"
-    AR_STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-researcher}"
+    AR_CLI="${AR_CLI:-claude}"
+    AR_STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}"
     AR_EXTRA_BIND_DIRS="${AR_EXTRA_BIND_DIRS:-}"
     AR_EXTRA_ENV="${AR_EXTRA_ENV:-}"
     AR_DOCKER_GPUS="${AR_DOCKER_GPUS:-auto}"
-    AR_OPTIONAL_SKILLS="${AR_OPTIONAL_SKILLS:-}"
+    AR_CAPABILITIES="${AR_CAPABILITIES:-agentic-notes,experiment-log}"
     AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
     AR_MAIN_AGENT="${AR_MAIN_AGENT:-research-coordinator}"
-    AR_INSTRUCTION_PROVIDERS="${AR_INSTRUCTION_PROVIDERS:-agentic-notes,experiment-log}"
-    AR_AGENT_BRANCH="${AR_AGENT_BRANCH:-}"
-    AR_AGENT_TOPIC="${AR_AGENT_TOPIC:-}"
+    AR_WORK_BRANCH="${AR_WORK_BRANCH:-}"
     AR_BRANCH_OWNERSHIP="${AR_BRANCH_OWNERSHIP:-}"
     AR_USER_ID="${AR_USER_ID:-$USER}"
     AR_PROJECT_ID="${AR_PROJECT_ID:-}"
-    AR_AGENTIC_STATE_BRANCH="${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
+    AR_PROJECT_STATE_BRANCH="${AR_PROJECT_STATE_BRANCH:-agentic/project-state}"
     AR_NOTES_AUTO_REFRESH="${AR_NOTES_AUTO_REFRESH:-true}"
     AR_NOTES_REFRESH_MODE="${AR_NOTES_REFRESH_MODE:-periodic}"
     AR_NOTES_REFRESH_INTERVAL_SECONDS="${AR_NOTES_REFRESH_INTERVAL_SECONDS:-120}"
     AR_PROFILE_STARTUP="${AR_PROFILE_STARTUP:-false}"
     AR_AUTO_BUILD="${AR_AUTO_BUILD:-true}"
+    AR_GIT_NAME="${AR_GIT_NAME:-}"
+    AR_GIT_EMAIL="${AR_GIT_EMAIL:-}"
     cli_call_required apply_defaults
 }
 YOLO_MODE=false
@@ -179,24 +147,24 @@ MODEL_SPECIFIED=false
 DEBUG_LAUNCH=false
 ALLOW_SHARED_BRANCH=false
 WORKSPACE_DIR=""
-TOOL_ARGS=()
-SELECTED_OPTIONAL_SKILLS=()
-OPTIONAL_SKILL_BINDS=()
-OPTIONAL_SKILL_ENV=()
-OPTIONAL_CLEANUP_ENABLED=false
+CLI_ARGS=()
+SELECTED_CAPABILITIES=()
+CAPABILITY_BINDS=()
+CAPABILITY_ENV=()
+CAPABILITY_CLEANUP_ENABLED=false
 INSTRUCTION_FILE_REGENERATED=false
 BRANCH_GUARD_FILE=""
 BRANCH_GUARD_HEARTBEAT_PID=""
 BRANCH_GUARD_OVERRIDE=false
 MAIN_AGENT_SOURCE_PATH=""
-AGENTIC_NOTES_PROVIDER_SETUP=false
+AGENTIC_NOTES_CAPABILITY_SETUP=false
 
-append_optional_skill_override() {
-    local skill_name="$1"
-    if [[ -n "${AR_OPTIONAL_SKILLS_OVERRIDE:-}" ]]; then
-        AR_OPTIONAL_SKILLS_OVERRIDE="$AR_OPTIONAL_SKILLS_OVERRIDE,$skill_name"
+append_capability_override() {
+    local capability_name="$1"
+    if [[ -n "${AR_CAPABILITIES_OVERRIDE:-}" ]]; then
+        AR_CAPABILITIES_OVERRIDE="$AR_CAPABILITIES_OVERRIDE,$capability_name"
     else
-        AR_OPTIONAL_SKILLS_OVERRIDE="$skill_name"
+        AR_CAPABILITIES_OVERRIDE="$capability_name"
     fi
 }
 
@@ -239,24 +207,28 @@ parse_arguments() {
                 AR_SANDBOX_OVERRIDE="$2"
                 shift 2
                 ;;
-            --tool)
+            --cli)
                 if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --tool requires a value ($cli_options)"
+                    echo "Error: --cli requires a value ($cli_options)"
                     exit 1
                 fi
-                AR_CLI_TOOL_OVERRIDE="$2"
+                AR_CLI_OVERRIDE="$2"
                 shift 2
                 ;;
-            --gpu-backend)
-                echo "Error: --gpu-backend has been removed. Use --optional-skill cluster-run or another backend skill."
+            --tool)
+                echo "Error: --tool has been removed. Use --cli to select the agent CLI."
                 exit 1
                 ;;
-            --optional-skill)
+            --gpu-backend)
+                echo "Error: --gpu-backend has been removed. Use --capability cluster-run or another backend capability."
+                exit 1
+                ;;
+            --capability)
                 if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --optional-skill requires a value"
+                    echo "Error: --capability requires a value"
                     exit 1
                 fi
-                append_optional_skill_override "$2"
+                append_capability_override "$2"
                 shift 2
                 ;;
             --project-id)
@@ -275,16 +247,20 @@ parse_arguments() {
                 AR_MAIN_AGENT_OVERRIDE="$2"
                 shift 2
                 ;;
-            --agent-branch)
+            --work-branch)
                 if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --agent-branch requires a value"
+                    echo "Error: --work-branch requires a value"
                     exit 1
                 fi
-                AR_AGENT_BRANCH_OVERRIDE="$2"
+                AR_WORK_BRANCH_OVERRIDE="$2"
                 shift 2
                 ;;
+            --agent-branch)
+                echo "Error: --agent-branch has been removed. Use --work-branch with the Git branch name."
+                exit 1
+                ;;
             --agent-topic)
-                echo "Error: --agent-topic has been removed. Use --agent-branch with the Git branch name."
+                echo "Error: --agent-topic has been removed. Use --work-branch with the Git branch name."
                 exit 1
                 ;;
             --allow-shared-branch)
@@ -302,19 +278,19 @@ parse_arguments() {
             --resume|-r)
                 if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then
                     if [[ -z "$WORKSPACE_DIR" && -d "$2" ]]; then
-                        TOOL_ARGS+=("--resume")
+                        CLI_ARGS+=("--resume")
                         shift
                     else
-                        TOOL_ARGS+=("--resume" "$2")
+                        CLI_ARGS+=("--resume" "$2")
                         shift 2
                     fi
                 else
-                    TOOL_ARGS+=("--resume")
+                    CLI_ARGS+=("--resume")
                     shift
                 fi
                 ;;
             --continue|-c)
-                TOOL_ARGS+=("--continue")
+                CLI_ARGS+=("--continue")
                 shift
                 ;;
             --model)
@@ -323,7 +299,7 @@ parse_arguments() {
                     echo "Error: --model requires a value"
                     exit 1
                 fi
-                TOOL_ARGS+=("$1" "$2")
+                CLI_ARGS+=("$1" "$2")
                 shift 2
                 ;;
             --context)
@@ -331,18 +307,18 @@ parse_arguments() {
                     echo "Error: --context requires a value"
                     exit 1
                 fi
-                TOOL_ARGS+=("$1" "$2")
+                CLI_ARGS+=("$1" "$2")
                 shift 2
                 ;;
             -*)
-                TOOL_ARGS+=("$1")
+                CLI_ARGS+=("$1")
                 shift
                 ;;
             *)
                 if [[ -z "$WORKSPACE_DIR" ]]; then
                     WORKSPACE_DIR="$1"
                 else
-                    TOOL_ARGS+=("$1")
+                    CLI_ARGS+=("$1")
                 fi
                 shift
                 ;;
@@ -356,10 +332,10 @@ show_help() {
     cli_options="$(registered_cli_option_list)"
 
     cat << EOF
-agentic-researcher: Launch an AI coding agent for autonomous research.
+agentic-team: Launch an AI coding agent for structured team workflows.
 
 Usage:
-  agentic-researcher [OPTIONS] [DIRECTORY] [TOOL_OPTIONS...]
+  agentic-team [OPTIONS] [DIRECTORY] [CLI_OPTIONS...]
 
 Options:
   --setup             Run the interactive setup wizard
@@ -368,53 +344,52 @@ Options:
   --sandbox NAME      Sandbox for this invocation ($sandbox_options)
   --test              Quick validation of sandbox environment
   --render-only       Materialize instruction, skill, and agent files, then exit
-  --optional-skill NAME
-                      Install an optional skill from optional-skills/ (repeatable)
+  --capability NAME   Enable a capability from capabilities/ (repeatable)
   --project-id ID     Override inferred project id for notes and experiment state
   --main-agent NAME   Override top-level main agent for this invocation
-  --agent-branch NAME Create/switch to this Git branch before launch
+  --work-branch NAME  Create/switch to this Git branch before launch
   --allow-shared-branch
                       Continue on a branch that appears to have another active local writer
-  --debug-launch      Print extra launcher details and enable tool startup logs where supported
-  --tool TOOL         Select CLI tool ($cli_options)
-  --yolo              Auto-approve tool permissions where supported
+  --debug-launch      Print extra launcher details and enable CLI startup logs where supported
+  --cli CLI           Select CLI ($cli_options)
+  --yolo              Auto-approve tool call permissions where supported
   --resume [ID]       Resume a session (interactive picker, or specify ID)
   --continue, -c      Continue the most recent conversation
   --model MODEL       Override default model
   DIRECTORY           Project directory to work in (default: current directory)
-  TOOL_OPTIONS        Additional options passed to the CLI tool
+  CLI_OPTIONS         Additional options passed to the selected CLI
 
 Examples:
-  agentic-researcher --sandbox none
-  agentic-researcher --optional-skill cluster-run
-  agentic-researcher --sandbox apptainer --optional-skill remote-run
-  agentic-researcher --sandbox apptainer --optional-skill remote-run --test
-  agentic-researcher
-  agentic-researcher --main-agent research-paper-author
-  agentic-researcher --setup                      # Setup wizard
-  agentic-researcher --clean                      # Interactive cleanup of local state
-  agentic-researcher --uninstall                  # Remove installed launcher
-  agentic-researcher --clean --yes --include-config
-  agentic-researcher --test
-  agentic-researcher --render-only --tool codex
-  agentic-researcher --tool opencode --debug-launch
-  agentic-researcher                              # Current directory; unoccupied agent/* branches start directly
-  agentic-researcher ~/my-project
-  agentic-researcher --yolo
-  agentic-researcher --tool gemini
-  agentic-researcher --tool codex ~/project
-  agentic-researcher --yolo --model opus
-  agentic-researcher --agent-branch agent/kernel-search
+  agentic-team --sandbox none
+  agentic-team --capability cluster-run
+  agentic-team --sandbox apptainer --capability remote-run
+  agentic-team --sandbox apptainer --capability remote-run --test
+  agentic-team
+  agentic-team --main-agent research-paper-author
+  agentic-team --setup                      # Setup wizard
+  agentic-team --clean                      # Interactive cleanup of local state
+  agentic-team --uninstall                  # Remove installed launcher
+  agentic-team --clean --yes --include-config
+  agentic-team --test
+  agentic-team --render-only --cli codex
+  agentic-team --cli opencode --debug-launch
+  agentic-team                              # Current directory; unoccupied work branches start directly
+  agentic-team ~/my-project
+  agentic-team --yolo
+  agentic-team --cli gemini
+  agentic-team --cli codex ~/project
+  agentic-team --yolo --model opus
+  agentic-team --work-branch feature/kernel-search
 
 What's Sandboxed:
   The agent can write your project directory and AR_STATE_ROOT.
-  The AR install is mounted read-only at /opt/agentic-researcher.
+  The Agentic Team install is mounted read-only at /opt/agentic-team.
   Cannot access the rest of your home directory, except selected auth/config mounts.
   Even with --yolo, the agent stays sandboxed.
 
 Security:
   --yolo auto-approves tool calls but maintains filesystem isolation.
-  --sandbox none disables Agentic Researcher filesystem isolation.
+  --sandbox none disables Agentic Team filesystem isolation.
   OpenCode/Gemini/Codex have no built-in permission system.
   Review changes before committing to git.
 EOF

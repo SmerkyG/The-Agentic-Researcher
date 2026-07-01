@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/agentic-team"
 CONFIG_FILE="$CONFIG_DIR/config.sh"
 REMOVE_CONFIG=false
 REMOVE_IMAGE=false
@@ -14,12 +14,12 @@ ASSUME_YES=false
 show_help() {
     cat <<'EOF'
 Usage:
-  agentic-researcher --clean [OPTIONS]
+  agentic-team --clean [OPTIONS]
 
 Options:
   --yes             Skip confirmation prompt
-  --include-config  Also remove ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-researcher/config.sh
-  --include-image   Also remove agentic-researcher:latest from Docker/Podman if available
+  --include-config  Also remove ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-team/config.sh
+  --include-image   Also remove agentic-team:latest from Docker/Podman if available
   --all             Equivalent to --include-config --include-image
   --help            Show this help
 
@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-STATE_ROOT="$HOME/.cache/agentic-researcher"
+STATE_ROOT="$HOME/.cache/agentic-team"
 if [[ -f "$CONFIG_FILE" ]]; then
     # shellcheck disable=SC1090
     source "$CONFIG_FILE"
@@ -88,7 +88,7 @@ else
     echo "  Config file:   keep"
 fi
 if [[ "$REMOVE_IMAGE" == "true" ]]; then
-    echo "  OCI image:     agentic-researcher:latest"
+    echo "  OCI image:     agentic-team:latest"
 else
     echo "  OCI image:     keep"
 fi
@@ -127,15 +127,15 @@ if [[ "$REMOVE_IMAGE" == "true" ]]; then
     removed_any=false
     for runtime in docker podman; do
         if command -v "$runtime" >/dev/null 2>&1; then
-            if "$runtime" image inspect agentic-researcher:latest >/dev/null 2>&1; then
-                if "$runtime" image rm agentic-researcher:latest >/dev/null 2>&1; then
-                    echo "Removed $runtime image: agentic-researcher:latest"
+            if "$runtime" image inspect agentic-team:latest >/dev/null 2>&1; then
+                if "$runtime" image rm agentic-team:latest >/dev/null 2>&1; then
+                    echo "Removed $runtime image: agentic-team:latest"
                     removed_any=true
                 else
-                    echo "$runtime image could not be removed: agentic-researcher:latest"
+                    echo "$runtime image could not be removed: agentic-team:latest"
                 fi
             else
-                echo "$runtime image not present: agentic-researcher:latest"
+                echo "$runtime image not present: agentic-team:latest"
             fi
         fi
     done

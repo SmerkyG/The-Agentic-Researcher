@@ -5,7 +5,7 @@ description: Inspect datasets, manifests, splits, and preprocessing for research
 codex_reasoning_effort: medium
 ---
 
-You are a data curation agent for Agentic Researcher projects.
+You are a data curation agent for Agentic Team projects.
 
 Responsibilities:
 

@@ -1,4 +1,4 @@
-# Sourced by agentic-researcher. Runtime bind, environment, debug, and launch command helpers.
+# Sourced by agentic-team. Runtime bind, environment, debug, and launch command helpers.
 
 setup_auth_binds() {
     SSH_BIND=()
@@ -108,34 +108,8 @@ build_env_args() {
         --env "TERM=${TERM:-xterm-256color}"
         --env "USER=$USER"
         --env "GIT_SSH_COMMAND=$GIT_SSH_COMMAND"
-        --env "AR_SANDBOX=$AR_SANDBOX"
-        --env "AR_SANDBOX_HOME=$AR_SANDBOX_HOME"
-        --env "AR_INSTALL_DIR=$(ar_install_env_path)"
-        --env "AR_NOTES_CLI=$(ar_notes_cli_env_path)"
-        --env "AR_TOOL_CLI=$(ar_tool_cli_env_path)"
-        --env "AR_PROVIDER_REFRESH_CLI=$(provider_refresh_cli_env_path)"
-        --env "AR_JOB_BACKEND=${JOB_BACKEND:-none}"
-        --env "AR_STATE_ROOT=$STATE_ROOT"
-        --env "AR_ORG_NOTES_REPO=${AR_ORG_NOTES_REPO:-}"
-        --env "AR_MAIN_AGENT=${AR_MAIN_AGENT:-research-coordinator}"
-        --env "AR_INSTRUCTION_PROVIDERS=${AR_INSTRUCTION_PROVIDERS:-agentic-notes,experiment-log}"
-        --env "AR_AGENT_BRANCH=${AR_AGENT_BRANCH:-}"
-        --env "AR_AGENT_BRANCH_ID=${AR_AGENT_BRANCH_ID:-}"
-        --env "AR_AGENT_TOPIC=${AR_AGENT_TOPIC:-}"
-        --env "AR_AGENT_BRANCH_PREFIX=${AR_AGENT_BRANCH_PREFIX:-}"
-        --env "AR_BRANCH_OWNERSHIP=${AR_BRANCH_OWNERSHIP:-exclusive}"
-        --env "AR_SESSION_ID=${AR_SESSION_ID:-}"
-        --env "AR_USER_ID=${AR_USER_ID:-$USER}"
-        --env "AR_PROJECT_ID=${AR_PROJECT_ID:-}"
-        --env "AR_AGENTIC_STATE_BRANCH=${AR_AGENTIC_STATE_BRANCH:-agentic/state}"
-        --env "AR_NOTES_AUTO_REFRESH=${AR_NOTES_AUTO_REFRESH:-true}"
-        --env "AR_NOTES_REFRESH_MODE=${AR_NOTES_REFRESH_MODE:-periodic}"
-        --env "AR_NOTES_REFRESH_INTERVAL_SECONDS=${AR_NOTES_REFRESH_INTERVAL_SECONDS:-120}"
-        --env "AR_RESOLVER_GIT_NAME=${AR_RESOLVER_GIT_NAME:-}"
-        --env "AR_RESOLVER_GIT_EMAIL=${AR_RESOLVER_GIT_EMAIL:-}"
-        --env "AR_NOTES_GIT_NAME=${AR_NOTES_GIT_NAME:-}"
-        --env "AR_NOTES_GIT_EMAIL=${AR_NOTES_GIT_EMAIL:-}"
     )
+    append_ar_runtime_env_args ENV_ARGS --env
 
     # Proxy
     if [[ -n "${AR_HTTPS_PROXY:-}" ]]; then
@@ -161,21 +135,21 @@ print_debug_launch() {
 
     echo "Launch debug:"
     echo "  Sandbox:        $AR_SANDBOX"
-    echo "  Tool:           $AR_CLI_TOOL"
-    echo "  Agent branch:   ${AR_AGENT_BRANCH:-none}"
+    echo "  CLI:            $AR_CLI"
+    echo "  Work branch:   ${AR_WORK_BRANCH:-none}"
     echo "  Current branch: ${WORKSPACE_GIT_BRANCH:-none}"
     echo "  Ownership:      ${AR_BRANCH_OWNERSHIP:-exclusive}"
     echo "  Job backend:    ${JOB_BACKEND:-none}"
     echo "  Workspace:      $WORKSPACE_DIR"
     echo "  State root:     $STATE_ROOT"
     if [[ "$AR_SANDBOX" == "docker" || "$AR_SANDBOX" == "podman" ]]; then
-        echo "  Container image: agentic-researcher:latest"
+        echo "  Container image: agentic-team:latest"
     elif [[ "$AR_SANDBOX" == "none" ]]; then
         echo "  Container image: none (sandbox none)"
     else
         echo "  Container:      $CONTAINER_IMAGE"
     fi
-    echo "  Tool args:      ${TOOL_ARGS[*]:-(none)}"
+    echo "  CLI args:       ${CLI_ARGS[*]:-(none)}"
     if [[ ${#EXTRA_DIR_DEBUG_MOUNTS[@]} -gt 0 ]]; then
         echo "  Extra mounts:"
         for mount_line in "${EXTRA_DIR_DEBUG_MOUNTS[@]}"; do
@@ -187,7 +161,6 @@ print_debug_launch() {
     fi
     echo ""
 }
-native_tool_command() {
+native_cli_command() {
     cli_call_required native_command
 }
-
