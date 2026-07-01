@@ -104,7 +104,8 @@ For a coherent completed change set, offload the commit:
    ready to respond before the background commit finishes, report that the
    snapshot was queued and include the status path without claiming commit
    success. Use `branch-commit-status` only when a later step truly needs the
-   commit hash, progress, or an error.
+   commit hash, progress, or an error. It accepts either the returned
+   `snapshot_dir` or `status_path` as a positional argument.
 
 Ordinary systems-development commits do not need experiment logging.
 

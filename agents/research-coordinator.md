@@ -245,6 +245,8 @@ For experiments that include code changes, prefer the commit handoff path:
    a foreground commit. Treat the queued commit as delegated work and continue
    with the next useful task. Use `branch-commit-status` only when a later step
    truly needs progress, the commit hash, the experiment ID, or an error report.
+   It accepts either the returned `snapshot_dir` or `status_path` as a
+   positional argument.
    Final responses may report the substantive result while saying the
    commit/logging snapshot was queued; include the status path without claiming
    commit or experiment-log success. If status later reports an experiment-log
@@ -345,8 +347,8 @@ Include in work-branch `report.tex`:
   `branch-snapshot`, inspect it, then run `branch-commit` to
   run checks, create the commit, and log the experiment result after the commit
   hash exists.
-- Run `branch-commit-status` directly to check a background branch commit that
-  has already been started.
+- Run `branch-commit-status "$SNAPSHOT_DIR_OR_STATUS_PATH"` directly to check a
+  background branch commit that has already been started.
 - When the user asks to integrate completed branch work into `dev`, `main`, or
   another development branch, launch the `branch-integrator` subagent instead
   of switching this top-level session onto the target branch.

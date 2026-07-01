@@ -74,6 +74,13 @@ automatically promote notes between scopes. Use the narrowest useful scope:
 repository, and `org` only for lessons that should apply across projects in the
 organization. Promotion or consolidation of existing notes should be a separate
 curation workflow, not an implicit side effect of ordinary note updates.
+Do not record temporary workarounds or fix-needed defects as durable notes. If a
+command, dependency, service, environment, policy, or other system is confusing
+or broken and a user, sysadmin, upstream maintainer, or tool owner could fix it,
+record an actionable fix request in the appropriate local work record
+(`HELP.md`, issue tracker, or final user report) and alert the
+user/sysadmin instead. Use an org note only when the workaround is durable
+across projects and no near-term fix can be expected.
 
 The agent-facing commands provided by this capability are:
 

@@ -287,6 +287,36 @@ def test_background_commit_reports_running_check_and_streams_log(tmp_path: Path)
     assert git(repo, "log", "-1", "--format=%s") == "test: background commit"
 
 
+def test_branch_commit_status_accepts_snapshot_dir_or_status_path(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    env = os.environ.copy()
+    env["AR_STATE_ROOT"] = str(tmp_path / "state")
+    env["AR_WORK_BRANCH"] = "kernel-search"
+    (repo / "README.md").write_text("changed\n", encoding="utf-8")
+    snapshot = json.loads(
+        run_agent_command(
+            "branch-snapshot",
+            {
+                "project_dir": str(repo),
+                "paths": ["README.md"],
+                "commit_message": "test: status path",
+            },
+            env=env,
+        ).stdout
+    )
+
+    by_snapshot_dir = json.loads(
+        run([str(BIN_DIR / "branch-commit-status"), snapshot["snapshot_dir"]], env=env).stdout
+    )
+    status_path = str(Path(snapshot["snapshot_dir"]) / "status.yaml")
+    by_status_path = json.loads(
+        run([str(BIN_DIR / "branch-commit-status"), status_path], env=env).stdout
+    )
+
+    assert by_snapshot_dir["snapshot_dir"] == snapshot["snapshot_dir"]
+    assert by_status_path["snapshot_dir"] == snapshot["snapshot_dir"]
+
+
 def test_commit_snapshot_times_out_stuck_check(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     env = os.environ.copy()

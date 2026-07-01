@@ -17,9 +17,12 @@ from branch_git_common import show_status
 
 HELP = """Read the status of a branch-commit snapshot.
 
-Reads YAML from stdin.
+Accepts a snapshot directory or status.yaml path as an optional argument.
+Reads YAML from stdin when no argument is provided.
 
-Example:
+Examples:
+  branch-commit-status /home/user/.cache/agentic-team/commit-snapshots/123-work-alice
+  branch-commit-status /home/user/.cache/agentic-team/commit-snapshots/123-work-alice/status.yaml
   branch-commit-status <<'YAML'
   snapshot_dir: /home/user/.cache/agentic-team/commit-snapshots/123-work-alice
   YAML
@@ -29,12 +32,23 @@ Fields:
 """
 
 
-def run() -> None:
+def snapshot_dir_from_path(value: str) -> Path:
+    path = Path(value).expanduser().resolve()
+    if path.name == "status.yaml":
+        return path.parent
+    return path
+
+
+def run(status_target: str | None = None) -> None:
+    if status_target:
+        print_json(show_status(snapshot_dir_from_path(status_target)))
+        return
+
     request = load_request()
-    snapshot_dir = str(request.get("snapshot_dir") or "").strip()
+    snapshot_dir = str(request.get("snapshot_dir") or request.get("status_path") or "").strip()
     if not snapshot_dir:
-        raise CommandError("snapshot_dir is required")
-    print_json(show_status(Path(snapshot_dir).expanduser().resolve()))
+        raise CommandError("snapshot_dir or status_path is required")
+    print_json(show_status(snapshot_dir_from_path(snapshot_dir)))
 
 
 if __name__ == "__main__":
@@ -44,5 +58,6 @@ if __name__ == "__main__":
         epilog=HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.parse_args()
-    raise SystemExit(main(run))
+    parser.add_argument("status_target", nargs="?", help="Snapshot directory or status.yaml path.")
+    args = parser.parse_args()
+    raise SystemExit(main(lambda: run(args.status_target)))

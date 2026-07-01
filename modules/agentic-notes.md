@@ -36,6 +36,14 @@ guidance that applies only to one main agent or subagent type. Use
 future context for that scope and agent type.
 Do not create notes for one-off command output, transient task status, or
 speculation that has not been verified.
+Do not create durable notes for temporary workarounds or fix-needed defects. If
+a command, dependency, service, environment, policy, or other system is
+confusing or broken and a user, sysadmin, upstream maintainer, or tool owner
+could fix it, record an actionable fix request in the appropriate local work
+record (`HELP.md`, issue tracker, or final user report) and alert the
+user/sysadmin instead of creating a project or work-branch note. Use an org note
+only when the workaround is durable across projects and no near-term fix can be
+expected.
 
 Do not edit org, project, or work-branch source notes directly from the main agent.
 Use `note-updater` so pulls, duplicate checks, optional rare cleanup rewrites,

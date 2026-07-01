@@ -30,8 +30,8 @@ Fields:
   background    Optional. Defaults to true. When true, queues a background
                 worker and returns immediately with a status path.
 
-Use branch-commit-status with the same snapshot_dir only when later work truly
-needs progress, a commit hash, or an error report.
+Use branch-commit-status with the returned snapshot_dir or status_path only when
+later work truly needs progress, a commit hash, or an error report.
 """
 
 

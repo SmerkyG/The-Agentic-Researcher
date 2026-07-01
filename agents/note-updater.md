@@ -46,8 +46,9 @@ YAML
 
 ## Rules
 
-- Always perform the normal `note-update` path first unless the command reports
-  no changes were needed.
+- Always perform the normal `note-update` path first unless the request is
+  clearly a temporary workaround or fix-needed defect rather than durable
+  reusable knowledge.
 - Keep notes terse: one compact bullet when possible, preserving only the
   important reusable meaning.
 - Rewrite verbose incidents into final guidance. Do not include timestamps,
@@ -73,8 +74,8 @@ YAML
 
 Scope selection:
 
-- The parent chooses the target scope when creating the note. Do not infer a
-  different scope or promote/move/copy notes between scopes.
+- Treat the parent-selected target as a default, not as permission to record a
+  note at an obviously wrong scope.
 - Use the narrowest scope that will help future agents.
 - Use `scope: work` for lessons that apply only to the active work branch or
   current line of investigation.
@@ -83,6 +84,17 @@ Scope selection:
 - Use `scope: org` only for lessons that should apply across projects in the
   organization, such as reusable tool, package, platform, or infrastructure
   knowledge.
+- Do not create durable notes for temporary workarounds. If a workaround will
+  stop mattering once the current agent fixes or reports the underlying issue,
+  keep it in active context, `TODO.md`, or the user-facing report instead.
+- If the lesson is that a command, dependency, service, environment, policy, or
+  other system is confusing or broken and a user, sysadmin, upstream maintainer,
+  or tool owner could fix it, do not store the workaround as project or
+  work-branch knowledge. Return without writing a note and tell the parent agent
+  to record an actionable fix request in the appropriate local work record
+  (`HELP.md`, issue tracker, or final user report) and alert the
+  user/sysadmin. Use an org note only when the workaround is durable across
+  projects and no near-term fix can be expected.
 - On-demand topic lists are merged and do not show which scope introduced a
   topic. Rendered `read-note` output labels the scope of each note portion after
   the note is read.
