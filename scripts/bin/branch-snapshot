@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import sys
 
@@ -12,6 +13,42 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "commands")
 
 from command_common import CommandError, load_request, main, print_json
 from branch_git_common import create_snapshot
+
+
+HELP = """Create an explicit-path snapshot for a later branch commit.
+
+Reads YAML from stdin.
+
+Example:
+  branch-snapshot <<'YAML'
+  project_dir: .
+  work_branch: work/alice
+  paths:
+    - src/kernel.py
+    - tests/test_kernel.py
+  commit_message: "test: update kernel"
+  checks:
+    - "uv run pytest tests/test_kernel.py"
+  check_timeout_seconds: 900
+  after_commit:
+    experiment_log:
+      title: Kernel update
+      short_description: kernel-update
+      status: completed
+      key_result: Tests pass.
+  YAML
+
+Required fields:
+  paths           Non-empty explicit relative paths. No '.', globs, or absolute paths.
+  commit_message  Commit message to use if the snapshot is later committed.
+
+Common optional fields:
+  project_dir                  Project checkout. Defaults to '.'.
+  work_branch                  Active work branch. Defaults from AR_WORK_BRANCH/current branch.
+  checks                       Shell commands run in the temporary commit worktree.
+  check_timeout_seconds        Per-check timeout.
+  after_commit.experiment_log  Experiment-log payload to finalize after commit.
+"""
 
 
 def normalize_request(request: dict) -> dict:
@@ -34,4 +71,11 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        prog="branch-snapshot",
+        description="Create an explicit-path snapshot for branch-commit.",
+        epilog=HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.parse_args()
     raise SystemExit(main(run))

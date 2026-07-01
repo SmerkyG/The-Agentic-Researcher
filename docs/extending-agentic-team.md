@@ -49,7 +49,7 @@ Capabilities can be as small as a single prompt skill or as broad as a runtime
 integration. A main agent that needs capability-provided skills should list that
 capability in its `required_capabilities` frontmatter. For example, the built-in
 `research-coordinator` main agent requires the `research-coordinator` capability,
-which contributes the `setup_research_plan` and `retro` skills.
+which contributes the `do_research` and `retro` skills.
 
 ### `skills/`
 
@@ -59,7 +59,7 @@ skill directory; skills are available only when their containing capability is
 enabled or required by the selected agent.
 
 ```text
-capabilities/research-coordinator/skills/setup_research_plan/SKILL.md
+capabilities/research-coordinator/skills/do_research/SKILL.md
 capabilities/research-coordinator/skills/retro/SKILL.md
 ```
 

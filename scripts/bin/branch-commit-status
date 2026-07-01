@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import sys
 
@@ -12,6 +13,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib" / "commands")
 
 from command_common import CommandError, load_request, main, print_json
 from branch_git_common import show_status
+
+
+HELP = """Read the status of a branch-commit snapshot.
+
+Reads YAML from stdin.
+
+Example:
+  branch-commit-status <<'YAML'
+  snapshot_dir: /home/user/.cache/agentic-team/commit-snapshots/123-work-alice
+  YAML
+
+Fields:
+  snapshot_dir  Required. Directory returned by branch-snapshot or branch-commit.
+"""
 
 
 def run() -> None:
@@ -23,4 +38,11 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        prog="branch-commit-status",
+        description="Read branch-commit status for a snapshot.",
+        epilog=HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.parse_args()
     raise SystemExit(main(run))

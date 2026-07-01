@@ -135,12 +135,22 @@ Do this every session or after context compaction:
    `report.tex` and `TODO.md` by editing those normal files in the work-state
    checkout, then committing and pushing only those work-state files. Prepare
    experiment-log request content when the result is meaningful.
-7. **Hand off completed change sets and finalize logging** by launching the
-   appropriate subagent described in the Experiment Logging and Research Record
-   plus Git Discipline sections below. Code snapshots contain code/config/test
-   files only; work-branch records are committed separately to work state.
-8. **Iterate**. Build on success. After 3 failed variations of one idea, move
-   on.
+7. **Capture reusable lessons**: if debugging, failed runs, corrected
+   assumptions, missing setup, or user corrections revealed guidance that would
+   help future agents, launch `note-updater` before reporting completion. Notes
+   are terse reusable guidance, not incident reports; experiment outcomes still
+   go in the experiment log.
+8. **Hand off completed change sets and finalize logging** using the helper
+   commands and subagents described in the Experiment Logging and Research
+   Record plus Git Discipline sections below. Code snapshots contain
+   code/config/test files only; work-branch records are committed separately to
+   work state.
+9. **Repeat the loop instead of stopping**. Completing a `TODO.md` item,
+   experiment, code snapshot, or log update means select the next unchecked
+   `TODO.md` item, next experiment, or next analysis step and continue from
+   step 1 or 2. Build on success. After 3 failed variations of one idea, move
+   on. Report to the user only when no useful autonomous work remains or user
+   input is required.
 
 ### Strategy Notes
 
@@ -213,15 +223,32 @@ For experiments that include code changes, prefer the commit handoff path:
    helper logs it automatically after the commit hash exists.
 3. Inspect the snapshot result's `name_status` or `name_status_path`. If it
    contains unexpected files, stop and ask for help instead of committing.
-4. After the snapshot succeeds, launch `branch-committer` with only the returned
-   `snapshot_dir` and optional `background` value. The commit can finish while
-   you continue useful work or prepare the final response. Any edits made after
-   the snapshot, even to the same paths, are follow-up work and are not part of
-   the queued commit.
+4. After the snapshot succeeds, run `branch-commit` directly with the returned
+   `snapshot_dir`. Prefer `background: true`:
+
+   ```bash
+   branch-commit <<'YAML'
+   snapshot_dir: /path/from/branch-snapshot
+   background: true
+   YAML
+   ```
+
+   The research conclusion should come from completed experiment results and
+   verification, not from whether Git bookkeeping has finished. Use
+   `background: false` only when the user explicitly asks you to block on the
+   commit or when a follow-up operation in the same turn mechanically requires
+   the commit hash, such as an immediate integration handoff. Any edits made
+   after the snapshot, even to the same paths, are follow-up work and are not
+   part of the queued commit.
 5. Do not separately launch `experiment-logger` for that same committed result.
-   Use `branch-commit-status` only when you need progress, the commit hash, or
-   an error report. If status reports an experiment-log error, surface it to the
-   user or retry the logging follow-up deliberately.
+   If you chose `background: true`, do not poll merely to convert it back into
+   a foreground commit. Treat the queued commit as delegated work and continue
+   with the next useful task. Use `branch-commit-status` only when a later step
+   truly needs progress, the commit hash, the experiment ID, or an error report.
+   Final responses may report the substantive result while saying the
+   commit/logging snapshot was queued; include the status path without claiming
+   commit or experiment-log success. If status later reports an experiment-log
+   error, surface it to the user or retry the logging follow-up deliberately.
 
 This keeps the experiment log tied to the final code commit without blocking
 the main agent during checks after the snapshot has been captured.
@@ -277,6 +304,9 @@ RIA + Recon (full) & Qwen-1.5B & 60\% & 20.09 & $-11.2\%$ \\
 Maintain work-branch `TODO.md` as the checklist for open questions, unverified
 claims, and deferred checks for the active work branch. Do not treat it as a
 cross-branch or project-wide work queue.
+When you check off an item, immediately scan for the next unchecked item or
+derive the next experiment/analysis step from the results. Do not stop just
+because the most recent item is complete.
 
 Format: `- [ ] item` / `- [x] done`
 
@@ -308,15 +338,15 @@ Include in work-branch `report.tex`:
 - Work only on `$AR_WORK_BRANCH` or child branches such as
   `$AR_WORK_BRANCH/exp/<experiment-name>`.
 - In the code worktree, do not directly stage, commit, tag, reset, stash, or
-  otherwise mutate Git history/index state for normal research workflow. Launch
-  the appropriate subagent instead. Work-state record updates are ordinary
+  otherwise mutate Git history/index state for normal research workflow. Use
+  the branch snapshot/commit helper commands instead. Work-state record updates are ordinary
   commits in the separate work-state checkout.
 - For completed experiment change sets, create an explicit-path snapshot with
-  `branch-snapshot`, inspect it, then launch `branch-committer` to
+  `branch-snapshot`, inspect it, then run `branch-commit` to
   run checks, create the commit, and log the experiment result after the commit
   hash exists.
-- Use `branch-commit-status` to check a background branch commit that has
-  already been started.
+- Run `branch-commit-status` directly to check a background branch commit that
+  has already been started.
 - When the user asks to integrate completed branch work into `dev`, `main`, or
   another development branch, launch the `branch-integrator` subagent instead
   of switching this top-level session onto the target branch.

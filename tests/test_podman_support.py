@@ -375,9 +375,9 @@ def test_launcher_native_runs_host_cli__without_container(
     assert "Job backend:    none" in result.stdout
     assert f"cwd:{workspace}" in cli__log.read_text()
     assert "args:--model gpt-test" in cli__log.read_text()
-    setup_skill = workspace / ".agents" / "skills" / "setup_research_plan" / "SKILL.md"
-    assert setup_skill.exists()
-    assert "name: \"setup_research_plan\"" in setup_skill.read_text()
+    research_skill = workspace / ".agents" / "skills" / "do_research" / "SKILL.md"
+    assert research_skill.exists()
+    assert "name: \"do_research\"" in research_skill.read_text()
     codex_agent = workspace / ".codex" / "agents" / "gpu-job-runner.toml"
     assert codex_agent.exists()
     codex_agent_text = codex_agent.read_text()
@@ -795,7 +795,7 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
 
     assert result.returncode == 0
     assert (workspace / ".claude" / "skills" / "cluster-run" / "SKILL.md").exists()
-    assert (workspace / ".claude" / "skills" / "setup_research_plan" / "SKILL.md").exists()
+    assert (workspace / ".claude" / "skills" / "do_research" / "SKILL.md").exists()
     claude_agent = workspace / ".claude" / "agents" / "gpu-job-runner.md"
     assert claude_agent.exists()
     assert "codex_reasoning_effort" not in claude_agent.read_text()
@@ -838,7 +838,7 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
 
     assert result.returncode == 0
     assert (workspace / ".gemini" / "skills" / "cluster-run" / "SKILL.md").exists()
-    assert (workspace / ".gemini" / "skills" / "setup_research_plan" / "SKILL.md").exists()
+    assert (workspace / ".gemini" / "skills" / "do_research" / "SKILL.md").exists()
     gemini_agent = workspace / ".gemini" / "agents" / "gpu-job-runner.md"
     assert gemini_agent.exists()
     assert "codex_reasoning_effort" not in gemini_agent.read_text()
@@ -884,7 +884,7 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
 
     assert result.returncode == 0
     assert (workspace / ".opencode" / "skills" / "cluster-run" / "SKILL.md").exists()
-    assert (workspace / ".opencode" / "skills" / "setup_research_plan" / "SKILL.md").exists()
+    assert (workspace / ".opencode" / "skills" / "do_research" / "SKILL.md").exists()
     opencode_agent = workspace / ".opencode" / "agents" / "gpu-job-runner.md"
     assert opencode_agent.exists()
     opencode_agent_text = opencode_agent.read_text()
@@ -987,7 +987,7 @@ def test_launcher_podman_runs_pi_cli_(base_env: dict[str, str], tmp_path: Path) 
     # pi reads AGENTS.md; the launcher must seed it into the workspace.
     assert (workspace / "AGENTS.md").exists()
     # pi uses the shared agent-compatible project skill path.
-    for skill in ("setup_research_plan", "retro"):
+    for skill in ("do_research", "retro"):
         assert (workspace / ".agents" / "skills" / skill / "SKILL.md").exists()
     assert not (workspace / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
     pi_extension = workspace / ".pi" / "extensions" / "agentic-team-compaction.ts"

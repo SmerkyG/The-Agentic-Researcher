@@ -1,5 +1,5 @@
 ---
-name: "setup_research_plan"
+name: "do_research"
 description: "Set up or resume a research work branch in this workspace."
 ---
 
@@ -76,7 +76,10 @@ This work branch is already in progress.
    - What's next from the active work-branch plan, work-branch TODO, work-branch report, or last
      logged experiment's next steps
 6. Ask the user if they want to continue the planned direction or pivot.
-7. Continue the autonomous experiment loop.
+7. Continue the autonomous experiment loop. Completing one `TODO.md` item is
+   not a stopping condition; after checking off finished items, pick the next
+   unchecked item, experiment, or analysis step and keep going unless user input
+   is required.
 
 ## FRESH START
 
@@ -227,4 +230,5 @@ Use `TODO.md` checklist items in `- [ ] item` format.
    - Commit only code/config/script changes that belong in the code branch; do
      not commit work-branch Agentic Notes, `report.tex`, or `TODO.md` to the code
      branch
-   - Begin the autonomous experiment loop
+   - Begin the autonomous experiment loop and keep repeating it until no useful
+     autonomous work remains

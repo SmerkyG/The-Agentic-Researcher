@@ -16,6 +16,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTIC_NOTES_INTERNAL = REPO_ROOT / "capabilities" / "agentic-notes" / "lib" / "agentic-notes-internal"
 READ_NOTE = REPO_ROOT / "capabilities" / "agentic-notes" / "bin" / "read-note"
+REWRITE_NOTE = REPO_ROOT / "capabilities" / "agentic-notes" / "bin" / "rewrite-note"
 EXPERIMENT_LOG = REPO_ROOT / "capabilities" / "experiment-log" / "bin" / "experiment-log"
 EXPERIMENT_CORRECT = REPO_ROOT / "capabilities" / "experiment-log" / "bin" / "experiment-correct"
 AGENTIC_TEAM = REPO_ROOT / "agentic-team"
@@ -645,6 +646,68 @@ def test_note_updater_creates_new_org_note_and_commits(tmp_path: Path) -> None:
     checkout = org_checkout(env)
     assert "Stage files by explicit path" in (checkout / "agent-notes" / "all-agents" / "git.md").read_text()
     assert "notes: update agent-notes/all-agents/git.md" in git(checkout, "log", "-1", "--pretty=%s").stdout
+
+
+def test_note_update_stores_lesson_without_summary_or_rationale_boilerplate(tmp_path: Path) -> None:
+    org_remote = seed_org_remote(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    env = base_env(tmp_path, org_remote)
+    run([str(AGENTIC_NOTES_INTERNAL), "init-org-notes", "--repo", str(org_remote)], env=env)
+    request = make_request(
+        tmp_path,
+        {
+            "kind": "note_update_request",
+            "target": {"scope": "org", "agent_type": "all-agents", "note_name": "gpu-runtime"},
+            "summary": "ROCm runtime mismatch",
+            "lesson": "Check PyTorch device visibility before launching local ROCm GPU jobs.",
+            "rationale": "rocm-smi listed devices but the active uv environment reported zero torch devices on 2026-07-01",
+        },
+    )
+
+    run([str(AGENTIC_NOTES_INTERNAL), "update-note", "--request", str(request), "--project-dir", str(project)], env=env)
+
+    checkout = org_checkout(env)
+    text = (checkout / "agent-notes" / "all-agents" / "gpu-runtime.md").read_text()
+    assert "- Check PyTorch device visibility before launching local ROCm GPU jobs." in text
+    assert "ROCm runtime mismatch:" not in text
+    assert "rocm-smi listed devices" not in text
+
+
+def test_rewrite_note_replaces_one_note_through_agent_command(tmp_path: Path) -> None:
+    org_remote = seed_org_remote(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    env = base_env(tmp_path, org_remote)
+    run([str(AGENTIC_NOTES_INTERNAL), "init-org-notes", "--repo", str(org_remote)], env=env)
+    update_request = make_request(
+        tmp_path,
+        {
+            "kind": "note_update_request",
+            "target": {"scope": "org", "agent_type": "all-agents", "note_name": "gpu-runtime"},
+            "summary": "PyTorch device visibility",
+            "lesson": "Check PyTorch device visibility before launching local GPU jobs.",
+        },
+    )
+    run([str(AGENTIC_NOTES_INTERNAL), "update-note", "--request", str(update_request), "--project-dir", str(project)], env=env)
+    rewrite_request = {
+        "target": {"scope": "org", "agent_type": "all-agents", "note_name": "gpu-runtime"},
+        "content": "# Gpu Runtime\n\n## Lessons\n\n- Check PyTorch device visibility before local ROCm or CUDA jobs.\n",
+    }
+
+    result = run(
+        [str(REWRITE_NOTE)],
+        input=yaml.safe_dump(rewrite_request, sort_keys=False),
+        env=env,
+    )
+
+    response = json.loads(result.stdout)
+    assert response["command"] == "rewrite-note"
+    checkout = org_checkout(env)
+    text = (checkout / "agent-notes" / "all-agents" / "gpu-runtime.md").read_text()
+    assert "before local ROCm or CUDA jobs" in text
+    assert "before launching local GPU jobs" not in text
+    assert "notes: replace agent-notes/all-agents/gpu-runtime.md" in git(checkout, "log", "-1", "--pretty=%s").stdout
 
 
 def test_note_updater_does_not_duplicate_existing_agent_type_bullet(tmp_path: Path) -> None:
@@ -1634,14 +1697,14 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     )
 
     assert result.returncode == 0
-    assert (project / ".agents" / "skills" / "setup_research_plan" / "SKILL.md").exists()
+    assert (project / ".agents" / "skills" / "do_research" / "SKILL.md").exists()
     assert not (project / ".agents" / "skills" / "note_usage" / "SKILL.md").exists()
     assert not (project / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
     assert (project / ".codex" / "agents" / "note-updater.toml").exists()
     assert (project / ".codex" / "agents" / "experiment-logger.toml").exists()
     assert (project / ".codex" / "agents" / "experiment-corrector.toml").exists()
-    assert (project / ".codex" / "agents" / "branch-committer.toml").exists()
-    assert (project / ".codex" / "agents" / "branch-commit-status.toml").exists()
+    assert not (project / ".codex" / "agents" / "branch-committer.toml").exists()
+    assert not (project / ".codex" / "agents" / "branch-commit-status.toml").exists()
     assert (project / ".codex" / "agents" / "branch-integrator.toml").exists()
     assert not (project / ".codex" / "agents" / "research-coordinator.toml").exists()
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
@@ -1650,8 +1713,9 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert "## Available Subagents" in instruction_text
     assert "- `experiment-logger`:" in instruction_text
     assert "- `experiment-corrector`:" in instruction_text
-    assert "- `branch-committer`:" in instruction_text
-    assert "- `branch-commit-status`:" in instruction_text
+    assert "- `branch-committer`:" not in instruction_text
+    assert "- `branch-commit-status`:" not in instruction_text
+    assert "- `branch-integrator`:" in instruction_text
     assert "Request: `" not in instruction_text
     assert "Contract: `" in instruction_text
     assert "# Research Coordinator Instructions" in instruction_text

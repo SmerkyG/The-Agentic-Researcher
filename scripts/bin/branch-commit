@@ -15,6 +15,26 @@ from command_common import CommandError, bool_from, load_request, main, print_js
 from branch_git_common import commit_snapshot_foreground, start_background_commit
 
 
+HELP = """Commit a snapshot created by branch-snapshot.
+
+Reads YAML from stdin.
+
+Example:
+  branch-commit <<'YAML'
+  snapshot_dir: /home/user/.cache/agentic-team/commit-snapshots/123-work-alice
+  background: true
+  YAML
+
+Fields:
+  snapshot_dir  Required. Directory returned by branch-snapshot.
+  background    Optional. Defaults to true. When true, queues a background
+                worker and returns immediately with a status path.
+
+Use branch-commit-status with the same snapshot_dir only when later work truly
+needs progress, a commit hash, or an error report.
+"""
+
+
 def run_from_stdin() -> None:
     request = load_request()
     snapshot_dir = str(request.get("snapshot_dir") or "").strip()
@@ -39,7 +59,12 @@ def run_worker(snapshot_dir: str) -> None:
 
 
 def cli() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="branch-commit",
+        description="Commit a branch-snapshot from a temporary worktree.",
+        epilog=HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--snapshot-dir", help=argparse.SUPPRESS)
     args = parser.parse_args()

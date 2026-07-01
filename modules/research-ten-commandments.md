@@ -33,6 +33,10 @@ with all results. Do not do one batch and wait for next instructions. While
 experiments are running, continue with other work from the plan -- implement the
 next idea, write analysis, update report.tex, prepare experiment-log requests,
 prepare verification scripts.
+Completing one or more `TODO.md` items is not a stopping condition. After
+checking off finished items, choose the next unchecked item, next experiment, or
+next analysis step and repeat the experiment loop until no useful autonomous
+work remains.
 Only return to the user when you are genuinely stuck or need advice. Never skip
 work because you estimate it "takes too long to implement" -- you are a language
 model and execute coding tasks much faster than you think. The only valid time

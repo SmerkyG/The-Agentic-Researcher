@@ -381,7 +381,7 @@ def build_notes_section(
                 "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed on-demand note topics, read the rendered note with `read-note --project-dir . --agent-type "
                 f"{agent_type_value} NOTE_TOPIC` if you have not read it since the last compaction. That command dynamically combines all available org/project/work-branch and all-agents/agent-type portions for this project, work branch, and agent type.",
                 "",
-                "If you make a mistake and learn something important while correcting it, launch the `note-updater` subagent and tell it which note to update or create. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. If the lesson applies across every agent in the organization, update org `all-agents` `always-injected.md`. If it applies across this agent type in the organization, update org agent-type `always-injected.md`. If it applies to every agent in this project, update project `all-agents` `always-injected.md`. If it applies only to this agent type within this project, update project agent-type `always-injected.md`. If it applies only to the active work branch, update work `all-agents` or work agent-type notes.",
+                "Before final response, and after correcting any wrong assumption, failed workflow, missing setup step, undocumented tool behavior, or user correction, ask whether the lesson would help a future agent. If yes, launch the `note-updater` subagent and tell it which note to update or create before reporting completion. Do not wait for the user to ask for a note. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence, omit timestamps, long command output, and rationale unless essential. Choose the narrowest useful scope when creating a note: work for the active work branch only, project for future work in this repository, and org only for lessons that apply across projects. Ordinary working agents do not promote, move, or copy existing notes between scopes. On-demand topic lists are merged and do not show which scope introduced a topic; `read-note` output labels each rendered note portion after you read it. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. Use `all-agents` for lessons useful to every agent in the chosen scope and agent-type notes for lessons useful only to one main agent or subagent type. Use `always-injected.md` only for short guidance worth injecting into future contexts. Do not create notes for one-off command output, transient task status, or speculation that has not been verified.",
                 "",
             ]
         )
@@ -574,7 +574,6 @@ def note_title(note_path: Path) -> str:
 def merge_note_text(existing: str, request: dict[str, Any], note_path: Path) -> str:
     lesson = canonical_lesson(request)
     summary = " ".join(str(request.get("summary") or "").split())
-    rationale = " ".join(str(request.get("rationale") or "").split())
     if not lesson and not summary:
         raise AtNotesError("note update request requires lesson or summary")
 
@@ -585,10 +584,6 @@ def merge_note_text(existing: str, request: dict[str, Any], note_path: Path) -> 
         return existing.rstrip() + "\n"
 
     bullet = lesson or summary
-    if summary and lesson and summary not in bullet:
-        bullet = f"{summary}: {bullet}"
-    if rationale:
-        bullet = f"{bullet} ({rationale})"
 
     if not existing.strip():
         return f"# {note_title(note_path)}\n\n## Lessons\n\n- {bullet}\n"
@@ -637,7 +632,7 @@ def update_note(args: argparse.Namespace) -> None:
             branch = current_branch(repo) or state_branch()
             git(repo, "fetch", "origin")
             git(repo, "reset", "--hard", f"origin/{branch}")
-    raise AtNotesError("push was rejected after retry; semantic merge may need manual help")
+    raise AtNotesError("push was rejected after retry; note update may need manual help")
 
 
 def replace_note(args: argparse.Namespace) -> None:

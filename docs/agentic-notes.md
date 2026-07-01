@@ -49,6 +49,8 @@ The `agentic-notes` capability renders an Agentic Notes section into the invocat
 6. work branch `agent-notes/$AR_MAIN_AGENT/always-injected.md`
 
 Missing files are skipped. On-demand topic listings are also merged across these scopes, excluding `always-injected`.
+The merged topic list is intentionally compact and does not show which scope
+introduced a topic.
 
 The generated instruction file is a materialized view. Do not edit injected note text there directly.
 
@@ -60,22 +62,31 @@ Agents should read rendered notes through `read-note`, not by opening raw note s
 read-note --project-dir . --agent-type research-coordinator TOPIC
 ```
 
-`read-note` dynamically combines all available org/project/work-branch and `all-agents`/agent-type portions for the requested topic. This prevents an agent from accidentally reading only one scope's fragment of a note.
+`read-note` dynamically combines all available org/project/work-branch and `all-agents`/agent-type portions for the requested topic. This prevents an agent from accidentally reading only one scope's fragment of a note. The rendered output labels each portion's scope, so provenance is visible after the agent reads the note.
 
 ## Updating Notes
 
-Working agents should normally update notes by launching the `note-updater` subagent and following its rendered contract. The updater changes exactly one note, pulls latest state, semantically merges concise text, commits, pushes, and refreshes the parent worktree instructions. It never force-pushes.
+Working agents should update notes by launching the `note-updater` subagent and following its rendered contract. The trigger is broader than mistakes: missing setup requirements, corrected assumptions, undocumented tool or platform behavior, project conventions, and user corrections should become notes when the lesson would help a future agent. Agents should perform this check before final response. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence and omit timestamps, long command output, and rationale unless essential. The updater first runs the normal `note-update` path, then reviews the rendered note chain. If that made the chain worse through duplication, verbosity, or an obvious scope mismatch, it may perform one rare cleanup rewrite of exactly one source note with `rewrite-note`. It never force-pushes.
+
+Agents choose the note scope when they create a note; Agentic Team does not
+automatically promote notes between scopes. Use the narrowest useful scope:
+`work` for the active work branch only, `project` for future work in the same
+repository, and `org` only for lessons that should apply across projects in the
+organization. Promotion or consolidation of existing notes should be a separate
+curation workflow, not an implicit side effect of ordinary note updates.
 
 The agent-facing commands provided by this capability are:
 
 ```text
 read-note --project-dir PATH --agent-type AGENT_TYPE TOPIC
 note-update < request.yaml
+rewrite-note < request.yaml
 ```
 
-Setup, refresh, rendering, and note-state maintenance are internal capability
-mechanics invoked by launcher hooks or the `note-updater` subagent, not commands
-that main agents should call directly.
+`rewrite-note` is for the `note-updater` cleanup pass after normal note
+capture. Setup, refresh, rendering, and note-state maintenance are internal
+capability mechanics invoked by launcher hooks or the `note-updater` subagent,
+not commands that main agents should call directly.
 
 Use `agent-notes/all-agents/<topic>.md` for package-specific lessons, architecture notes, and broad organization, project, or work-branch lessons. Use `agent-notes/<agent_type>/always-injected.md` or `agent-notes/<agent_type>/<topic>.md` for guidance that applies only to one main agent or subagent type.
 

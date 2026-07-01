@@ -47,7 +47,7 @@ Working agents do not write experiment-log state directly. They use subagents:
 
 - `experiment-logger` records completed meaningful experiment results.
 - `experiment-corrector` appends corrections to existing experiment files.
-- `branch-committer` can finalize an experiment log entry automatically after a code commit hash exists, when the snapshot includes an `after_commit.experiment_log` payload.
+- `branch-commit` can finalize an experiment log entry automatically after a code commit hash exists, when the snapshot includes an `after_commit.experiment_log` payload.
 
 When logging an experiment, the experiment logger pulls latest work-branch state, reads the counter, writes one YAML file, increments the counter, appends one row to `SUMMARY.md`, commits, and pushes.
 

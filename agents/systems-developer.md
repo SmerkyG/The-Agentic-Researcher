@@ -64,6 +64,15 @@ Do this every session or after context compaction:
 - State exactly which commands passed. If you cannot run a relevant check,
   explain why and name the residual risk.
 
+## Learning Capture
+
+Before final response, check whether this task revealed a reusable lesson: a
+missing setup requirement, tool or platform gotcha, project convention,
+incorrect assumption you corrected, or user correction that future agents should
+not repeat. If yes, launch `note-updater` before reporting completion. Keep the
+note to terse reusable guidance at the narrowest useful scope. Do not create
+notes for one-off command output, transient task status, or unverified guesses.
+
 ## Commit Handoff
 
 For a coherent completed change set, offload the commit:
@@ -73,24 +82,39 @@ For a coherent completed change set, offload the commit:
    glob paths.
 2. Inspect the snapshot result's `name_status` or `name_status_path`. If it
    contains unexpected files, stop and ask for help instead of committing.
-3. After the snapshot succeeds, launch `branch-committer` with only the returned
-   `snapshot_dir` and optional `background` value.
-4. The background commit job can then run while you continue useful work or
-   prepare the final response. Any edits made after the snapshot, even to the
-   same paths, are follow-up work and are not part of the queued commit.
+3. After the snapshot succeeds, run `branch-commit` directly with the returned
+   `snapshot_dir` and optional `background` value:
+
+   ```bash
+   branch-commit <<'YAML'
+   snapshot_dir: /path/from/branch-snapshot
+   background: true
+   YAML
+   ```
+
+4. Prefer `background: true`. The engineering conclusion should come from the
+   completed implementation and verification, not from whether Git bookkeeping
+   has finished. Use `background: false` only when the user explicitly asks you
+   to block on the commit or when a follow-up operation in the same turn
+   mechanically requires the commit hash, such as an immediate integration
+   handoff. Any edits made after the snapshot, even to the same paths, are
+   follow-up work and are not part of the queued commit.
+5. If you chose `background: true`, do not poll merely to convert it back into
+   a foreground commit. Continue with the next useful task. If you are otherwise
+   ready to respond before the background commit finishes, report that the
+   snapshot was queued and include the status path without claiming commit
+   success. Use `branch-commit-status` only when a later step truly needs the
+   commit hash, progress, or an error.
 
 Ordinary systems-development commits do not need experiment logging.
 
 ## Subagents
 
 - Use `code-reviewer` for substantial or risky changes before finalizing.
-- Use `branch-committer` for non-blocking commits of already-snapshotted work.
-- Use `branch-commit-status` to check a background branch commit that has
-  already been started.
 - Use `branch-integrator` when the user asks to merge or otherwise integrate a
   completed work branch into `dev`, `main`, or another development branch.
-- Use `note-updater` when you learn a reusable package, platform, or project
-  lesson while fixing a mistake.
+- Use `note-updater` when you learn a reusable package, platform, project, or
+  Agentic Team workflow lesson.
 - Use specialized subagents only when their role fits the task. Do not launch
   `experiment-logger` for ordinary software development work.
 
@@ -108,9 +132,9 @@ Ordinary systems-development commits do not need experiment logging.
 - Never commit to `main` or `master` unless the user explicitly asks.
 - For integration into a development branch, launch `branch-integrator` rather
   than switching the top-level session onto the target branch.
-- Stage files by explicit path. Never use `git add .`, `git add -A`, or
-  `git add --all`.
-- Before committing, inspect `git status --short`, `git diff --cached --stat`,
-  and any relevant staged diff.
-- Commit completed, coherent changes with clear messages. Do not force-push or
-  rewrite shared history unless the user explicitly asks.
+- In the code worktree, do not directly stage, commit, tag, reset, stash, or
+  otherwise mutate Git history/index state for normal development workflow. Use
+  `branch-snapshot`, inspect the explicit-path snapshot, then run
+  `branch-commit`.
+- Never use `git add .`, `git add -A`, or `git add --all`.
+- Do not force-push or rewrite shared history unless the user explicitly asks.

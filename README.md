@@ -40,7 +40,7 @@ Agentic Team is split into a small launcher, a shared Git-backed state substrate
 
 **Capabilities.** Capabilities are selected packages that can add commands, instruction sections, launcher hooks, and stateful workflows. Built-in capabilities include:
 
-- **Agentic Notes** (`agentic-notes`): owns `agent-notes/` layout at org, project, and work-branch scopes; renders `always-injected.md` content and on-demand note topic lists; provides `read-note` and `note-update`.
+- **Agentic Notes** (`agentic-notes`): owns `agent-notes/` layout at org, project, and work-branch scopes; renders `always-injected.md` content and on-demand note topic lists; provides `read-note`, `note-update`, and the note-updater cleanup command `rewrite-note`.
 - **Experiment Log** (`experiment-log`): owns `experiment-log/` files on the active work state branch; records experiment YAML files, `COUNTER.yaml`, and append-maintained `SUMMARY.md`; provides `experiment-log` and `experiment-correct`.
 
 This separation is intentional: the launcher can stay mostly about launching and rendering, Agentic State can stay about Git-backed state mechanics, and each capability can evolve its own command surface and data model.
@@ -72,14 +72,14 @@ The installer adds the `agentic-team` launcher. The setup wizard creates local c
 1. **Start from a normal project Git checkout.** The checkout should usually have an `origin` remote so Agentic Team can derive the project identity from the repo name automatically.
 2. **Run Agentic Team from that checkout:** `cd ~/my-project && agentic-team .`. For auto-approved agent permissions, add `--yolo`.
 3. **Use work branches for mutating work.** For example, `git switch -c feature/kernel-search` starts a focused branch, and child branches such as `feature/kernel-search/exp/idea-name` can be used for focused experiments. Agentic Team will help you switch to a useful branch on startup, if necessary.
-4. **For a new research effort, ask the default `research-coordinator` main agent to use the `setup_research_plan` skill.** This starts an interactive dialogue about your research goal, evaluation metrics, constraints, and compute budget.
+4. **For a new research effort, ask the default `research-coordinator` main agent to use the `do_research` skill.** This starts an interactive dialogue about your research goal, evaluation metrics, constraints, and compute budget.
 5. The agent writes work-branch-specific startup guidance as work-branch Agentic Notes on the work state branch `agentic/work-state/<work-branch>`. Agentic Team renders those notes into the worktree instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) using the same rules as org and project Agentic Notes. Research workflows may also create capability-owned work-branch files such as `report.tex`, `TODO.md`, and an experiment log on the same work state branch.
 
 If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID` so repeated launches use the same notes and experiment state.
 
 ### Resuming a Session
 
-Relaunch Agentic Team from the same project Git checkout or another worktree with the same resolved project identity and work branch. The rendered instructions include injected shared notes, active work branch Agentic Notes when present, and any capability-owned work-branch sections for the selected workflow. Use `setup_research_plan` on resume only when you want a structured recap or to create/revise research work-branch guidance.
+Relaunch Agentic Team from the same project Git checkout or another worktree with the same resolved project identity and work branch. The rendered instructions include injected shared notes, active work branch Agentic Notes when present, and any capability-owned work-branch sections for the selected workflow. Use `do_research` on resume only when you want a structured recap or to create/revise research work-branch guidance.
 
 ### Multiple Agents in One Project
 
@@ -175,7 +175,7 @@ State branches start as orphan branches with empty filesets. They contain only s
 
 Multiple top-level agents should usually work in separate Git worktrees of the same project repo. Branch-exclusive agents prompt before running on protected or locally occupied branches; shared and readonly branch modes are also supported through main-agent frontmatter. Branch guard files are local-only under `$AR_STATE_ROOT/branch-guards/`; Git remains the real conflict mechanism.
 
-When the top-level agent has a coherent change set ready to commit, it can use `branch-snapshot` plus the `branch-committer` subagent so checks and commit creation happen from a temporary worktree. When completed work-branch changes should land in a development branch such as `dev` or `main`, use the `branch-integrator` subagent.
+When the top-level agent has a coherent change set ready to commit, it uses `branch-snapshot` plus `branch-commit` directly so checks and commit creation happen from a temporary worktree. When completed work-branch changes should land in a development branch such as `dev` or `main`, use the `branch-integrator` subagent.
 
 For details, see:
 
@@ -187,9 +187,9 @@ For details, see:
 
 Capability packages can be used for job placement and execution backends, and Agentic Team comes with a SLURM capability called `remote-run`.
 
-Capabilities can also provide prompt-only skills under `capabilities/<name>/skills/<skill-name>/SKILL.md`. Enabled or required capability skills are rendered into the selected CLI's project discovery path: `.claude/skills` for Claude, `.gemini/skills` for Gemini, `.opencode/skills` for OpenCode, and `.agents/skills` for Codex/pi. The built-in `research-coordinator` main agent requires the `research-coordinator` capability, which provides the `setup_research_plan` and `retro` research workflow skills. Capability `INSTRUCTIONS.md` files are injected into the workspace instruction file when that capability is enabled.
+Capabilities can also provide prompt-only skills under `capabilities/<name>/skills/<skill-name>/SKILL.md`. Enabled or required capability skills are rendered into the selected CLI's project discovery path: `.claude/skills` for Claude, `.gemini/skills` for Gemini, `.opencode/skills` for OpenCode, and `.agents/skills` for Codex/pi. The built-in `research-coordinator` main agent requires the `research-coordinator` capability, which provides the `do_research` and `retro` research workflow skills. Capability `INSTRUCTIONS.md` files are injected into the workspace instruction file when that capability is enabled.
 
-Agent definitions start from neutral Markdown files in Agentic Team's built-in `agents/` directory and optional org repo `agents/` directory. A definition with `kind: main` can be selected with `AR_MAIN_AGENT` and is inserted into the top-level instruction file. Built-in main agents include `research-coordinator` for experiment-driven research and `systems-developer` for interactive Linux-focused systems/tooling development. Main agents can declare `required_capabilities`; the launcher adds those automatically before validating the selected capability set. A definition with `kind: subagent` is rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Built-in subagents include helpers such as `note-updater`, `experiment-logger`, `experiment-corrector`, `code-reviewer`, `branch-committer`, `branch-commit-status`, and `branch-integrator`. The top-level instruction file also gets a compact generated subagent catalog with each subagent's rendered definition path; the agent reads the rendered subagent contract on demand before launching that subagent. Org repo agents render after built-ins, so org agents win on name conflict. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that agent where supported. To add agents and agent types, see [docs/extending-agentic-team.md](docs/extending-agentic-team.md#agents-and-agent-types).
+Agent definitions start from neutral Markdown files in Agentic Team's built-in `agents/` directory and optional org repo `agents/` directory. A definition with `kind: main` can be selected with `AR_MAIN_AGENT` and is inserted into the top-level instruction file. Built-in main agents include `research-coordinator` for experiment-driven research and `systems-developer` for interactive Linux-focused systems/tooling development. Main agents can declare `required_capabilities`; the launcher adds those automatically before validating the selected capability set. A definition with `kind: subagent` is rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Built-in subagents include helpers such as `note-updater`, `experiment-logger`, `experiment-corrector`, `code-reviewer`, and `branch-integrator`. The top-level instruction file also gets a compact generated subagent catalog with each subagent's rendered definition path; the agent reads the rendered subagent contract on demand before launching that subagent. Org repo agents render after built-ins, so org agents win on name conflict. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that agent where supported. To add agents and agent types, see [docs/extending-agentic-team.md](docs/extending-agentic-team.md#agents-and-agent-types).
 
 ```bash
 agentic-team --capability cluster-run
@@ -286,7 +286,7 @@ Agentic State is implemented as shared command-library code used by capabilities
 
 Capabilities own optional commands, structured actions, launcher hooks, and stateful instruction sections. Built-in capabilities live in `capabilities/`:
 
-- `agentic-notes` owns the `agent-notes/` data model, initializes and refreshes org/project/work-branch note state from its launcher hooks, renders Agentic Notes guidance plus dynamic always-injected and on-demand note listings, provides `read-note` and `note-update`, and runs the background notes refresh loop.
+- `agentic-notes` owns the `agent-notes/` data model, initializes and refreshes org/project/work-branch note state from its launcher hooks, renders Agentic Notes guidance plus dynamic always-injected and on-demand note listings, provides `read-note`, `note-update`, and `rewrite-note`, and runs the background notes refresh loop.
 - `experiment-log` owns the active work-branch `experiment-log/` data model, renders active experiment-log guidance, and provides `experiment-log` plus `experiment-correct`. The experiment log is capability-owned and may be absent until the workflow records an experiment.
 
 The default capability list is `agentic-notes,experiment-log` via `AR_CAPABILITIES`. The `capability-refresh` command refreshes configured capability instruction hooks and rematerializes the instruction file for the current invocation after context compaction.

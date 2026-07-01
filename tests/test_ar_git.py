@@ -413,6 +413,14 @@ def test_commit_snapshot_uses_configured_agentic_team_identity(tmp_path: Path) -
     assert git(repo, "config", "--get", "user.email") == "agentic-test@example.com"
 
 
+def test_branch_commands_have_help() -> None:
+    for command_name in ["branch-snapshot", "branch-commit", "branch-commit-status"]:
+        result = run([str(BIN_DIR / command_name), "--help"])
+        assert result.returncode == 0
+        assert "Reads YAML from stdin" in result.stdout
+        assert "snapshot_dir" in result.stdout or "paths" in result.stdout
+
+
 def test_snapshot_rejects_broad_paths(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     env = os.environ.copy()
