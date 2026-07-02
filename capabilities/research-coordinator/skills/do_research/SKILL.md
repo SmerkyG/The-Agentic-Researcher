@@ -59,7 +59,7 @@ This work branch is already in progress.
 2. Read the active work-branch experiment summary when it exists:
 
    ```bash
-   experiment-log --read-summary --project-dir "$PROJECT_DIR" --work-branch "$WORK_BRANCH" 2>/dev/null || true
+   experiment-log summary --project-dir "$PROJECT_DIR" --work-branch "$WORK_BRANCH" 2>/dev/null || true
    ```
 
 3. Read work-branch `report.tex` and `TODO.md` only when needed:

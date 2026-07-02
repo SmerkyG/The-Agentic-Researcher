@@ -26,7 +26,7 @@ Long-running agent teams have a memory problem: agents make mistakes, discover m
 
 Agentic Team's solution is simple: agents take notes and store them in Git. These are kept in your project repo but separate from your normal code branches at project and work-branch scopes. Org-wide notes live in their own separate Git repo. All of these Git-backed notes are shared across agents, projects, installations, and teams through ordinary Git review and merge workflows. Notes apply to either `all-agents` or a specific agent-type.
 
-There are two note modes. `always-injected.md` notes are short, high-value guidance injected into the agent's startup context. On-demand note topics are listed in the generated instructions but read only when relevant; agents read them through `read-note`, which dynamically combines the organization, project, and work-branch portions for `all-agents` plus the current agent type.
+There are two note modes. `always-injected.md` notes are short, high-value guidance injected into the agent's startup context. On-demand note topics are listed in the generated instructions but read only when relevant; agents read them through `agentic-notes read-note`, which dynamically combines the organization, project, and work-branch portions for `all-agents` plus the current agent type.
 
 The storage layout is simple enough that you can add or edit note files directly if you wish. Working agents read notes through the rendered view rather than opening raw note storage files and are given commands for creating note updates.
 
@@ -40,8 +40,8 @@ Agentic Team is split into a small launcher, a shared Git-backed state substrate
 
 **Capabilities.** Capabilities are selected packages that can add commands, instruction sections, launcher hooks, and stateful workflows. Built-in capabilities include:
 
-- **Agentic Notes** (`agentic-notes`): owns `agent-notes/` layout at org, project, and work-branch scopes; renders `always-injected.md` content and on-demand note topic lists; provides `read-note`, `note-update`, and the note-updater cleanup command `rewrite-note`.
-- **Experiment Log** (`experiment-log`): owns `experiment-log/` files on the active work state branch; records experiment YAML files, `COUNTER.yaml`, and append-maintained `SUMMARY.md`; provides `experiment-log` and `experiment-correct`.
+- **Agentic Notes** (`agentic-notes`): owns `agent-notes/` layout at org, project, and work-branch scopes; renders `always-injected.md` content and on-demand note topic lists; provides the `agentic-notes` command with `read-note`, `update-note`, and `rewrite-note` subcommands.
+- **Experiment Log** (`experiment-log`): owns `experiment-log/` files on the active work state branch; records experiment YAML files, `COUNTER.yaml`, and append-maintained `SUMMARY.md`; provides the `experiment-log` command with `append`, `correct`, and `summary` subcommands.
 
 This separation is intentional: the launcher can stay mostly about launching and rendering, Agentic State can stay about Git-backed state mechanics, and each capability can evolve its own command surface and data model.
 
@@ -276,7 +276,7 @@ At launch, Agentic Team also renders a project-local compaction hook for the sel
 
 ### Research Agent Instructions
 
-The framework ships `INSTRUCTIONS.md` as a shared base template, `modules/*.md` as reusable instruction modules, and `agents/*.md` as neutral main-agent and subagent definitions. Agent files can include a module with `<!-- AR_MODULE: module-name -->`; the launcher expands that directive when it materializes the selected CLI's instruction file or subagent definition.
+The framework ships `INSTRUCTIONS.md` as a shared base template, capability-owned `instruction-modules/*.md` files as reusable instruction modules, and `agents/*.md` as neutral main-agent and subagent definitions. Agent files can include a capability module with `<!-- AT_INSTRUCTION_MODULE: capability-name/module-name -->`; the launcher expands that directive when it materializes the selected CLI's instruction file or subagent definition.
 
 ### Agentic State
 
@@ -286,8 +286,8 @@ Agentic State is implemented as shared command-library code used by capabilities
 
 Capabilities own optional commands, structured actions, launcher hooks, and stateful instruction sections. Built-in capabilities live in `capabilities/`:
 
-- `agentic-notes` owns the `agent-notes/` data model, initializes and refreshes org/project/work-branch note state from its launcher hooks, renders Agentic Notes guidance plus dynamic always-injected and on-demand note listings, provides `read-note`, `note-update`, and `rewrite-note`, and runs the background notes refresh loop.
-- `experiment-log` owns the active work-branch `experiment-log/` data model, renders active experiment-log guidance, and provides `experiment-log` plus `experiment-correct`. The experiment log is capability-owned and may be absent until the workflow records an experiment.
+- `agentic-notes` owns the `agent-notes/` data model, initializes and refreshes org/project/work-branch note state from its launcher hooks, renders Agentic Notes guidance plus dynamic always-injected and on-demand note listings, provides `agentic-notes read-note`, `agentic-notes update-note`, and `agentic-notes rewrite-note`, and runs the background notes refresh loop.
+- `experiment-log` owns the active work-branch `experiment-log/` data model, renders active experiment-log guidance, and provides `experiment-log append`, `experiment-log correct`, and `experiment-log summary`. The experiment log is capability-owned and may be absent until the workflow records an experiment.
 
 The default capability list is `agentic-notes,experiment-log` via `AR_CAPABILITIES`. The `capability-refresh` command refreshes configured capability instruction hooks and rematerializes the instruction file for the current invocation after context compaction.
 

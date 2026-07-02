@@ -12,13 +12,16 @@ The org repo can use the same `agents/` and `capabilities/` layout. Org definiti
 A capability is one selected package. It may contain any combination of these parts:
 
 ```text
-capabilities/<name>/
+  capabilities/<name>/
+  instruction-modules/    # optional reusable Markdown included by agents
+    module-name.md
   skills/                  # optional model-facing skills rendered into CLI skill dirs
     skill-name/
       SKILL.md
   INSTRUCTIONS.md          # optional startup guidance appended to AGENTS/CLAUDE/GEMINI
-  bin/                     # optional commands added to PATH when enabled
-    command-name
+  bin/                     # optional agent-facing commands added to PATH when enabled
+    <name>
+    <name>-subcommand
   lib/                     # optional private support code for bin/hooks/launcher scripts
     common.sh
   hooks/
@@ -65,10 +68,15 @@ capabilities/research-coordinator/skills/retro/SKILL.md
 
 ### `bin/`
 
-Use `bin/` for commands the agent should run directly. Commands may be normal shell commands or structured actions that read YAML from stdin:
+Use `bin/` for commands the agent should run directly. Every command basename
+must be either exactly the capability name or start with `<capability-name>-`.
+Put helper scripts and shared code in `lib/`. For small command families,
+prefer one eponymous command with subcommands; split into multiple prefixed
+commands only when that is clearer:
 
 ```text
 capabilities/remote-run/bin/remote-run
+capabilities/example/bin/example-lint
 ```
 
 When `remote-run` is enabled, the launched agent can run:
@@ -81,7 +89,7 @@ remote-run node1 --bg -- uv run python train.py
 Structured actions use the same `bin/` directory:
 
 ```bash
-experiment-log <<'YAML'
+experiment-log append <<'YAML'
 summary: ...
 YAML
 ```
@@ -97,6 +105,18 @@ capability root is used.
 Use `lib/` for private support code used by that capability's own commands and
 hooks. The launcher does not add capability `lib/` directories to `PATH`; command
 entrypoints should load private helpers relative to their own location.
+
+### `instruction-modules/`
+
+Use `instruction-modules/<module-name>.md` for reusable Markdown that an agent
+definition can include by capability-qualified name:
+
+```markdown
+<!-- AT_INSTRUCTION_MODULE: research-coordinator/research-ten-commandments -->
+```
+
+Modules are resolved from the selected capability root, so org capabilities can
+override built-in capability modules by overriding the whole capability.
 
 ### `hooks/instruction`
 

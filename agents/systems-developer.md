@@ -30,7 +30,7 @@ Do this every session or after context compaction:
    guidance. Do not open source `always-injected.md` note files.
 2. Identify listed on-demand note topics that may be relevant to the current
    package, tool, platform, or project convention. Read the rendered note with
-   the generated `read-note` command before relying on memory.
+   the generated `agentic-notes read-note` command before relying on memory.
 3. Run `git status --short --branch` and inspect recent context with
    `git log --oneline -20` when it helps.
 4. Read the project docs or local conventions before changing behavior.

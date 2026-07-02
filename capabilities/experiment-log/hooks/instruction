@@ -63,7 +63,7 @@ render_instruction() {
     printf 'When this workflow records experiments, the active work-branch experiment log lives on the project work state branch `agentic/work-state/%s` at `experiment-log/`. The log is capability-owned and may not exist until the first experiment is recorded. Use the `experiment-logger` subagent for new experiment results and the `experiment-corrector` subagent for corrections. Within this work-branch log, experiment IDs are local, such as `E0001_block-sparse-baseline`; from other work-branch logs, refer to them as `%s::E0001_block-sparse-baseline`.\n\n' "$AR_WORK_BRANCH" "$AR_WORK_BRANCH"
     printf 'Read the active work-branch experiment summary, when it exists, with:\n\n'
     printf '```bash\n'
-    printf 'experiment-log --read-summary --project-dir . --work-branch %s\n' "$AR_WORK_BRANCH"
+    printf 'experiment-log summary --project-dir . --work-branch %s\n' "$AR_WORK_BRANCH"
     printf '```\n\n'
 }
 

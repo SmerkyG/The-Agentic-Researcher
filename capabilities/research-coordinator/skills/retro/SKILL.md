@@ -30,7 +30,7 @@ For work-branch records, use the experiment-log command and direct reads from
 the work-state checkout:
 
 ```bash
-experiment-log --read-summary --project-dir "$PROJECT_DIR" --work-branch "$AR_WORK_BRANCH" 2>/dev/null || true
+experiment-log summary --project-dir "$PROJECT_DIR" --work-branch "$AR_WORK_BRANCH" 2>/dev/null || true
 WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/${AR_WORK_BRANCH:?}"
 test -f "$WORK_STATE_DIR/report.tex" && sed -n '1,220p' "$WORK_STATE_DIR/report.tex"
 test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"

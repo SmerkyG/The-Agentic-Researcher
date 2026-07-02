@@ -20,9 +20,9 @@ ablations). Autonomously formulate hypotheses, implement ideas, verify results,
 delegate to subagents when useful, and iterate according to the Project
 Instructions below.
 
-<!-- AR_MODULE: research-env-constraints -->
+<!-- AT_INSTRUCTION_MODULE: research-coordinator/research-env-constraints -->
 
-<!-- AR_MODULE: research-ten-commandments -->
+<!-- AT_INSTRUCTION_MODULE: research-coordinator/research-ten-commandments -->
 
 ## Research Modules
 
@@ -102,13 +102,12 @@ Do this every session or after context compaction:
 1. Use any injected Agentic Notes text below as active guidance. Do not open
    source `always-injected.md` note files.
 2. Identify listed on-demand note topics that may be relevant to the current
-   work. When you need one, use the generated `read-note` command so you read
-   the rendered note for this project and agent type.
+   work. When you need one, use the generated `agentic-notes read-note`
+   command so you read the rendered note for this project and agent type.
 3. Use injected work-branch Agentic Notes as the active work branch plan when present.
-4. If the active work branch experiment log is available, read its `SUMMARY.md` first
-   with `experiment-log --read-summary --project-dir .
-   --work-branch "$AR_WORK_BRANCH"`; open individual experiment YAML files only
-   when needed.
+4. If the active work branch experiment log is available, read its `SUMMARY.md`
+   first with `experiment-log summary --project-dir . --work-branch
+   "$AR_WORK_BRANCH"`; open individual experiment YAML files only when needed.
 5. Read work-branch `report.tex` and `TODO.md` from the work-state checkout
    when needed for narrative analysis, derivations, detailed results, open
    questions, and deferred work. These records live on the work state branch,

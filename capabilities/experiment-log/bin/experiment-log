@@ -19,6 +19,7 @@ from agentic_state import AgenticStateError, parse_yaml_mapping, safe_load_yaml,
 from command_common import CommandError, internal_request, load_request, main, print_json, project_dir_from  # noqa: E402
 from experiment_log_common import (  # noqa: E402
     ExperimentLogError,
+    log_correction,
     log_experiment,
     read_summary,
 )
@@ -36,7 +37,21 @@ def command_project_dir(request: dict[str, object], explicit: str | None) -> Pat
     return Path(project_dir_from(request)).resolve()
 
 
-def run_request(
+def print_result(value: str, *, json_response: bool, payload_key: str, command: str) -> None:
+    if json_response:
+        print_json(
+            {
+                "command": command,
+                "state": "ok",
+                "stdout": value,
+                payload_key: value,
+            }
+        )
+    else:
+        print(value)
+
+
+def append_request(
     request: dict[str, object],
     *,
     project_dir: Path,
@@ -46,62 +61,105 @@ def run_request(
     if "kind" not in request:
         request = internal_request(request, "experiment_result_request")
     experiment_ref = log_experiment(request, project_dir, branch_name)
-    if json_response:
-        print_json(
-            {
-                "command": "experiment-log",
-                "state": "ok",
-                "stdout": experiment_ref,
-                "experiment_id": experiment_ref,
-            }
-        )
-    else:
-        print(experiment_ref)
-
-
-def run_stdin_request() -> None:
-    request = internal_request(load_request(), "experiment_result_request")
-    run_request(
-        request,
-        project_dir=command_project_dir(request, None),
-        branch_name=str(request.get("work_branch") or os.environ.get("AR_WORK_BRANCH") or ""),
-        json_response=True,
+    print_result(
+        experiment_ref,
+        json_response=json_response,
+        payload_key="experiment_id",
+        command="experiment-log append",
     )
 
 
-def run_cli(argv: list[str]) -> None:
-    parser = argparse.ArgumentParser(description="Record or inspect Agentic Team experiment logs.")
-    parser.add_argument("--request", help="YAML experiment_result_request file, or '-' for stdin.")
+def correct_request(
+    request: dict[str, object],
+    *,
+    project_dir: Path,
+    branch_name: str | None,
+    json_response: bool,
+) -> None:
+    if "kind" not in request:
+        request = internal_request(request, "experiment_correction_request")
+    correction_ref = log_correction(request, project_dir, branch_name)
+    print_result(
+        correction_ref,
+        json_response=json_response,
+        payload_key="correction_id",
+        command="experiment-log correct",
+    )
+
+
+def add_request_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--request", help="YAML request file, or '-' for stdin. Defaults to stdin.")
     parser.add_argument("--project-dir", default=None)
     parser.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH"))
-    parser.add_argument("--read-summary", action="store_true")
+
+
+def run_append(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(description="Append an Agentic Team experiment log entry.")
+    add_request_args(parser)
     args = parser.parse_args(argv)
 
     try:
-        if args.read_summary:
-            print(read_summary(Path(args.project_dir or ".").resolve(), work_branch(args.work_branch)))
-            return
-        if not args.request:
-            raise CommandError("--request is required unless using --read-summary")
-        request = request_from_path(args.request)
-        run_request(
+        request = request_from_path(args.request) if args.request else load_request()
+        append_request(
             request,
             project_dir=command_project_dir(request, args.project_dir),
             branch_name=args.work_branch or str(request.get("work_branch") or ""),
-            json_response=False,
+            json_response=args.request is None,
         )
     except (AgenticStateError, ExperimentLogError) as exc:
         raise CommandError(str(exc)) from exc
 
 
+def run_correct(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(description="Append a correction to an Agentic Team experiment log entry.")
+    add_request_args(parser)
+    args = parser.parse_args(argv)
+
+    try:
+        request = request_from_path(args.request) if args.request else load_request()
+        correct_request(
+            request,
+            project_dir=command_project_dir(request, args.project_dir),
+            branch_name=args.work_branch or str(request.get("work_branch") or ""),
+            json_response=args.request is None,
+        )
+    except (AgenticStateError, ExperimentLogError) as exc:
+        raise CommandError(str(exc)) from exc
+
+
+def run_summary(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(description="Read the active work-branch experiment summary.")
+    parser.add_argument("--project-dir", default=".")
+    parser.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH"))
+    args = parser.parse_args(argv)
+
+    try:
+        print(read_summary(Path(args.project_dir).resolve(), work_branch(args.work_branch)))
+    except (AgenticStateError, ExperimentLogError) as exc:
+        raise CommandError(str(exc)) from exc
+
+
 def dispatch() -> None:
-    if len(sys.argv) == 1:
-        try:
-            run_stdin_request()
-        except ExperimentLogError as exc:
-            raise CommandError(str(exc)) from exc
+    command = sys.argv[1] if len(sys.argv) > 1 else ""
+    args = sys.argv[2:]
+
+    if command in {"--help", "-h", ""}:
+        print("Usage: experiment-log SUBCOMMAND [OPTIONS]\n")
+        print("Subcommands:")
+        print("  append    Append a completed experiment result")
+        print("  correct   Append a correction to an existing experiment")
+        print("  summary   Read the active work-branch summary")
+        if not command:
+            raise CommandError("subcommand is required")
         return
-    run_cli(sys.argv[1:])
+    if command == "append":
+        run_append(args)
+    elif command == "correct":
+        run_correct(args)
+    elif command == "summary":
+        run_summary(args)
+    else:
+        raise CommandError(f"unknown experiment-log subcommand: {command}")
 
 
 if __name__ == "__main__":

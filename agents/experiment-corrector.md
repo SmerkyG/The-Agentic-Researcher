@@ -25,10 +25,10 @@ source:
 
 Returns: assigned correction ID, command used, and concise summary of what was corrected.
 
-Run `experiment-correct` with the request on stdin:
+Run `experiment-log correct` with the request on stdin:
 
 ```bash
-experiment-correct <<'YAML'
+experiment-log correct <<'YAML'
 experiment_id: E0001_kernel-baseline
 summary: Corrected baseline metric
 correction: The reported metric was from the debug scale, not the decision scale.
@@ -41,6 +41,6 @@ YAML
 - Do not run experiments, change code, edit work-branch `report.tex`, or update work-branch `TODO.md`.
 - Do not edit the work state checkout manually. Use the helper so local locks, pull, commit, push, and retry behavior stay consistent.
 - Use the inherited `AR_WORK_BRANCH` unless the parent explicitly gives a different work branch. Experiment IDs are work-branch-local (`E0001_short-description`); use `::`-qualified references (`work_branch::E0001_short-description`) when referring across work-branch logs.
-- Use `experiment-correct` with YAML on stdin.
+- Use `experiment-log correct` with YAML on stdin.
 - Use the current working directory unless the parent gives a specific project directory.
 - Never force-push. If the helper reports a real conflict or failure after retry, report the failure and the exact stderr/stdout needed to diagnose it.

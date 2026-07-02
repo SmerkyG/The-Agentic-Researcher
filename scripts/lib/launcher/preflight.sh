@@ -149,7 +149,34 @@ validate_capabilities() {
             echo "Error: Capability $capability_name has no recognized content"
             exit 1
         fi
+        validate_capability_bin "$capability_name" "$capability_dir"
     done
+}
+
+validate_capability_bin() {
+    local capability_name="$1"
+    local capability_dir="$2"
+    local bin_dir="$capability_dir/bin"
+    local entry command_name
+
+    [[ -d "$bin_dir" ]] || return 0
+
+    while IFS= read -r entry; do
+        command_name="$(basename "$entry")"
+        case "$command_name" in
+            "$capability_name"|"$capability_name"-*)
+                ;;
+            *)
+                echo "Error: Capability $capability_name bin command must be named $capability_name or start with $capability_name-."
+                echo "Found: $command_name"
+                exit 1
+                ;;
+        esac
+        if [[ ! -x "$entry" ]]; then
+            echo "Error: Capability command is not executable: $entry"
+            exit 1
+        fi
+    done < <(find "$bin_dir" -mindepth 1 -maxdepth 1 -type f | sort)
 }
 
 capability_launcher_hook_path() {

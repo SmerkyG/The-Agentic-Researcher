@@ -56,17 +56,17 @@ The generated instruction file is a materialized view. Do not edit injected note
 
 ## Reading Notes
 
-Agents should read rendered notes through `read-note`, not by opening raw note storage files:
+Agents should read rendered notes through `agentic-notes read-note`, not by opening raw note storage files:
 
 ```bash
-read-note --project-dir . --agent-type research-coordinator TOPIC
+agentic-notes read-note --project-dir . --agent-type research-coordinator TOPIC
 ```
 
-`read-note` dynamically combines all available org/project/work-branch and `all-agents`/agent-type portions for the requested topic. This prevents an agent from accidentally reading only one scope's fragment of a note. The rendered output labels each portion's scope, so provenance is visible after the agent reads the note.
+`agentic-notes read-note` dynamically combines all available org/project/work-branch and `all-agents`/agent-type portions for the requested topic. This prevents an agent from accidentally reading only one scope's fragment of a note. The rendered output labels each portion's scope, so provenance is visible after the agent reads the note.
 
 ## Updating Notes
 
-Working agents should update notes by launching the `note-updater` subagent and following its rendered contract. The trigger is broader than mistakes: missing setup requirements, corrected assumptions, undocumented tool or platform behavior, project conventions, and user corrections should become notes when the lesson would help a future agent. Agents should perform this check before final response. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence and omit timestamps, long command output, and rationale unless essential. The updater first runs the normal `note-update` path, then reviews the rendered note chain. If that made the chain worse through duplication, verbosity, or an obvious scope mismatch, it may perform one rare cleanup rewrite of exactly one source note with `rewrite-note`. It never force-pushes.
+Working agents should update notes by launching the `note-updater` subagent and following its rendered contract. The trigger is broader than mistakes: missing setup requirements, corrected assumptions, undocumented tool or platform behavior, project conventions, and user corrections should become notes when the lesson would help a future agent. Agents should perform this check before final response. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence and omit timestamps, long command output, and rationale unless essential. The updater first runs the normal `agentic-notes update-note` path, then reviews the rendered note chain. If that made the chain worse through duplication, verbosity, or an obvious scope mismatch, it may perform one rare cleanup rewrite of exactly one source note with `agentic-notes rewrite-note`. It never force-pushes.
 
 Agents choose the note scope when they create a note; Agentic Team does not
 automatically promote notes between scopes. Use the narrowest useful scope:
@@ -82,15 +82,15 @@ record an actionable fix request in the appropriate local work record
 user/sysadmin instead. Use an org note only when the workaround is durable
 across projects and no near-term fix can be expected.
 
-The agent-facing commands provided by this capability are:
+The agent-facing command provided by this capability is `agentic-notes`:
 
 ```text
-read-note --project-dir PATH --agent-type AGENT_TYPE TOPIC
-note-update < request.yaml
-rewrite-note < request.yaml
+agentic-notes read-note --project-dir PATH --agent-type AGENT_TYPE TOPIC
+agentic-notes update-note < request.yaml
+agentic-notes rewrite-note < request.yaml
 ```
 
-`rewrite-note` is for the `note-updater` cleanup pass after normal note
+`agentic-notes rewrite-note` is for the `note-updater` cleanup pass after normal note
 capture. Setup, refresh, rendering, and note-state maintenance are internal
 capability mechanics invoked by launcher hooks or the `note-updater` subagent,
 not commands that main agents should call directly.

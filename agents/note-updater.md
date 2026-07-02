@@ -31,10 +31,10 @@ source:
 
 Returns: command used, updated note path, whether cleanup was performed, and concise summary of the note change.
 
-First run `note-update` with the request on stdin:
+First run `agentic-notes update-note` with the request on stdin:
 
 ```bash
-note-update <<'YAML'
+agentic-notes update-note <<'YAML'
 target:
   scope: project
   agent_type: all-agents
@@ -46,7 +46,7 @@ YAML
 
 ## Rules
 
-- Always perform the normal `note-update` path first unless the request is
+- Always perform the normal `agentic-notes update-note` path first unless the request is
   clearly a temporary workaround or fix-needed defect rather than durable
   reusable knowledge.
 - Keep notes terse: one compact bullet when possible, preserving only the
@@ -55,15 +55,15 @@ YAML
   long command output, full error strings, or rationale unless essential.
 - If the lesson is already present, do not add a duplicate.
 - Do not blindly append the request text.
-- Use `note-update` with YAML on stdin.
-- After `note-update`, review the rendered note chain with `read-note` for the
-  same note topic and agent type.
+- Use `agentic-notes update-note` with YAML on stdin.
+- After `agentic-notes update-note`, review the rendered note chain with
+  `agentic-notes read-note` for the same note topic and agent type.
 - If the rendered note chain is still clear and terse, stop there.
 - If the update made the chain worse through duplication, verbosity, or an
   obvious scope mismatch with higher-scope content, perform one rare cleanup
-  step with `rewrite-note`. Rewrite exactly one source note file, not the entire
-  rendered chain.
-- Use `rewrite-note` only for cleanup that clearly improves clarity or length.
+  step with `agentic-notes rewrite-note`. Rewrite exactly one source note file,
+  not the entire rendered chain.
+- Use `agentic-notes rewrite-note` only for cleanup that clearly improves clarity or length.
   Do not churn notes for style preferences.
 - Do not delete, move, or rewrite multiple scopes as part of ordinary note
   updating. If cross-scope curation is needed, report it explicitly instead.
@@ -96,8 +96,8 @@ Scope selection:
   user/sysadmin. Use an org note only when the workaround is durable across
   projects and no near-term fix can be expected.
 - On-demand topic lists are merged and do not show which scope introduced a
-  topic. Rendered `read-note` output labels the scope of each note portion after
-  the note is read.
+  topic. Rendered `agentic-notes read-note` output labels the scope of each note
+  portion after the note is read.
 
 Target mapping:
 
@@ -108,9 +108,9 @@ Target mapping:
 - Use a specific `agent_type` such as `gpu-kernel-engineer` for lessons only relevant to that main agent or subagent type.
 - Use `note_name: always-injected` only for lessons that should be injected into every future agent context for the selected scope and agent type.
 
-Cleanup rewrite request shape: run `rewrite-note` with `target.scope`,
+Cleanup rewrite request shape: run `agentic-notes rewrite-note` with `target.scope`,
 `target.agent_type`, `target.note_name`, optional `target.project_id`, optional
 `target.work_branch`, and `content` containing the complete cleaned-up Markdown
 for that one source note.
 
-`note-update` and `rewrite-note` refresh the parent agent worktree instructions after a successful update when the current project directory is available.
+`agentic-notes update-note` and `agentic-notes rewrite-note` refresh the parent agent worktree instructions after a successful update when the current project directory is available.

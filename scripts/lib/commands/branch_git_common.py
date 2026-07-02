@@ -444,7 +444,7 @@ def log_after_commit_experiment(
 
     request_path = snapshot_dir / "experiment-log-request.yaml"
     write_yaml(request_path, request)
-    command = ["experiment-log"]
+    command = ["experiment-log", "append"]
     log_path = snapshot_dir / "experiment-log.log"
     result = subprocess.run(
         command,

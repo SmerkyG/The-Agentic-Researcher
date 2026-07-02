@@ -38,10 +38,10 @@ notes: string                    # optional; interpretation and caveats
 
 Returns: assigned experiment ID, command used, and concise summary of what was recorded.
 
-Run `experiment-log` with the request on stdin:
+Run `experiment-log append` with the request on stdin:
 
 ```bash
-experiment-log <<'YAML'
+experiment-log append <<'YAML'
 title: Kernel baseline
 short_description: kernel baseline
 description: Tested the baseline kernel before optimization.
@@ -60,6 +60,6 @@ YAML
 - If `success: true` and `code.commit` is present, the helper creates a local
   Git tag named `exp/<work-branch>/<experiment-id>-success` at that commit after the
   experiment log is pushed.
-- Use `experiment-log` with YAML on stdin.
+- Use `experiment-log append` with YAML on stdin.
 - Use the current working directory unless the parent gives a specific project directory.
 - Never force-push. If the helper reports a real conflict or failure after retry, report the failure and the exact stderr/stdout needed to diagnose it.

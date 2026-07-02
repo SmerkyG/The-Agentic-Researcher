@@ -1,0 +1,190 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["PyYAML>=6.0"]
+# ///
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import sys
+import tempfile
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
+
+from command_common import (  # noqa: E402
+    CommandError,
+    internal_request,
+    load_request,
+    main,
+    print_json,
+    project_dir_from,
+    request_text,
+    run_command,
+)
+
+
+INTERNAL_COMMAND = Path(__file__).resolve().parents[1] / "lib" / "agentic-notes-internal"
+
+HELP = """\
+Usage: agentic-notes SUBCOMMAND [OPTIONS]
+
+Agent-facing Agentic Notes commands:
+  read-note      Read a rendered note topic
+  update-note    Append or merge one reusable lesson from YAML on stdin
+  rewrite-note   Replace one source note after rare cleanup review
+"""
+
+UPDATE_HELP = """\
+Usage: agentic-notes update-note < request.yaml
+
+Append or merge one reusable lesson into Git-backed Agentic Notes.
+"""
+
+REWRITE_HELP = """\
+Usage: agentic-notes rewrite-note < request.yaml
+
+Replace exactly one Agentic Note with complete cleaned-up Markdown. This is for
+rare note-updater cleanup after the normal update-note path has added a lesson.
+
+Request YAML:
+  target:
+    scope: org | project | work
+    agent_type: all-agents | AGENT_TYPE
+    note_name: NOTE_TOPIC
+    project_id: PROJECT_ID      # required for project/work when not inferred
+    work_branch: WORK_BRANCH    # required for work when not inferred
+  content: |
+    # Note Title
+
+    ## Lessons
+
+    - Terse reusable guidance.
+"""
+
+
+def field_value(data: dict[str, Any], name: str) -> str | None:
+    value = data.get(name)
+    return str(value) if value else None
+
+
+def read_note(args: list[str]) -> None:
+    os.execv(str(INTERNAL_COMMAND), [str(INTERNAL_COMMAND), "read-note", *args])
+
+
+def update_note(args: list[str]) -> None:
+    if args:
+        if args == ["--help"] or args == ["-h"]:
+            print(UPDATE_HELP.rstrip())
+            return
+        raise CommandError("agentic-notes update-note accepts YAML on stdin; use --help for usage")
+
+    request = load_request()
+    command = [
+        str(INTERNAL_COMMAND),
+        "update-note",
+        "--request",
+        "-",
+        "--project-dir",
+        project_dir_from(request),
+        "--refresh-parent",
+    ]
+    result = run_command(
+        command,
+        input_text=request_text(internal_request(request, "note_update_request")),
+    )
+
+    output = result.stdout.strip()
+    response = {"command": "agentic-notes update-note", "state": "ok", "stdout": output}
+    if output:
+        response["note_update"] = output.splitlines()[-1]
+    print_json(response)
+
+
+def rewrite_note(args: list[str]) -> None:
+    if args:
+        if args == ["--help"] or args == ["-h"]:
+            print(REWRITE_HELP.rstrip())
+            return
+        raise CommandError("agentic-notes rewrite-note accepts YAML on stdin; use --help for usage")
+
+    request = load_request()
+    target = request.get("target")
+    if not isinstance(target, dict):
+        raise CommandError("agentic-notes rewrite-note request requires target mapping")
+    source = request.get("source") if isinstance(request.get("source"), dict) else {}
+
+    scope = field_value(target, "scope")
+    agent_type = field_value(target, "agent_type")
+    note_name = field_value(target, "note_name")
+    content = request.get("content")
+    if not scope:
+        raise CommandError("agentic-notes rewrite-note request target.scope is required")
+    if not agent_type:
+        raise CommandError("agentic-notes rewrite-note request target.agent_type is required")
+    if not note_name:
+        raise CommandError("agentic-notes rewrite-note request target.note_name is required")
+    if not isinstance(content, str) or not content.strip():
+        raise CommandError("agentic-notes rewrite-note request requires non-empty content")
+
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as handle:
+        content_path = Path(handle.name)
+        handle.write(content.rstrip() + "\n")
+    try:
+        command = [
+            str(INTERNAL_COMMAND),
+            "replace-note",
+            "--scope",
+            scope,
+            "--note-name",
+            note_name,
+            "--note-file",
+            str(content_path),
+            "--project-dir",
+            project_dir_from(request),
+            "--agent-type",
+            agent_type,
+            "--refresh-parent",
+        ]
+        project_id = field_value(target, "project_id") or field_value(source, "project_id")
+        if project_id:
+            command.extend(["--project-id", project_id])
+        work_branch = field_value(target, "work_branch") or field_value(source, "work_branch")
+        if work_branch:
+            command.extend(["--work-branch", work_branch])
+
+        result = run_command(command)
+    finally:
+        content_path.unlink(missing_ok=True)
+
+    output = result.stdout.strip()
+    response = {"command": "agentic-notes rewrite-note", "state": "ok", "stdout": output}
+    if output:
+        response["note_rewrite"] = output.splitlines()[-1]
+    print_json(response)
+
+
+def dispatch() -> None:
+    command = sys.argv[1] if len(sys.argv) > 1 else ""
+    args = sys.argv[2:]
+
+    if command in {"--help", "-h", ""}:
+        print(HELP.rstrip())
+        if not command:
+            raise CommandError("subcommand is required")
+        return
+    if command == "read-note":
+        read_note(args)
+    elif command == "update-note":
+        update_note(args)
+    elif command == "rewrite-note":
+        rewrite_note(args)
+    else:
+        raise CommandError(f"unknown agentic-notes subcommand: {command}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(dispatch))

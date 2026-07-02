@@ -114,8 +114,8 @@ render_section_body() {
 
 render_instruction() {
     parse_common "$@"
-    if [[ -f "$REPO_ROOT/modules/agentic-notes.md" ]]; then
-        cat "$REPO_ROOT/modules/agentic-notes.md"
+    if [[ -f "$REPO_ROOT/capabilities/agentic-notes/instruction-modules/agentic-notes.md" ]]; then
+        cat "$REPO_ROOT/capabilities/agentic-notes/instruction-modules/agentic-notes.md"
         printf '\n\n'
     fi
     "$NOTES_INTERNAL" render-section --project-dir "$project_dir" --agent-type "$agent_type" --dynamic-only

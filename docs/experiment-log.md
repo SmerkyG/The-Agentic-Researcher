@@ -75,12 +75,12 @@ Completed negative or neutral experiments should omit `success` or set it to `fa
 
 ## Commands
 
-Agents usually route writes through subagents, but the capability also exposes direct inspection and request commands:
+Agents usually route writes through subagents, but the capability also exposes one direct command with subcommands for inspection and request handling:
 
 ```text
-experiment-log --request REQUEST.yaml --project-dir PATH --work-branch WORK_BRANCH
-experiment-log --read-summary --project-dir PATH --work-branch WORK_BRANCH
-experiment-correct --request REQUEST.yaml --project-dir PATH --work-branch WORK_BRANCH
+experiment-log append --request REQUEST.yaml --project-dir PATH --work-branch WORK_BRANCH
+experiment-log correct --request REQUEST.yaml --project-dir PATH --work-branch WORK_BRANCH
+experiment-log summary --project-dir PATH --work-branch WORK_BRANCH
 ```
 
 Research workflows often keep `report.tex` and `TODO.md` on the same work-branch state branch. Those files are mutable synthesis/checklist records owned by the research workflow, not by the experiment-log capability.

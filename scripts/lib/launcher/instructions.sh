@@ -40,12 +40,19 @@ setup_storage() {
 
     cli_call_all setup_storage
 }
-render_module_block() {
-    local module_name="$1"
-    local module_path="$SCRIPT_DIR/modules/$module_name.md"
+render_instruction_module_block() {
+    local capability_name="$1"
+    local module_name="$2"
+    local capability_dir module_path
 
+    if ! capability_dir="$(capability_root "$capability_name")"; then
+        echo "Warning: Instruction module capability not found: $capability_name" >&2
+        return 0
+    fi
+
+    module_path="$capability_dir/instruction-modules/$module_name.md"
     if [[ ! -f "$module_path" ]]; then
-        echo "Warning: Module not found: $module_name" >&2
+        echo "Warning: Instruction module not found: $capability_name/$module_name" >&2
         return 0
     fi
 
@@ -53,14 +60,15 @@ render_module_block() {
     printf '\n'
 }
 
-expand_modules_from_stdin() {
-    local line module_name
-    local module_regex='^<!--[[:space:]]*AR_MODULE:[[:space:]]*([A-Za-z0-9._-]+)[[:space:]]*-->$'
+expand_instruction_modules_from_stdin() {
+    local line capability_name module_name
+    local module_regex='^<!--[[:space:]]*AT_INSTRUCTION_MODULE:[[:space:]]*([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)[[:space:]]*-->$'
 
     while IFS= read -r line; do
         if [[ "$line" =~ $module_regex ]]; then
-            module_name="${BASH_REMATCH[1]}"
-            render_module_block "$module_name"
+            capability_name="${BASH_REMATCH[1]}"
+            module_name="${BASH_REMATCH[2]}"
+            render_instruction_module_block "$capability_name" "$module_name"
         else
             printf '%s\n' "$line"
         fi
@@ -73,9 +81,9 @@ render_instruction_template_part() {
             /<!-- DOCKER-OMIT-START -->/ { skip=1; next }
             /<!-- DOCKER-OMIT-END -->/   { skip=0; next }
             !skip { print }
-        ' "$SCRIPT_DIR/INSTRUCTIONS.md" | expand_modules_from_stdin
+        ' "$SCRIPT_DIR/INSTRUCTIONS.md" | expand_instruction_modules_from_stdin
     else
-        expand_modules_from_stdin < "$SCRIPT_DIR/INSTRUCTIONS.md"
+        expand_instruction_modules_from_stdin < "$SCRIPT_DIR/INSTRUCTIONS.md"
     fi
 }
 
@@ -157,7 +165,7 @@ render_main_agent_instruction_part() {
         exit 1
     fi
 
-    strip_frontmatter "$source_path" | expand_modules_from_stdin
+    strip_frontmatter "$source_path" | expand_instruction_modules_from_stdin
 }
 
 workspace_display_path_for_target() {

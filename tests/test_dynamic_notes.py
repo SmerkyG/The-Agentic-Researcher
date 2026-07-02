@@ -15,10 +15,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTIC_NOTES_INTERNAL = REPO_ROOT / "capabilities" / "agentic-notes" / "lib" / "agentic-notes-internal"
-READ_NOTE = REPO_ROOT / "capabilities" / "agentic-notes" / "bin" / "read-note"
-REWRITE_NOTE = REPO_ROOT / "capabilities" / "agentic-notes" / "bin" / "rewrite-note"
+AGENTIC_NOTES = REPO_ROOT / "capabilities" / "agentic-notes" / "bin" / "agentic-notes"
 EXPERIMENT_LOG = REPO_ROOT / "capabilities" / "experiment-log" / "bin" / "experiment-log"
-EXPERIMENT_CORRECT = REPO_ROOT / "capabilities" / "experiment-log" / "bin" / "experiment-correct"
 AGENTIC_TEAM = REPO_ROOT / "agentic-team"
 
 
@@ -254,7 +252,8 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
 
     rendered_note = run(
         [
-            str(READ_NOTE),
+            str(AGENTIC_NOTES),
+            "read-note",
             "--project-dir",
             str(project),
             "--agent-type",
@@ -372,7 +371,8 @@ def test_read_note_combines_all_scoped_note_parts(tmp_path: Path) -> None:
 
     result = run(
         [
-            str(READ_NOTE),
+            str(AGENTIC_NOTES),
+            "read-note",
             "--project-dir",
             str(project),
             "--agent-type",
@@ -696,13 +696,16 @@ def test_rewrite_note_replaces_one_note_through_agent_command(tmp_path: Path) ->
     }
 
     result = run(
-        [str(REWRITE_NOTE)],
+        [
+            str(AGENTIC_NOTES),
+            "rewrite-note",
+        ],
         input=yaml.safe_dump(rewrite_request, sort_keys=False),
         env=env,
     )
 
     response = json.loads(result.stdout)
-    assert response["command"] == "rewrite-note"
+    assert response["command"] == "agentic-notes rewrite-note"
     checkout = org_checkout(env)
     text = (checkout / "agent-notes" / "all-agents" / "gpu-runtime.md").read_text()
     assert "before local ROCm or CUDA jobs" in text
@@ -857,7 +860,8 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
 
     rendered_plan = run(
         [
-            str(READ_NOTE),
+            str(AGENTIC_NOTES),
+            "read-note",
             "--project-dir",
             str(project),
             "--agent-type",
@@ -875,7 +879,7 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     missing_summary = run(
         [
             str(EXPERIMENT_LOG),
-            "--read-summary",
+            "summary",
             "--project-dir",
             str(project),
             "--work-branch",
@@ -1123,6 +1127,7 @@ def test_experiment_logger_creates_counter_ids_and_appends_summary(tmp_path: Pat
     first = run(
         [
             str(EXPERIMENT_LOG),
+            "append",
             "--request",
             str(experiment_request(tmp_path, "Triton power-of-two shape test")),
             "--project-dir",
@@ -1133,6 +1138,7 @@ def test_experiment_logger_creates_counter_ids_and_appends_summary(tmp_path: Pat
     second = run(
         [
             str(EXPERIMENT_LOG),
+            "append",
             "--request",
             str(experiment_request(tmp_path, "Attention odd seq benchmark")),
             "--project-dir",
@@ -1185,6 +1191,7 @@ def test_successful_experiment_creates_local_success_tag(tmp_path: Path) -> None
     experiment_ref = run(
         [
             str(EXPERIMENT_LOG),
+            "append",
             "--request",
             str(request),
             "--project-dir",
@@ -1207,6 +1214,7 @@ def test_summary_is_append_only_and_existing_experiment_files_are_unchanged(tmp_
     first = run(
         [
             str(EXPERIMENT_LOG),
+            "append",
             "--request",
             str(experiment_request(tmp_path, "First run")),
             "--project-dir",
@@ -1228,6 +1236,7 @@ def test_summary_is_append_only_and_existing_experiment_files_are_unchanged(tmp_
     second = run(
         [
             str(EXPERIMENT_LOG),
+            "append",
             "--request",
             str(experiment_request(tmp_path, "Second run")),
             "--project-dir",
@@ -1251,8 +1260,8 @@ def test_push_conflict_retries_with_next_counter_number(tmp_path: Path) -> None:
     env_one["AR_PROJECT_ID"] = "conflict-project"
     env_two["AR_PROJECT_ID"] = "conflict-project"
 
-    run([str(EXPERIMENT_LOG), "--read-summary", "--project-dir", str(project_one), "--work-branch", "kernel-search"], env=env_one, check=False)
-    run([str(EXPERIMENT_LOG), "--read-summary", "--project-dir", str(project_two), "--work-branch", "kernel-search"], env=env_two, check=False)
+    run([str(EXPERIMENT_LOG), "summary", "--project-dir", str(project_one), "--work-branch", "kernel-search"], env=env_one, check=False)
+    run([str(EXPERIMENT_LOG), "summary", "--project-dir", str(project_two), "--work-branch", "kernel-search"], env=env_two, check=False)
     state_two = work_state_checkout(env_two, "conflict-project")
     waiting = tmp_path / "waiting"
     allow = tmp_path / "allow"
@@ -1268,6 +1277,7 @@ def test_push_conflict_retries_with_next_counter_number(tmp_path: Path) -> None:
     proc_two = subprocess.Popen(
         [
             str(EXPERIMENT_LOG),
+            "append",
             "--request",
             str(experiment_request(tmp_path, "Conflict loser")),
             "--project-dir",
@@ -1287,6 +1297,7 @@ def test_push_conflict_retries_with_next_counter_number(tmp_path: Path) -> None:
     winner = run(
         [
             str(EXPERIMENT_LOG),
+            "append",
             "--request",
             str(experiment_request(tmp_path, "Conflict winner")),
             "--project-dir",
@@ -1309,7 +1320,7 @@ def test_same_installation_multiple_actor_worktrees_serialize_project_log_update
     env = base_env(tmp_path)
     env["AR_PROJECT_ID"] = "shared-worktree-project"
 
-    run([str(EXPERIMENT_LOG), "--read-summary", "--project-dir", str(project_one), "--work-branch", "kernel-search"], env=env, check=False)
+    run([str(EXPERIMENT_LOG), "summary", "--project-dir", str(project_one), "--work-branch", "kernel-search"], env=env, check=False)
     state = work_state_checkout(env, "shared-worktree-project")
     waiting = tmp_path / "same-install-waiting"
     allow = tmp_path / "same-install-allow"
@@ -1325,6 +1336,7 @@ def test_same_installation_multiple_actor_worktrees_serialize_project_log_update
     proc_one = subprocess.Popen(
         [
             str(EXPERIMENT_LOG),
+            "append",
             "--request",
             str(experiment_request(tmp_path, "Shared state first")),
             "--project-dir",
@@ -1345,6 +1357,7 @@ def test_same_installation_multiple_actor_worktrees_serialize_project_log_update
     proc_two = subprocess.Popen(
         [
             str(EXPERIMENT_LOG),
+            "append",
             "--request",
             str(experiment_request(tmp_path, "Shared state second")),
             "--project-dir",
@@ -1375,6 +1388,7 @@ def test_correction_logging_appends_to_experiment_file_and_summary_row(tmp_path:
     experiment_id = run(
         [
             str(EXPERIMENT_LOG),
+            "append",
             "--request",
             str(experiment_request(tmp_path, "Needs correction")),
             "--project-dir",
@@ -1395,7 +1409,8 @@ def test_correction_logging_appends_to_experiment_file_and_summary_row(tmp_path:
 
     correction_id = run(
         [
-            str(EXPERIMENT_CORRECT),
+            str(EXPERIMENT_LOG),
+            "correct",
             "--request",
             str(correction_request),
             "--project-dir",
@@ -1415,7 +1430,8 @@ def test_correction_logging_appends_to_experiment_file_and_summary_row(tmp_path:
     )
     second_correction_id = run(
         [
-            str(EXPERIMENT_CORRECT),
+            str(EXPERIMENT_LOG),
+            "correct",
             "--request",
             str(second_request),
             "--project-dir",

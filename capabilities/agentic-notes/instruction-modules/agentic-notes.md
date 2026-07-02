@@ -9,7 +9,7 @@ Injected `always-injected.md` note content is already part of the instruction co
 Never open source note files named `always-injected.md` directly. The generated section
 also lists on-demand note topics. Before working on a package, library,
 architecture, benchmark, project convention, or other work item that appears
-related to a listed on-demand note topic, use the generated `read-note`
+related to a listed on-demand note topic, use the generated `agentic-notes read-note`
 command to read the rendered note if you have not read it since the last
 compaction.
 Rendered notes dynamically combine all available organization, project, and
@@ -27,7 +27,7 @@ will help future agents: `work` for the active work branch only, `project` for
 future work in this repository, and `org` only for lessons that apply across
 projects. Ordinary working agents do not promote, move, or copy existing notes
 between scopes. On-demand topic lists are merged and do not show which scope
-introduced a topic; `read-note` output labels the scope of each rendered note
+introduced a topic; `agentic-notes read-note` output labels the scope of each rendered note
 portion after you read it.
 Use `all-agents` notes for package-specific lessons, architecture optimization
 lessons, and broad organization, project, or work-branch lessons. Use agent-type notes for
