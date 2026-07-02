@@ -42,15 +42,16 @@ capability_root() {
     return 1
 }
 
-capability_instruction_hook_path() {
+capability_hook_path() {
     local capability_name="$1"
+    local hook_name="$2"
     local root
 
     if ! root="$(capability_root "$capability_name")"; then
         return 1
     fi
-    if [[ -x "$root/hooks/instruction" ]]; then
-        printf '%s\n' "$root/hooks/instruction"
+    if [[ -x "$root/hooks/$hook_name" ]]; then
+        printf '%s\n' "$root/hooks/$hook_name"
         return 0
     fi
     return 1
@@ -90,15 +91,27 @@ capability_bin_runtime_paths() {
     done
 }
 
-capability_instruction_call() {
+capability_hook_call() {
     local capability_name="$1"
+    local hook_name="$2"
+    shift
     shift
     local hook_exe
 
-    if ! hook_exe="$(capability_instruction_hook_path "$capability_name")"; then
+    if ! hook_exe="$(capability_hook_path "$capability_name" "$hook_name")"; then
         return 0
     fi
-    "$hook_exe" "$@"
+    AT_PROJECT_DIR="${CAPABILITY_HOOK_PROJECT_DIR:-$WORKSPACE_DIR}" \
+    AT_BRANCH="${CAPABILITY_HOOK_BRANCH:-${WORKSPACE_GIT_BRANCH:-}}" \
+    AT_SESSION_ID="${CAPABILITY_HOOK_SESSION_ID:-${AR_SESSION_ID:-}}" \
+    AT_AGENT_TYPE="${CAPABILITY_HOOK_AGENT_TYPE:-${AR_MAIN_AGENT:-research-coordinator}}" \
+    AT_WORK_BRANCH="${CAPABILITY_HOOK_WORK_BRANCH:-${AR_WORK_BRANCH:-}}" \
+    AT_CLI="${CAPABILITY_HOOK_CLI:-$AR_CLI}" \
+    AT_OUTPUT_DIR="${CAPABILITY_HOOK_OUTPUT_DIR:-}" \
+    AT_HEARTBEAT_DIR="${CAPABILITY_HOOK_HEARTBEAT_DIR:-}" \
+    AT_REFRESH_INTERVAL_SECONDS="${CAPABILITY_HOOK_INTERVAL_SECONDS:-}" \
+    AT_STALE_SECONDS="${CAPABILITY_HOOK_STALE_SECONDS:-}" \
+        "$hook_exe" "$@"
 }
 
 project_agent_root_for_cli() {
@@ -120,16 +133,15 @@ render_agentic_notes_for_agent_type() {
             return 0
         fi
     fi
-    capability_instruction_call agentic-notes render-section \
-        --project-dir "$WORKSPACE_DIR" \
-        --agent-type "$render_agent_type" 2>/dev/null || true
+    CAPABILITY_HOOK_AGENT_TYPE="$render_agent_type" \
+        capability_hook_call agentic-notes render-section 2>/dev/null || true
 }
 
 prepare_capability_sections() {
     [[ ${#ACTIVE_PROJECT_AGENT_NAMES[@]} -gt 0 ]] || return 0
     capability_enabled agentic-notes || return 0
 
-    local temp_root render_args agent_name
+    local temp_root
     temp_root="$STATE_ROOT/tmp"
     mkdir -p "$temp_root"
     CAPABILITY_SECTION_DIR="$(mktemp -d "$temp_root/capability-sections.XXXXXX")" || {
@@ -137,12 +149,8 @@ prepare_capability_sections() {
         return 0
     }
 
-    render_args=(render-sections --project-dir "$WORKSPACE_DIR" --output-dir "$CAPABILITY_SECTION_DIR")
-    for agent_name in "${ACTIVE_PROJECT_AGENT_NAMES[@]}"; do
-        render_args+=(--agent-type "$agent_name")
-    done
-
-    if ! capability_instruction_call agentic-notes "${render_args[@]}" >/dev/null 2>/dev/null; then
+    if ! CAPABILITY_HOOK_OUTPUT_DIR="$CAPABILITY_SECTION_DIR" \
+        capability_hook_call agentic-notes render-sections "${ACTIVE_PROJECT_AGENT_NAMES[@]}" >/dev/null 2>/dev/null; then
         rm -rf "$CAPABILITY_SECTION_DIR"
         CAPABILITY_SECTION_DIR=""
     fi
@@ -369,12 +377,7 @@ setup_agentic_notes_capability_once() {
     [[ "$AGENTIC_NOTES_CAPABILITY_SETUP" == "true" ]] && return 0
 
     export_capability_env
-    if ! capability_instruction_call agentic-notes setup \
-        --project-dir "$WORKSPACE_DIR" \
-        --branch "${WORKSPACE_GIT_BRANCH:-}" \
-        --session-id "${AR_SESSION_ID:-}" \
-        --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
-        --cli "$AR_CLI"; then
+    if ! capability_hook_call agentic-notes setup; then
         echo "Error: Capability 'agentic-notes' setup failed."
         exit 1
     fi
@@ -390,12 +393,7 @@ setup_capabilities() {
         if [[ "$capability_name" == "agentic-notes" && "$AGENTIC_NOTES_CAPABILITY_SETUP" == "true" ]]; then
             continue
         fi
-        if ! capability_instruction_call "$capability_name" setup \
-            --project-dir "$WORKSPACE_DIR" \
-            --branch "${WORKSPACE_GIT_BRANCH:-}" \
-            --session-id "${AR_SESSION_ID:-}" \
-            --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
-            --cli "$AR_CLI"; then
+        if ! capability_hook_call "$capability_name" setup; then
             echo "Error: Capability '$capability_name' setup failed."
             exit 1
         fi
@@ -408,12 +406,7 @@ cleanup_capabilities() {
     export_ar_capability_env
 
     for capability_name in $(enabled_capability_names); do
-        capability_instruction_call "$capability_name" cleanup \
-            --project-dir "$WORKSPACE_DIR" \
-            --branch "${WORKSPACE_GIT_BRANCH:-}" \
-            --session-id "${AR_SESSION_ID:-}" \
-            --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
-            --cli "$AR_CLI" >/dev/null || true
+        capability_hook_call "$capability_name" cleanup >/dev/null || true
     done
 }
 
@@ -479,13 +472,10 @@ setup_capability_refresh_loops() {
 
     local capability_name
     for capability_name in $(enabled_capability_names); do
-        capability_instruction_call "$capability_name" refresh-loop \
-            --project-dir "$WORKSPACE_DIR" \
-            --heartbeat-dir "$heartbeat_dir" \
-            --interval-seconds "$interval" \
-            --stale-seconds "$stale_seconds" \
-            --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
-            --cli "$AR_CLI" >>"$refresh_log" 2>&1 &
+        CAPABILITY_HOOK_HEARTBEAT_DIR="$heartbeat_dir" \
+        CAPABILITY_HOOK_INTERVAL_SECONDS="$interval" \
+        CAPABILITY_HOOK_STALE_SECONDS="$stale_seconds" \
+            capability_hook_call "$capability_name" refresh-loop >>"$refresh_log" 2>&1 &
     done
 }
 
@@ -496,10 +486,7 @@ render_capability_instruction_parts() {
 
     for capability_name in $(enabled_capability_names); do
         section="$(
-            capability_instruction_call "$capability_name" render-instruction \
-                --project-dir "$WORKSPACE_DIR" \
-                --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
-                --cli "$AR_CLI" 2>/dev/null || true
+            capability_hook_call "$capability_name" render-instruction 2>/dev/null || true
         )"
         if [[ -n "$section" ]]; then
             printf '%s\n\n' "$section"

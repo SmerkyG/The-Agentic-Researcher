@@ -25,7 +25,9 @@ A capability is one selected package. It may contain any combination of these pa
   lib/                     # optional private support code for bin/hooks/launcher scripts
     common.sh
   hooks/
-    instruction            # optional executable instruction lifecycle hook
+    setup                  # optional instruction/state lifecycle hook
+    render-instruction
+    post-compaction
   launcher/                # optional sourced launcher hooks
     preflight.sh
     setup.sh
@@ -118,21 +120,42 @@ definition can include by capability-qualified name:
 Modules are resolved from the selected capability root, so org capabilities can
 override built-in capability modules by overriding the whole capability.
 
-### `hooks/instruction`
+### `hooks/`
 
-Use `hooks/instruction` when a capability owns rendered or refreshed instruction state. The executable receives a subcommand:
+Use `hooks/` when a capability owns rendered or refreshed instruction state.
+Each lifecycle hook is its own executable file; missing hooks are treated as
+no-ops:
 
 ```text
-setup --project-dir PATH --branch BRANCH --session-id SESSION --agent-type AGENT --cli CLI
-render-instruction --project-dir PATH --agent-type AGENT --cli CLI
-render-section --project-dir PATH --agent-type AGENT
-render-sections --project-dir PATH --output-dir DIR --agent-type AGENT ...
-post-compaction --project-dir PATH --agent-type AGENT --cli CLI
-refresh-loop --project-dir PATH --heartbeat-dir DIR --interval-seconds N --stale-seconds N
-cleanup --project-dir PATH --session-id SESSION
+hooks/setup
+hooks/render-instruction
+hooks/render-section
+hooks/render-sections
+hooks/post-compaction
+hooks/refresh-loop
+hooks/cleanup
 ```
 
-The built-in `agentic-notes` capability uses this to refresh and render Agentic Notes. The built-in `experiment-log` capability uses it to render work-branch experiment-log guidance.
+The launcher passes common context through environment variables:
+
+```text
+AT_PROJECT_DIR
+AT_BRANCH
+AT_SESSION_ID
+AT_AGENT_TYPE
+AT_WORK_BRANCH
+AT_CLI
+AT_OUTPUT_DIR
+AT_HEARTBEAT_DIR
+AT_REFRESH_INTERVAL_SECONDS
+AT_STALE_SECONDS
+```
+
+`hooks/render-sections` receives the agent types to render as positional
+arguments and writes to `AT_OUTPUT_DIR`. The built-in `agentic-notes`
+capability uses lifecycle hooks to refresh and render Agentic Notes. The
+built-in `experiment-log` capability only needs `hooks/render-instruction` to
+render work-branch experiment-log guidance.
 
 ### `launcher/`
 
@@ -213,6 +236,6 @@ Org capabilities are resolved before built-in capabilities with the same name.
 - Put agent-facing commands and YAML-based structured actions in `bin/`.
 - Put private shared implementation code for those commands in capability-local `lib/`.
 - Put launcher/runtime integration in `launcher/`.
-- Put rendered/refreshed instruction state in `hooks/instruction`.
+- Put rendered/refreshed instruction state in lifecycle executables under `hooks/`.
 - Keep `INSTRUCTIONS.md` short; put longer situational knowledge in Agentic Notes.
 - Prefer subagents for workflows requiring model judgment and commands for executable actions.

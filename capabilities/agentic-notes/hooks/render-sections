@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NOTES_INTERNAL="$SCRIPT_DIR/../lib/agentic-notes-internal"
+project_dir="${AT_PROJECT_DIR:?AT_PROJECT_DIR is required}"
+output_dir="${AT_OUTPUT_DIR:?AT_OUTPUT_DIR is required}"
+
+if [[ $# -eq 0 ]]; then
+    echo "agentic-notes render-sections: at least one agent type is required" >&2
+    exit 2
+fi
+
+args=(render-sections --project-dir "$project_dir" --output-dir "$output_dir")
+for agent_type in "$@"; do
+    args+=(--agent-type "$agent_type")
+done
+
+"$NOTES_INTERNAL" "${args[@]}"

@@ -59,8 +59,9 @@ capability_names() {
     done
 }
 
-capability_instruction_hook_path() {
+capability_hook_path() {
     local name="$1"
+    local hook_name="$2"
     local root candidate
     for candidate in \
         "${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/repos/org-agentic-notes/capabilities/$name" \
@@ -68,7 +69,7 @@ capability_instruction_hook_path() {
     do
         [[ -d "$candidate" ]] || continue
         root="$candidate"
-        candidate="$root/hooks/instruction"
+        candidate="$root/hooks/$hook_name"
         if [[ -x "$candidate" ]]; then
             printf '%s\n' "$candidate"
             return 0
@@ -133,11 +134,17 @@ export PYTHONPATH="$REPO_ROOT/scripts/lib/commands:${PYTHONPATH:-}"
 status_parts=()
 capability=""
 while IFS= read -r capability; do
-    hook_exe="$(capability_instruction_hook_path "$capability")" || {
-        status_parts+=("$capability: no instruction hook")
+    hook_exe="$(capability_hook_path "$capability" "post-compaction")" || {
+        status_parts+=("$capability: no post-compaction hook")
         continue
     }
-    if output="$("$hook_exe" post-compaction --project-dir "$project_dir" --agent-type "$agent_type" --cli "$cli" 2>&1)"; then
+    if output="$(
+        AT_PROJECT_DIR="$project_dir" \
+        AT_AGENT_TYPE="$agent_type" \
+        AT_WORK_BRANCH="${AR_WORK_BRANCH:-}" \
+        AT_CLI="$cli" \
+            "$hook_exe" 2>&1
+    )"; then
         [[ -n "$output" ]] && status_parts+=("$capability: $output") || status_parts+=("$capability: refreshed")
     else
         status_parts+=("$capability: failed: $output")

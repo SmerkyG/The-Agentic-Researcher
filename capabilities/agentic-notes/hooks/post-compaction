@@ -1,0 +1,7 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NOTES_INTERNAL="$SCRIPT_DIR/../lib/agentic-notes-internal"
+
+"$NOTES_INTERNAL" refresh --project-dir "${AT_PROJECT_DIR:?AT_PROJECT_DIR is required}"

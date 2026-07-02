@@ -1,6 +1,5 @@
 source "$SCRIPT_DIR/capabilities/remote-run/launcher/common.sh"
-remote_run_detect
-remote_run_write_dispatch_config
+_remote_run_write_dispatch_config
 
 CAPABILITY_BINDS+=(
     --bind "$DISPATCH_DIR:$DISPATCH_DIR"

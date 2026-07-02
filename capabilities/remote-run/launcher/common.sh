@@ -1,23 +1,25 @@
-remote_run_die() {
+_remote_run_die() {
     echo "Error: $*" >&2
     exit 1
 }
 
-remote_run_detect() {
+_remote_run_detect_allocation() {
+    [[ "${REMOTE_RUN_ALLOCATION_DETECTED:-false}" == "true" ]] && return 0
+
     if [[ "$AR_SANDBOX" != "apptainer" ]]; then
-        remote_run_die "remote-run capability requires --sandbox apptainer."
+        _remote_run_die "remote-run capability requires --sandbox apptainer."
     fi
 
     if [[ -z "${SLURM_JOB_ID:-}" ]]; then
-        remote_run_die "remote-run capability requires an active multi-node Slurm allocation."
+        _remote_run_die "remote-run capability requires an active multi-node Slurm allocation."
     fi
 
     if [[ -z "${SLURM_JOB_NODELIST:-}" ]]; then
-        remote_run_die "remote-run capability requires SLURM_JOB_NODELIST."
+        _remote_run_die "remote-run capability requires SLURM_JOB_NODELIST."
     fi
 
     if ! command -v scontrol >/dev/null 2>&1; then
-        remote_run_die "remote-run capability requires 'scontrol' on PATH."
+        _remote_run_die "remote-run capability requires 'scontrol' on PATH."
     fi
 
     REMOTE_RUN_NODELIST="$SLURM_JOB_NODELIST"
@@ -38,12 +40,20 @@ remote_run_detect() {
         echo "Warning: Could not detect GPUs per node, defaulting to 4"
         REMOTE_RUN_GPUS_PER_NODE=4
     fi
+
+    REMOTE_RUN_ALLOCATION_DETECTED=true
 }
 
-remote_run_write_dispatch_config() {
+_remote_run_write_dispatch_config() {
+    _remote_run_detect_allocation
+
     DISPATCH_DIR="$STATE_ROOT/dispatch-$SLURM_JOB_ID"
     AR_SANDBOX_HOME="${AR_SANDBOX_HOME:-/agent-home}"
     mkdir -p "$DISPATCH_DIR/jobs"
+
+    if [[ "${REMOTE_RUN_DISPATCH_CONFIG_WRITTEN:-false}" == "true" && -f "$DISPATCH_DIR/dispatch.conf" ]]; then
+        return 0
+    fi
 
     cat > "$DISPATCH_DIR/dispatch.conf" << DISPEOF
 DISPATCH_DIR="$DISPATCH_DIR"
@@ -67,4 +77,5 @@ SLURM_JOB_NODELIST="$REMOTE_RUN_NODELIST"
 DISPEOF
 
     write_ar_runtime_env_array_assignment AR_RUNTIME_ENV_PAIRS >> "$DISPATCH_DIR/dispatch.conf"
+    REMOTE_RUN_DISPATCH_CONFIG_WRITTEN=true
 }
