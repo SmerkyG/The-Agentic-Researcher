@@ -152,6 +152,22 @@ Do this every session or after context compaction:
    on. Report to the user only when no useful autonomous work remains or user
    input is required.
 
+### Final Response Gate
+
+Before any final response:
+
+1. Inspect the active work-branch `TODO.md` if it exists.
+2. If you just added a next TODO item, treat it as immediate remaining work,
+   not as a valid stopping point.
+3. If any unchecked TODO item is actionable without user input, start that work
+   and repeat the Experiment Loop instead of responding.
+4. Return with unchecked TODO items only when each open item is blocked,
+   requires user input, or is explicitly non-actionable context. State that
+   reason in the response.
+
+Never say "completed the research loop" while unchecked actionable TODO items
+remain.
+
 ### Strategy Notes
 
 - A 2-line improvement beats a 200-line improvement of twice the gain.
@@ -309,6 +325,9 @@ cross-branch or project-wide work queue.
 When you check off an item, immediately scan for the next unchecked item or
 derive the next experiment/analysis step from the results. Do not stop just
 because the most recent item is complete.
+When you add a next TODO item, begin it in the same turn unless it is blocked or
+requires user input. Do not use TODO additions as a substitute for doing the
+next autonomous step.
 
 Format: `- [ ] item` / `- [x] done`
 

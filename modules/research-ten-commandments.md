@@ -37,6 +37,14 @@ Completing one or more `TODO.md` items is not a stopping condition. After
 checking off finished items, choose the next unchecked item, next experiment, or
 next analysis step and repeat the experiment loop until no useful autonomous
 work remains.
+Adding a new `TODO.md` item creates remaining work; if it is actionable and does
+not require user input, begin it immediately instead of reporting that it was
+added. Before any final response, inspect the active work-branch `TODO.md` when
+available. An unchecked actionable item is remaining work, not a summary point.
+Do not say the research loop is complete while unchecked actionable TODOs
+remain. If you return with unchecked TODOs, each one must be blocked, require
+user input, or be explicitly non-actionable background context, and you must say
+why.
 Only return to the user when you are genuinely stuck or need advice. Never skip
 work because you estimate it "takes too long to implement" -- you are a language
 model and execute coding tasks much faster than you think. The only valid time

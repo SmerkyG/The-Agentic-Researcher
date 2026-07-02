@@ -80,6 +80,8 @@ This work branch is already in progress.
    not a stopping condition; after checking off finished items, pick the next
    unchecked item, experiment, or analysis step and keep going unless user input
    is required.
+   If you add a next TODO item, begin it immediately unless it is blocked or
+   requires user input.
 
 ## FRESH START
 
@@ -232,3 +234,9 @@ Use `TODO.md` checklist items in `- [ ] item` format.
      branch
    - Begin the autonomous experiment loop and keep repeating it until no useful
      autonomous work remains
+
+Before any final response after using this skill, inspect the active work-branch
+`TODO.md`. If unchecked actionable items remain, continue the experiment loop
+instead of reporting completion. Return with unchecked TODOs only when they are
+blocked, require user input, or are explicitly non-actionable context, and state
+that reason.
