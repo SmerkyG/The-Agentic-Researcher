@@ -34,13 +34,13 @@ The active work branch's durable state lives on the project work state branch
   work branch.
 - `experiment-log/` is the append-only experiment ledger when the experiment-log
   provider creates it.
-- `report.tex` is mutable work-branch-local narrative synthesis when this research
+- `report.md` is mutable work-branch-local narrative synthesis when this research
   workflow creates it.
 - `TODO.md` is the mutable work-branch-local checklist when this research workflow
   creates it.
 
 Code branches and experiment subbranches hold code. Do not treat worktree
-`report.tex` or worktree `TODO.md` as canonical work-branch records.
+`report.md` or worktree `TODO.md` as canonical work-branch records.
 
 ## Detect Resume vs Fresh Start
 
@@ -62,10 +62,10 @@ This work branch is already in progress.
    experiment-log summary --project-dir "$PROJECT_DIR" --work-branch "$WORK_BRANCH" 2>/dev/null || true
    ```
 
-3. Read work-branch `report.tex` and `TODO.md` only when needed:
+3. Read work-branch `report.md` and `TODO.md` only when needed:
 
    ```bash
-   test -f "$WORK_STATE_DIR/report.tex" && sed -n '1,220p' "$WORK_STATE_DIR/report.tex"
+   test -f "$WORK_STATE_DIR/report.md" && sed -n '1,220p' "$WORK_STATE_DIR/report.md"
    test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
    ```
 
@@ -191,18 +191,17 @@ Agentic Team launches, resumes, or compaction refreshes can render the committed
 plan into startup instructions for later contexts, but regenerating an
 instruction file does not update this already-running model context.
 
-5. Initialize work-branch `report.tex` and `TODO.md` in the work-state checkout.
+5. Initialize work-branch `report.md` and `TODO.md` in the work-state checkout.
    These are normal files in that checkout, not Agentic Notes commands:
 
 ```bash
-cat > "$WORK_STATE_DIR/report.tex" <<'LATEX'
-\documentclass{article}
-\usepackage{amsmath,amsthm,amssymb,booktabs,graphicx,tcolorbox}
-\newtcolorbox{verification}{title=Verification}
-\begin{document}
-\section{Research Log}
-\end{document}
-LATEX
+cat > "$WORK_STATE_DIR/report.md" <<'MARKDOWN'
+# Research Log
+
+Use this Markdown notebook for branch-local narrative analysis, derivations,
+figures, verification notes, and selected result tables. Embed LaTeX math when
+needed, for example `$O(n \log n)$` or display equations.
+MARKDOWN
 
 cat > "$WORK_STATE_DIR/TODO.md" <<'MARKDOWN'
 # TODO
@@ -210,14 +209,15 @@ cat > "$WORK_STATE_DIR/TODO.md" <<'MARKDOWN'
 - [ ] Run baseline evaluation
 MARKDOWN
 
-git -C "$WORK_STATE_DIR" add report.tex TODO.md
+git -C "$WORK_STATE_DIR" add report.md TODO.md
 git -C "$WORK_STATE_DIR" commit -m "work-state: initialize $WORK_BRANCH research records"
 git -C "$WORK_STATE_DIR" push
 ```
 
-Use a normal LaTeX preamble in `report.tex` with `amsmath`, `amsthm`,
-`amssymb`, `booktabs`, `graphicx`, and `tcolorbox` with a `verification` box.
-Use `TODO.md` checklist items in `- [ ] item` format.
+Use Markdown headings and tables in `report.md`; embed LaTeX math only when it
+helps the derivation. Use Markdown image links for figures, embedding PNGs
+such as `![caption](images/name.png)` rather than PDF-only links. Use
+`TODO.md` checklist items in `- [ ] item` format.
 
 6. Proceed with initial setup:
    - Explore the codebase structure and understand the architecture
@@ -225,12 +225,12 @@ Use `TODO.md` checklist items in `- [ ] item` format.
      `rocm-smi`
    - Install dependencies with `uv sync`
    - Run the baseline evaluation command from the research plan
-   - Update work-branch `report.tex` and `TODO.md` by editing the work-state
+   - Update work-branch `report.md` and `TODO.md` by editing the work-state
      checkout and committing those files there
    - If the baseline is a meaningful completed experiment, launch
      `experiment-logger` so the active work-branch summary receives an experiment ID
    - Commit only code/config/script changes that belong in the code branch; do
-     not commit work-branch Agentic Notes, `report.tex`, or `TODO.md` to the code
+     not commit work-branch Agentic Notes, `report.md`, or `TODO.md` to the code
      branch
    - Begin the autonomous experiment loop and keep repeating it until no useful
      autonomous work remains

@@ -73,7 +73,7 @@ The installer adds the `agentic-team` launcher. The setup wizard creates local c
 2. **Run Agentic Team from that checkout:** `cd ~/my-project && agentic-team .`. For auto-approved agent permissions, add `--yolo`.
 3. **Use work branches for mutating work.** For example, `git switch -c feature/kernel-search` starts a focused branch, and child branches such as `feature/kernel-search/exp/idea-name` can be used for focused experiments. Agentic Team will help you switch to a useful branch on startup, if necessary.
 4. **For a new research effort, ask the default `research-coordinator` main agent to use the `do_research` skill.** This starts an interactive dialogue about your research goal, evaluation metrics, constraints, and compute budget.
-5. The agent writes work-branch-specific startup guidance as work-branch Agentic Notes on the work state branch `agentic/work-state/<work-branch>`. Agentic Team renders those notes into the worktree instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) using the same rules as org and project Agentic Notes. Research workflows may also create capability-owned work-branch files such as `report.tex`, `TODO.md`, and an experiment log on the same work state branch.
+5. The agent writes work-branch-specific startup guidance as work-branch Agentic Notes on the work state branch `agentic/work-state/<work-branch>`. Agentic Team renders those notes into the worktree instruction file (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`) using the same rules as org and project Agentic Notes. Research workflows may also create capability-owned work-branch files such as `report.md`, `TODO.md`, and an experiment log on the same work state branch.
 
 If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID` so repeated launches use the same notes and experiment state.
 
@@ -289,7 +289,7 @@ Capabilities own optional commands, structured actions, launcher hooks, and stat
 - `agentic-notes` owns the `agent-notes/` data model, initializes and refreshes org/project/work-branch note state from its launcher hooks, renders Agentic Notes guidance plus dynamic always-injected and on-demand note listings, provides `agentic-notes read-note`, `agentic-notes update-note`, and `agentic-notes rewrite-note`, and runs the background notes refresh loop.
 - `experiment-log` owns the active work-branch `experiment-log/` data model, renders active experiment-log guidance, and provides `experiment-log append`, `experiment-log correct`, and `experiment-log summary`. The experiment log is capability-owned and may be absent until the workflow records an experiment.
 
-The default capability list is `agentic-notes,experiment-log` via `AR_CAPABILITIES`. The `capability-refresh` command refreshes configured capability instruction hooks and rematerializes the instruction file for the current invocation after context compaction.
+The default capability list is `agentic-notes,experiment-log` via `AR_CAPABILITIES`. After context compaction, the generated CLI hook runs `capability-refresh`, which delegates to `agentic-team --render-only --refresh-capabilities` so the launcher refreshes configured capabilities and rematerializes the instruction file for that exact invocation.
 
 ## Citation
 

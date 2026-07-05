@@ -255,7 +255,7 @@ render_agentic_state_instruction_part() {
     printf 'PROJECT_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/agentic-state"\n'
     printf 'WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/${AR_WORK_BRANCH:?}"\n'
     printf '```\n\n'
-    printf 'Capabilities own the files they place in those checkouts. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `report.tex` and `TODO.md` at the work-state checkout root.\n'
+    printf 'Capabilities own the files they place in those checkouts. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `report.md` and `TODO.md` at the work-state checkout root.\n'
 }
 
 setup_instruction_target() {

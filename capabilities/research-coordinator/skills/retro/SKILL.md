@@ -19,7 +19,7 @@ Read the following files (skip any that don't exist):
 
 1. `$PROJECT_DIR/REVISION.md` -- previous retrospective entries (if any)
 2. The active work branch experiment `SUMMARY.md` if available, plus individual experiment YAML files only when needed
-3. The active work branch `report.tex` if available -- work-branch-local narrative analysis and report quality
+3. The active work branch `report.md` if available -- work-branch-local narrative analysis and report quality
 4. The active work branch `TODO.md` if available -- work-branch-local open items and deferred work
 5. `$PROJECT_DIR/$INSTRUCTION_FILE` -- the materialized instructions governing this session, including the selected main-agent section
 6. The injected Agentic Notes section in `$INSTRUCTION_FILE`, especially project agent-type notes for the active agent type; read on-demand note files only when they are needed to evaluate a concrete note-related issue
@@ -32,7 +32,7 @@ the work-state checkout:
 ```bash
 experiment-log summary --project-dir "$PROJECT_DIR" --work-branch "$AR_WORK_BRANCH" 2>/dev/null || true
 WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/${AR_WORK_BRANCH:?}"
-test -f "$WORK_STATE_DIR/report.tex" && sed -n '1,220p' "$WORK_STATE_DIR/report.tex"
+test -f "$WORK_STATE_DIR/report.md" && sed -n '1,220p' "$WORK_STATE_DIR/report.md"
 test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
 ```
 

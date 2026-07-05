@@ -108,7 +108,7 @@ Do this every session or after context compaction:
 4. If the active work branch experiment log is available, read its `SUMMARY.md`
    first with `experiment-log summary --project-dir . --work-branch
    "$AR_WORK_BRANCH"`; open individual experiment YAML files only when needed.
-5. Read work-branch `report.tex` and `TODO.md` from the work-state checkout
+5. Read work-branch `report.md` and `TODO.md` from the work-state checkout
    when needed for narrative analysis, derivations, detailed results, open
    questions, and deferred work. These records live on the work state branch,
    not in the code worktree.
@@ -124,14 +124,14 @@ Do this every session or after context compaction:
 ### Experiment Loop
 
 1. **Explore** the codebase before any experiment. Document durable
-   understanding in work-branch `report.tex` when it will matter later.
-2. **Plan** experiments in injected work-branch Agentic Notes, work-branch `report.tex`,
+   understanding in work-branch `report.md` when it will matter later.
+2. **Plan** experiments in injected work-branch Agentic Notes, work-branch `report.md`,
    or work-branch `TODO.md` before implementing. Start with cheap ideas.
 3. **Implement** minimal, focused changes. Keep diffs small.
 4. **Evaluate** using the three-tier strategy from the shared commitments.
 5. **Analyze** honestly. Write a hypothesis for why it worked or did not.
 6. **Update work-branch records**: keep analysis and follow-ups in work-branch
-   `report.tex` and `TODO.md` by editing those normal files in the work-state
+   `report.md` and `TODO.md` by editing those normal files in the work-state
    checkout, then committing and pushing only those work-state files. Prepare
    experiment-log request content when the result is meaningful.
 7. **Capture reusable lessons**: if debugging, failed runs, corrected
@@ -193,11 +193,12 @@ experiment fields. Experiment IDs are local to the work-branch log; use
 `::`-qualified references like
 `$AR_WORK_BRANCH::E0001_short-description` when referring across work-branch logs.
 
-Work-branch `report.tex` is the mutable work-branch-local narrative research record. It is
+Work-branch `report.md` is the mutable work-branch-local narrative research record. It is
 for derivations, methods, detailed analysis, figures, verification blocks, and
 selected result tables. Work-branch `TODO.md` is the mutable work-branch-local checklist.
 Both live at the root of branch `agentic/work-state/$AR_WORK_BRANCH`.
-Do NOT compile work-branch `report.tex`.
+Use Markdown for work-branch `report.md`, with embedded LaTeX math when needed.
+Do NOT compile it as a paper.
 
 Locate the work-state checkout with:
 
@@ -208,7 +209,7 @@ WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJEC
 Read work-branch records directly from that checkout:
 
 ```bash
-test -f "$WORK_STATE_DIR/report.tex" && sed -n '1,220p' "$WORK_STATE_DIR/report.tex"
+test -f "$WORK_STATE_DIR/report.md" && sed -n '1,220p' "$WORK_STATE_DIR/report.md"
 test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
 ```
 
@@ -217,9 +218,9 @@ commit and push that checkout. Do not place these files in the code worktree.
 
 ```bash
 git -C "$WORK_STATE_DIR" pull --ff-only
-# Edit "$WORK_STATE_DIR/report.tex" and/or "$WORK_STATE_DIR/TODO.md".
+# Edit "$WORK_STATE_DIR/report.md" and/or "$WORK_STATE_DIR/TODO.md".
 git -C "$WORK_STATE_DIR" status --short
-git -C "$WORK_STATE_DIR" add report.tex TODO.md
+git -C "$WORK_STATE_DIR" add report.md TODO.md
 git -C "$WORK_STATE_DIR" commit -m "work-state: update $AR_WORK_BRANCH research records"
 git -C "$WORK_STATE_DIR" push
 ```
@@ -229,7 +230,7 @@ Skip the commit if there are no work-state changes.
 For experiments that include code changes, prefer the commit handoff path:
 
 1. Create the snapshot yourself with `branch-snapshot` and YAML on stdin.
-   Include explicit paths, commit message, and focused checks. Never include work-branch Agentic Notes, work-branch `report.tex`,
+   Include explicit paths, commit message, and focused checks. Never include work-branch Agentic Notes, work-branch `report.md`,
    work-branch `TODO.md`, `.`, or glob paths.
 2. If the completed change set is a meaningful experiment result that belongs in
    the active work branch experiment log, read the rendered `experiment-logger`
@@ -273,16 +274,14 @@ the main agent during checks after the snapshot has been captured.
 For meaningful completed experiments that have no code commit, launch
 `experiment-logger` directly after reading its rendered contract.
 
-### Preamble
+### Report Sections
 
-amsmath, amsthm, amssymb, booktabs, graphicx, tcolorbox with `verification`
-box, theorem environments: definition, lemma, proposition, theorem,
-corollary, remark.
-
-### Report Subsections
-
-For experiments that need narrative analysis in work-branch `report.tex`, use
-`\paragraph{Label}` for each field -- never bare `\textbf{}`:
+For experiments that need narrative analysis in work-branch `report.md`, use
+Markdown headings, compact Markdown tables, and Markdown image links. Use
+embedded LaTeX for formulas, derivations, and theorem-like statements only
+where Markdown is not expressive enough. Do not use LaTeX `tabular`,
+`\includegraphics`, or PDF-only image references in `report.md`; VS Code and
+most Markdown previews will not render them as tables or images.
 
 - **Goal**: what problem are we solving
 - **Hypothesis**: why should this work
@@ -290,30 +289,22 @@ For experiments that need narrative analysis in work-branch `report.tex`, use
   symbols. All methods used in experiments must be properly described in the
   document before presenting results.
 - **Implementation**: files and lines changed
-- **Results table**: properly formatted with clear columns. Use `booktabs`
-  (`\toprule`, `\midrule`, `\bottomrule`) -- never `\hline`. Always set
-  generous column spacing (`\setlength{\tabcolsep}{8pt}`) and use
-  `\renewcommand{\arraystretch}{1.2}` for readable row height.
+- **Results table**: properly formatted Markdown table with clear columns,
+  units, and metric direction.
+- **Figures**: save a PNG preview alongside any PDF, then embed the PNG with
+  `![short caption](images/file.png)`.
 - **Analysis**: why it worked or did not, what it reveals
 - **Next steps**: what to try based on these results
 - **Verification block**: for non-trivial implementations
 
 Example results table structure:
 
-```latex
-{
-\setlength{\tabcolsep}{8pt}
-\renewcommand{\arraystretch}{1.2}
-\begin{tabular}{llrrr}
-\toprule
-Method & Model & Sparsity & PPL & $\Delta$ \\
-\midrule
-Baseline (RIA) & Qwen-1.5B & 60\% & 22.62 & -- \\
-RIA + Recon (row) & Qwen-1.5B & 60\% & 21.48 & $-5.0\%$ \\
-RIA + Recon (full) & Qwen-1.5B & 60\% & 20.09 & $-11.2\%$ \\
-\bottomrule
-\end{tabular}
-}
+```markdown
+| Method | Model | Sparsity | PPL | Delta |
+| --- | --- | ---: | ---: | ---: |
+| Baseline (RIA) | Qwen-1.5B | 60% | 22.62 | -- |
+| RIA + Recon (row) | Qwen-1.5B | 60% | 21.48 | -5.0% |
+| RIA + Recon (full) | Qwen-1.5B | 60% | 20.09 | -11.2% |
 ```
 
 ### TODO.md
@@ -337,20 +328,17 @@ For any change involving math, algorithms, or formal reasoning:
 1. **Create a verification script**: `scripts/verify_<topic>.py`
 2. **Run it** and record: command, pass/fail, key numeric results
 3. **If incomplete**: label claim as "unverified", add TODO, note in work-branch
-   `report.tex`
+   `report.md`
 
-Include in work-branch `report.tex`:
+Include in work-branch `report.md`:
 
-```latex
-\begin{verification}
-\textbf{What:} [verified claim]
+```markdown
+### Verification: [short label]
 
-\textbf{Method:} numeric / symbolic / edge cases
-
-\textbf{Script:} \texttt{scripts/verify\_<topic>.py}
-
-\textbf{Outcome:} pass / partial / fail; key results
-\end{verification}
+- **What:** [verified claim]
+- **Method:** numeric / symbolic / edge cases
+- **Script:** `scripts/verify_<topic>.py`
+- **Outcome:** pass / partial / fail; key results
 ```
 
 ## 5. Git Discipline
@@ -384,14 +372,14 @@ Include in work-branch `report.tex`:
 |----------|---------|
 | Agentic experiment log | Work-branch-local experiment ledger and summary table on the work state branch |
 | Work-branch Agentic Notes | Short active guidance rendered into startup instructions |
-| Work-branch `report.tex` | Work-branch-local derivations, methods, detailed analysis, verification, selected result tables |
+| Work-branch `report.md` | Work-branch-local derivations, methods, detailed analysis, verification, selected result tables |
 | Work-branch `TODO.md` | Work-branch-local checklist for open questions, unverified claims, deferred work |
 | `REVISION.md` | Agent improvement notes from `/retro`, append-only |
 | `scripts/verify_*.py` | Verification scripts |
 | `scripts/plot_*.py` | Plotting scripts, one per figure, PDF+PNG to `images/` |
-| `images/` | Generated figures |
+| `images/` | Generated figures; include PNG previews referenced from `report.md` |
 
-Keep workspace root clean. Do not create canonical `report.tex` or `TODO.md` in
+Keep workspace root clean. Do not create canonical `report.md` or `TODO.md` in
 the code worktree for work state.
 
 ## 7. Troubleshooting

@@ -72,7 +72,9 @@ main() {
     profile_step "setup_workspace_git_identity" setup_workspace_git_identity
     profile_step "setup_storage" setup_storage
     trap launcher_cleanup EXIT
-    profile_step "setup_agentic_notes_capability" setup_agentic_notes_capability_once
+    if [[ "$REFRESH_CAPABILITIES" != "true" ]]; then
+        profile_step "setup_agentic_notes_capability" setup_agentic_notes_capability_once
+    fi
     profile_step "resolve_main_agent_metadata" resolve_main_agent_metadata
     profile_step "prepare_work_branch" prepare_work_branch
     if [[ "$RENDER_ONLY" != "true" ]]; then
@@ -85,7 +87,11 @@ main() {
         profile_step "ensure_container_image" ensure_container_image
         profile_step "validate_container" validate_container
     fi
-    profile_step "setup_capabilities" setup_capabilities
+    if [[ "$REFRESH_CAPABILITIES" == "true" ]]; then
+        profile_step "refresh_capabilities" refresh_capabilities
+    else
+        profile_step "setup_capabilities" setup_capabilities
+    fi
     profile_step "setup_instruction_target" setup_instruction_target
     if [[ "$RENDER_ONLY" != "true" ]]; then
         profile_step "setup_compaction_hooks" setup_compaction_hooks

@@ -15,8 +15,18 @@ usage() {
 Usage: capability-refresh --project-dir PATH --agent-type NAME --cli CLI --instruction-path PATH
 
 Refresh configured capabilities after context compaction and rewrite
-the materialized instruction file.
+the materialized instruction file for this invocation.
 EOF
+}
+
+require_value() {
+    local option="$1"
+    local value="${2:-}"
+
+    if [[ -z "$value" || "$value" =~ ^- ]]; then
+        echo "capability-refresh: $option requires a value" >&2
+        exit 2
+    fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -26,18 +36,22 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         --project-dir)
+            require_value "$1" "${2:-}"
             project_dir="$2"
             shift 2
             ;;
         --agent-type)
+            require_value "$1" "${2:-}"
             agent_type="$2"
             shift 2
             ;;
         --cli)
+            require_value "$1" "${2:-}"
             cli="$2"
             shift 2
             ;;
         --instruction-path)
+            require_value "$1" "${2:-}"
             instruction_path="$2"
             shift 2
             ;;
@@ -47,66 +61,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-capability_names() {
-    local raw="${AR_CAPABILITIES:-agentic-notes,experiment-log}"
-    raw="${raw//,/ }"
-    local capability
-    for capability in $raw; do
-        [[ -n "$capability" ]] || continue
-        [[ "$capability" == "none" ]] && continue
-        printf '%s\n' "$capability"
-    done
-}
-
-capability_hook_path() {
-    local name="$1"
-    local hook_name="$2"
-    local root candidate
-    for candidate in \
-        "${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/repos/org-agentic-notes/capabilities/$name" \
-        "$REPO_ROOT/capabilities/$name"
-    do
-        [[ -d "$candidate" ]] || continue
-        root="$candidate"
-        candidate="$root/hooks/$hook_name"
-        if [[ -x "$candidate" ]]; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    done
-    return 1
-}
-
-command_paths() {
-    local name root bin_dir
-    for name in $(capability_names); do
-        for root in \
-            "${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/repos/org-agentic-notes/capabilities/$name" \
-            "$REPO_ROOT/capabilities/$name"
-        do
-            bin_dir="$root/bin"
-            [[ -d "$bin_dir" ]] && printf '%s\n' "$bin_dir"
-            if [[ -d "$root" ]]; then
-                break
-            fi
-        done
-    done
-    printf '%s/scripts/bin\n' "$REPO_ROOT"
-}
-
-prepend_path_entries() {
-    local path_prefix="" entry
-    while IFS= read -r entry; do
-        [[ -n "$entry" ]] || continue
-        if [[ -z "$path_prefix" ]]; then
-            path_prefix="$entry"
-        else
-            path_prefix="$path_prefix:$entry"
-        fi
-    done < <(command_paths)
-    [[ -n "$path_prefix" ]] && export PATH="$path_prefix:$PATH"
-}
 
 default_instruction_path() {
     case "$cli" in
@@ -128,32 +82,14 @@ if [[ ! -f "$instruction_path" ]]; then
     exit 1
 fi
 
-prepend_path_entries
-export PYTHONPATH="$REPO_ROOT/scripts/lib/commands:${PYTHONPATH:-}"
-
-status_parts=()
-capability=""
-while IFS= read -r capability; do
-    hook_exe="$(capability_hook_path "$capability" "post-compaction")" || {
-        status_parts+=("$capability: no post-compaction hook")
-        continue
-    }
-    if output="$(
-        AT_PROJECT_DIR="$project_dir" \
-        AT_AGENT_TYPE="$agent_type" \
-        AT_WORK_BRANCH="${AR_WORK_BRANCH:-}" \
-        AT_CLI="$cli" \
-            "$hook_exe" 2>&1
-    )"; then
-        [[ -n "$output" ]] && status_parts+=("$capability: $output") || status_parts+=("$capability: refreshed")
-    else
-        status_parts+=("$capability: failed: $output")
-        echo "capability-refresh: capability '$capability' failed: $output" >&2
-        exit 1
-    fi
-done < <(capability_names)
-
-render_args=("$REPO_ROOT/agentic-team" "--sandbox" "none" "--cli" "$cli" "--render-only" "--main-agent" "$agent_type")
+render_args=(
+    "$REPO_ROOT/agentic-team"
+    "--sandbox" "none"
+    "--cli" "$cli"
+    "--render-only"
+    "--refresh-capabilities"
+    "--main-agent" "$agent_type"
+)
 if [[ -n "${AR_PROJECT_ID:-}" ]]; then
     render_args+=("--project-id" "$AR_PROJECT_ID")
 fi
@@ -163,14 +99,9 @@ fi
 render_args+=("$project_dir")
 
 if output="$("${render_args[@]}" 2>&1)"; then
-    status_parts+=("instruction file: re-rendered")
+    [[ -n "$output" ]] && printf '%s\n' "$output"
+    printf 'Agentic Team refreshed configured capabilities and rematerialized %s.\n' "$instruction_path"
 else
-    echo "capability-refresh: full instruction render failed: $output" >&2
+    echo "capability-refresh: refresh render failed: $output" >&2
     exit 1
-fi
-
-if [[ ${#status_parts[@]} -gt 0 ]]; then
-    printf '%s\n' "${status_parts[@]}"
-else
-    printf 'No capabilities configured.\n'
 fi

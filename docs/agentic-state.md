@@ -71,7 +71,7 @@ agent-notes/
     always-injected.md
   research-coordinator/
     always-injected.md
-report.tex                      # research workflow, when created
+report.md                      # research workflow, when created
 TODO.md                         # research workflow, when created
 experiment-log/                 # experiment-log capability, when used
 ```

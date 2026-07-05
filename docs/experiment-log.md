@@ -83,4 +83,4 @@ experiment-log correct --request REQUEST.yaml --project-dir PATH --work-branch W
 experiment-log summary --project-dir PATH --work-branch WORK_BRANCH
 ```
 
-Research workflows often keep `report.tex` and `TODO.md` on the same work-branch state branch. Those files are mutable synthesis/checklist records owned by the research workflow, not by the experiment-log capability.
+Research workflows often keep `report.md` and `TODO.md` on the same work-branch state branch. Those files are mutable synthesis/checklist records owned by the research workflow, not by the experiment-log capability.

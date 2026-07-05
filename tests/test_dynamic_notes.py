@@ -798,7 +798,7 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     env = base_env(tmp_path)
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     plan = tmp_path / "plan.md"
-    report = tmp_path / "report.tex"
+    report = tmp_path / "report.md"
     todo = tmp_path / "TODO.md"
     plan.write_text(
         "# Research Plan: kernel-search\n\n"
@@ -808,7 +808,7 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
         encoding="utf-8",
     )
     report.write_text(
-        "\\documentclass{article}\n\\begin{document}\nBaseline pending.\n\\end{document}\n",
+        "# Research Log\n\nBaseline pending.\n",
         encoding="utf-8",
     )
     todo.write_text("- [ ] Run baseline benchmark\n", encoding="utf-8")
@@ -836,17 +836,17 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
         env=env,
     )
     work_state = work_state_dir(env)
-    (work_state / "report.tex").write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
+    (work_state / "report.md").write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
     (work_state / "TODO.md").write_text(todo.read_text(encoding="utf-8"), encoding="utf-8")
-    git(work_state, "add", "report.tex", "TODO.md")
+    git(work_state, "add", "report.md", "TODO.md")
     git(work_state, "commit", "-m", "work-state: update research records")
     git(work_state, "push")
 
     stored_plan = work_state / "agent-notes" / "research-coordinator" / "always-injected.md"
     assert stored_plan.read_text(encoding="utf-8") == plan.read_text(encoding="utf-8")
-    assert (work_state / "report.tex").read_text(encoding="utf-8") == report.read_text(encoding="utf-8")
+    assert (work_state / "report.md").read_text(encoding="utf-8") == report.read_text(encoding="utf-8")
     assert (work_state / "TODO.md").read_text(encoding="utf-8") == todo.read_text(encoding="utf-8")
-    assert not (project / "report.tex").exists()
+    assert not (project / "report.md").exists()
     assert not (project / "TODO.md").exists()
 
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")

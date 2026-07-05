@@ -3,7 +3,7 @@
 Agentic Team has two main extension surfaces:
 
 - `agents/` for portable main-agent and subagent definitions.
-- `capabilities/` for selected packages that can contribute commands, launcher hooks, instruction hooks, model-facing skills, and startup instructions.
+- `capabilities/` for selected packages that can contribute commands, launcher hooks, Python instruction renderers, model-facing skills, and startup instructions.
 
 The org repo can use the same `agents/` and `capabilities/` layout. Org definitions win over built-ins with the same name, and org capabilities win over built-in capabilities with the same name.
 
@@ -22,11 +22,11 @@ A capability is one selected package. It may contain any combination of these pa
   bin/                     # optional agent-facing commands added to PATH when enabled
     <name>
     <name>-subcommand
-  lib/                     # optional private support code for bin/hooks/launcher scripts
+  lib/                     # optional private support code for bin/hooks/render/launcher code
     common.sh
+  render.py                # optional Python instruction renderer
   hooks/
     setup                  # optional instruction/state lifecycle hook
-    render-instruction
     post-compaction
   launcher/                # optional sourced launcher hooks
     preflight.sh
@@ -104,9 +104,43 @@ Commands are added to `PATH` in this order:
 When an org capability and a built-in capability have the same name, the org
 capability root is used.
 
-Use `lib/` for private support code used by that capability's own commands and
-hooks. The launcher does not add capability `lib/` directories to `PATH`; command
-entrypoints should load private helpers relative to their own location.
+Use `lib/` for private support code used by that capability's own commands,
+hooks, renderer, and launcher scripts. The launcher does not add capability
+`lib/` directories to `PATH`; command entrypoints should load private helpers
+relative to their own location.
+
+### `render.py`
+
+Use `render.py` for capability-owned instruction rendering. Render-related
+capability extension points are Python-only; executable lifecycle hooks are not
+used for rendering. A render module may define any of these functions:
+
+```python
+def render_instruction(ctx) -> str: ...
+def render_agent_section(ctx, agent_type: str) -> str: ...
+def render_agent_sections(ctx, agent_types: list[str]) -> dict[str, str]: ...
+```
+
+`ctx` provides:
+
+```text
+project_dir
+agent_type
+work_branch
+cli
+repo_root
+state_root
+capability_name
+capability_root
+```
+
+`render_instruction` appends content to the main rendered instruction file.
+`render_agent_section` appends capability-owned content to one rendered
+subagent definition. `render_agent_sections` is an optional batch fast path for
+rendering sections for many subagents at once. Missing functions are treated as
+no-ops. The renderer adds the capability root and its `lib/` directory to
+`sys.path` while loading `render.py`, so private Python helpers can live in
+that capability's `lib/` directory.
 
 ### `instruction-modules/`
 
@@ -122,15 +156,13 @@ override built-in capability modules by overriding the whole capability.
 
 ### `hooks/`
 
-Use `hooks/` when a capability owns rendered or refreshed instruction state.
+Use `hooks/` when a capability owns refreshed instruction state or other
+launcher lifecycle work.
 Each lifecycle hook is its own executable file; missing hooks are treated as
 no-ops:
 
 ```text
 hooks/setup
-hooks/render-instruction
-hooks/render-section
-hooks/render-sections
 hooks/post-compaction
 hooks/refresh-loop
 hooks/cleanup
@@ -151,11 +183,11 @@ AT_REFRESH_INTERVAL_SECONDS
 AT_STALE_SECONDS
 ```
 
-`hooks/render-sections` receives the agent types to render as positional
-arguments and writes to `AT_OUTPUT_DIR`. The built-in `agentic-notes`
-capability uses lifecycle hooks to refresh and render Agentic Notes. The
-built-in `experiment-log` capability only needs `hooks/render-instruction` to
-render work-branch experiment-log guidance.
+The built-in `agentic-notes` capability uses lifecycle hooks to initialize and
+refresh Agentic Notes. It uses `render.py` to render Agentic Notes guidance,
+always-injected notes, and on-demand note listings. The built-in
+`experiment-log` capability uses `render.py` to render work-branch
+experiment-log guidance.
 
 ### `launcher/`
 

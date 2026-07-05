@@ -32,7 +32,7 @@ Returns: experiment ID or local name, files changed, commands run, result metric
 - Change only the files needed for the assigned experiment.
 - Preserve fixed constraints and evaluation integrity from the project instruction file.
 - Record completed meaningful experiments by launching the `experiment-logger` subagent with the rendered experiment-logger contract when the active work branch's Agentic Team experiment log is available.
-- Use work-branch `report.tex` for narrative analysis and work-branch `TODO.md` for follow-ups in the work-state checkout; do not create canonical worktree `report.tex` or `TODO.md` files.
+- Use work-branch `report.md` for narrative analysis and work-branch `TODO.md` for follow-ups in the work-state checkout; do not create canonical worktree `report.md` or `TODO.md` files.
 - Use local GPUs when they are available and assigned. If an External Job Backend is active, use the backend instructions before dispatching remote jobs.
 
 Return a concise summary with:

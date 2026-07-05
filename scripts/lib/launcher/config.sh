@@ -143,6 +143,7 @@ apply_defaults() {
 YOLO_MODE=false
 TEST_MODE=false
 RENDER_ONLY=false
+REFRESH_CAPABILITIES=false
 MODEL_SPECIFIED=false
 DEBUG_LAUNCH=false
 ALLOW_SHARED_BRANCH=false
@@ -193,6 +194,10 @@ parse_arguments() {
                 ;;
             --render-only)
                 RENDER_ONLY=true
+                shift
+                ;;
+            --refresh-capabilities)
+                REFRESH_CAPABILITIES=true
                 shift
                 ;;
             --debug-launch)
@@ -324,6 +329,11 @@ parse_arguments() {
                 ;;
         esac
     done
+
+    if [[ "$REFRESH_CAPABILITIES" == "true" && "$RENDER_ONLY" != "true" ]]; then
+        echo "Error: --refresh-capabilities requires --render-only"
+        exit 1
+    fi
 }
 
 show_help() {
@@ -344,6 +354,8 @@ Options:
   --sandbox NAME      Sandbox for this invocation ($sandbox_options)
   --test              Quick validation of sandbox environment
   --render-only       Materialize instruction, skill, and agent files, then exit
+  --refresh-capabilities
+                      With --render-only, run capability refresh hooks before rendering
   --capability NAME   Enable a capability from capabilities/ (repeatable)
   --project-id ID     Override inferred project id for notes and experiment state
   --main-agent NAME   Override top-level main agent for this invocation
@@ -372,6 +384,7 @@ Examples:
   agentic-team --clean --yes --include-config
   agentic-team --test
   agentic-team --render-only --cli codex
+  agentic-team --render-only --refresh-capabilities --cli codex
   agentic-team --cli opencode --debug-launch
   agentic-team                              # Current directory; unoccupied work branches start directly
   agentic-team ~/my-project

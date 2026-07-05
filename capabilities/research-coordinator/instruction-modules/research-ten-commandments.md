@@ -31,7 +31,7 @@ details -- treat every field as unverified until checked against a primary sourc
 When tasks remain, finish every task that does not need user input. Report once
 with all results. Do not do one batch and wait for next instructions. While
 experiments are running, continue with other work from the plan -- implement the
-next idea, write analysis, update report.tex, prepare experiment-log requests,
+next idea, write analysis, update report.md, prepare experiment-log requests,
 prepare verification scripts.
 Completing one or more `TODO.md` items is not a stopping condition. After
 checking off finished items, choose the next unchecked item, next experiment, or
@@ -66,7 +66,7 @@ Never jump to full evaluation after a code change.
 - *Tier 1* (seconds): does it run without crashing?
 - *Tier 2* (minutes): any signal on a small subset?
 - *Tier 3*: full evaluation -- the real metric that goes into the shared
-  experiment log and any detailed `report.tex` analysis.
+  experiment log and any detailed `report.md` analysis.
 
 Use small-scale runs (small models, small matrices, toy problem instances) to
 catch implementation bugs only. Never draw conclusions from small-scale results.
@@ -85,13 +85,15 @@ tells you whether a 2% improvement is nearly optimal or barely scratching the su
   `experiment-logger` subagent and follow its rendered contract so the shared
   state write is handled consistently. The work-branch experiment log is the
   durable ledger for the current top-level agent work branch.
-- Use `report.tex` for branch-local narrative research writing: derivations,
+- Use `report.md` for branch-local narrative research writing: derivations,
   methods, detailed analysis, verification blocks, figures, and selected result
-  tables. Do not treat `report.tex` as the shared experiment index in
+  tables. Do not treat `report.md` as the shared experiment index in
   multi-agent projects.
 - When analyzing distributions, comparisons, or scaling, **create plots**. Save as
   PDF+PNG in `images/`. Claims about "large", "extreme", or "balanced" quantities
-  must be backed by a figure. Visualize, don't just describe.
+  must be backed by a figure. In `report.md`, embed PNG previews with Markdown
+  image syntax such as `![caption](images/name.png)`; link PDFs only as
+  secondary artifacts. Visualize, don't just describe.
 - **Maintain `TODO.md` as a branch-local/session-local checklist**, not as a
   shared multi-agent work queue. Add open questions, unverified claims, and
   deferred checks relevant to the current branch. Check off items when resolved.
@@ -102,7 +104,7 @@ Assume you are wrong until verified. Every nontrivial mathematical argument
 should have a runnable artifact behind it -- code > prose. Write verification
 scripts, not just explanations. Grade claims explicitly: *verified* (script
 passes), *partially verified* (some cases checked), *unverified* (no
-computational check). Label unverified claims in report.tex and add to TODO.md.
+computational check). Label unverified claims in report.md and add to TODO.md.
 Before proving a property or assuming a bound holds, actively try to break it.
 Randomize inputs, test extreme regimes, search for degenerate edge cases. If you
 cannot find a counterexample after genuine effort, proceed with the proof -- but

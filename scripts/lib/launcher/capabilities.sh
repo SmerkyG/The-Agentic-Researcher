@@ -118,6 +118,17 @@ project_agent_root_for_cli() {
     cli_call_required project_agent_root
 }
 
+capability_render_command() {
+    export_capability_env
+
+    "$SCRIPT_DIR/scripts/lib/launcher/capability_render.py" \
+        --project-dir "$WORKSPACE_DIR" \
+        --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
+        --work-branch "${AR_WORK_BRANCH:-}" \
+        --cli "$AR_CLI" \
+        "$@"
+}
+
 CAPABILITY_SECTION_DIR=""
 
 render_agentic_notes_for_agent_type() {
@@ -133,15 +144,16 @@ render_agentic_notes_for_agent_type() {
             return 0
         fi
     fi
-    CAPABILITY_HOOK_AGENT_TYPE="$render_agent_type" \
-        capability_hook_call agentic-notes render-section 2>/dev/null || true
+    capability_render_command agent-section \
+        --capability agentic-notes \
+        --agent-type "$render_agent_type" 2>/dev/null || true
 }
 
 prepare_capability_sections() {
     [[ ${#ACTIVE_PROJECT_AGENT_NAMES[@]} -gt 0 ]] || return 0
     capability_enabled agentic-notes || return 0
 
-    local temp_root
+    local temp_root render_args agent_name
     temp_root="$STATE_ROOT/tmp"
     mkdir -p "$temp_root"
     CAPABILITY_SECTION_DIR="$(mktemp -d "$temp_root/capability-sections.XXXXXX")" || {
@@ -149,8 +161,12 @@ prepare_capability_sections() {
         return 0
     }
 
-    if ! CAPABILITY_HOOK_OUTPUT_DIR="$CAPABILITY_SECTION_DIR" \
-        capability_hook_call agentic-notes render-sections "${ACTIVE_PROJECT_AGENT_NAMES[@]}" >/dev/null 2>/dev/null; then
+    render_args=(agent-sections --capability agentic-notes --output-dir "$CAPABILITY_SECTION_DIR")
+    for agent_name in "${ACTIVE_PROJECT_AGENT_NAMES[@]}"; do
+        render_args+=(--agent-type "$agent_name")
+    done
+
+    if ! capability_render_command "${render_args[@]}" >/dev/null 2>/dev/null; then
         rm -rf "$CAPABILITY_SECTION_DIR"
         CAPABILITY_SECTION_DIR=""
     fi
@@ -400,6 +416,19 @@ setup_capabilities() {
     done
 }
 
+refresh_capabilities() {
+    local capability_name
+
+    export_capability_env
+
+    for capability_name in $(enabled_capability_names); do
+        if ! capability_hook_call "$capability_name" post-compaction; then
+            echo "Error: Capability '$capability_name' refresh failed."
+            exit 1
+        fi
+    done
+}
+
 cleanup_capabilities() {
     local capability_name
 
@@ -480,16 +509,7 @@ setup_capability_refresh_loops() {
 }
 
 render_capability_instruction_parts() {
-    local capability_name section
-
     export_ar_capability_env
 
-    for capability_name in $(enabled_capability_names); do
-        section="$(
-            capability_hook_call "$capability_name" render-instruction 2>/dev/null || true
-        )"
-        if [[ -n "$section" ]]; then
-            printf '%s\n\n' "$section"
-        fi
-    done
+    capability_render_command instruction
 }

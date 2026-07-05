@@ -4,7 +4,9 @@
 - **GPU**: check local availability with `nvidia-smi` first, then `rocm-smi`
   if NVIDIA GPUs are absent. Check remote/backend availability through the active
   External Job Backend when configured.
-- **LaTeX**: read/edit only -- never compile. Syntax check: `TERM=dumb chktex report.tex`
+- **Research record**: use Markdown with embedded LaTeX math when needed.
+  Do not compile work-branch `report.md`; an actual paper-writing agent can
+  produce LaTeX separately.
 - **Tools**: git, gh, jq, rg, yq, python3, uv, curl, wget
 - **Papers**: fetch from `https://arxiv.org/abs/XXXX.XXXXX` or `https://arxiv.org/html/XXXX.XXXXX`
 
