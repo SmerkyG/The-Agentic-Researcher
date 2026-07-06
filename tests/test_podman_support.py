@@ -221,7 +221,7 @@ def test_setup_writes_config_to_xdg_config_home(base_env: dict[str, str], tmp_pa
     result = run(
         [str(FIRST_SETUP_SCRIPT)],
         {**base_env, "XDG_CONFIG_HOME": str(xdg_config_home)},
-        input="1\n1\n\n\n\n\n\n\n\n",
+        input="1\n1\n\n\n\n\n\n\n\n\n",
     )
 
     assert result.returncode == 0
@@ -396,12 +396,18 @@ def test_launcher_native_runs_host_cli__without_container(
     assert "since the last compaction" in codex_hook_text
     assert "run_refresh" in codex_hook_text
     codex_hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
-    codex_command = codex_hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    assert codex_hooks["hooks"]["SessionStart"][0]["matcher"] == "compact"
-    assert "agentic-team-compaction.py" in codex_command
-    assert "capability-refresh" in codex_command
-    assert str(workspace / "AGENTS.md") in codex_command
-    assert str(workspace) in codex_command
+    post_compact_hook = codex_hooks["hooks"]["PostCompact"][0]
+    user_prompt_hook = codex_hooks["hooks"]["UserPromptSubmit"][0]
+    post_compact_command = post_compact_hook["hooks"][0]["command"]
+    inject_command = user_prompt_hook["hooks"][0]["command"]
+    assert post_compact_hook["matcher"] == "manual|auto"
+    assert not codex_hooks["hooks"]["SessionStart"]
+    assert "agentic-team-compaction.py" in post_compact_command
+    assert "post-compact" in post_compact_command
+    assert "inject-pending" in inject_command
+    assert "capability-refresh" in post_compact_command
+    assert str(workspace / "AGENTS.md") in post_compact_command
+    assert str(workspace) in post_compact_command
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
@@ -618,10 +624,12 @@ def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
     assert result_again.returncode == 0
     hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
     assert hooks["hooks"]["Stop"][0]["hooks"][0]["command"] == "printf existing"
-    session_start = hooks["hooks"]["SessionStart"]
-    commands = [hook["command"] for group in session_start for hook in group["hooks"]]
-    managed_commands = [cmd for cmd in commands if "agentic-team-compaction.py" in cmd]
-    assert len(managed_commands) == 1
+    for event_name in ("PostCompact", "UserPromptSubmit"):
+        event_hooks = hooks["hooks"][event_name]
+        commands = [hook["command"] for group in event_hooks for hook in group["hooks"]]
+        managed_commands = [cmd for cmd in commands if "agentic-team-compaction.py" in cmd]
+        assert len(managed_commands) == 1
+    assert not hooks["hooks"]["SessionStart"]
 
 
 def test_build_command_rejects_none_sandbox(base_env: dict[str, str]) -> None:

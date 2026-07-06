@@ -35,7 +35,21 @@ The same layout can appear in:
 
 `always-injected.md` is for short, high-value guidance that should be present in the model's startup context. Keep it concise.
 
-Every other Markdown file in an `agent-notes/<agent_type>/` directory is an on-demand note topic. On-demand notes are listed in the generated instruction file, but their content is not injected until the agent asks for that topic.
+Every other Markdown file in an `agent-notes/<agent_type>/` directory is an on-demand note topic. On-demand notes are listed in the generated instruction file, but their content is not injected until the agent asks for that topic. Add an optional `Topic hints:` line near the top of an on-demand note to make discovery reliable:
+
+```markdown
+# Local Gpu Runtime
+
+Topic hints: rocm, pytorch hip visibility, local runtime, cluster backend
+
+## Lessons
+
+- Check PyTorch device visibility before local GPU-scale runs.
+```
+
+Keep `Topic hints:` to 80 characters or less. It should list the keywords,
+tools, runtimes, packages, and action trigger that should cause an agent to read
+the note; it is not a full summary.
 
 ## Instruction Generation
 
@@ -50,7 +64,8 @@ The `agentic-notes` capability renders an Agentic Notes section into the invocat
 
 Missing files are skipped. On-demand topic listings are also merged across these scopes, excluding `always-injected`.
 The merged topic list is intentionally compact and does not show which scope
-introduced a topic.
+introduced a topic. If multiple scopes provide `Topic hints:` for the same note
+topic, the most-specific available hint is shown.
 
 The generated instruction file is a materialized view. Do not edit injected note text there directly.
 
@@ -64,9 +79,15 @@ agentic-notes read-note --project-dir . --agent-type research-coordinator TOPIC
 
 `agentic-notes read-note` dynamically combines all available org/project/work-branch and `all-agents`/agent-type portions for the requested topic. This prevents an agent from accidentally reading only one scope's fragment of a note. The rendered output labels each portion's scope, so provenance is visible after the agent reads the note.
 
+On-demand notes are read-before-acting guidance. If a listed topic or `Topic
+hints` line plausibly matches the tool, package, runtime, backend,
+architecture, project convention, or work item an agent is about to touch, the
+agent should read the rendered note before acting unless it has already read
+that note since the last compaction.
+
 ## Updating Notes
 
-Working agents should update notes by launching the `note-updater` subagent and following its rendered contract. The trigger is broader than mistakes: missing setup requirements, corrected assumptions, undocumented tool or platform behavior, project conventions, and user corrections should become notes when the lesson would help a future agent. Agents should perform this check before final response. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence and omit timestamps, long command output, and rationale unless essential. The updater first runs the normal `agentic-notes update-note` path, then reviews the rendered note chain. If that made the chain worse through duplication, verbosity, or an obvious scope mismatch, it may perform one rare cleanup rewrite of exactly one source note with `agentic-notes rewrite-note`. It never force-pushes.
+Working agents should update notes by launching the `note-updater` subagent and following its rendered contract. The trigger is broader than mistakes: missing setup requirements, corrected assumptions, undocumented tool or platform behavior, project conventions, and user corrections should become notes when the lesson would help a future agent. Agents should perform this check before final response. This is a required subagent handoff in generated instructions: the parent agent should try to spawn `note-updater`, retry once if spawning fails, and alert the user if it still cannot be spawned rather than silently calling `agentic-notes` directly. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence and omit timestamps, long command output, and rationale unless essential. The updater first runs the normal `agentic-notes update-note` path, then reviews the rendered note chain. If that made the chain worse through duplication, verbosity, or an obvious scope mismatch, it may perform one rare cleanup rewrite of exactly one source note with `agentic-notes rewrite-note`. It never force-pushes.
 
 Agents choose the note scope when they create a note; Agentic Team does not
 automatically promote notes between scopes. Use the narrowest useful scope:

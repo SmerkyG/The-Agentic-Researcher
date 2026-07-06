@@ -18,6 +18,11 @@
   directory provided by the launcher. If none exists, create a clearly named
   directory such as `/workspace/artifacts/` or `/workspace/logs/` and keep bulky
   outputs there rather than scattering them across the repo.
+- **Report figures are state records**: report-ready PNG/PDF figures referenced
+  by work-state `report.md` are expected Git records. Save and commit them under
+  `$WORK_STATE_DIR/images/` even though they are binary files. This exception is
+  for final report figures only; raw arrays, checkpoints, full logs, datasets,
+  and other bulky generated artifacts still belong in artifact/cache storage.
 - **Library caches**: the launcher or host environment may pre-configure cache
   environment variables (e.g., `HF_HOME`, `TRITON_CACHE_DIR`) to point outside
   the workspace. Do not override these with explicit `cache_dir=` arguments

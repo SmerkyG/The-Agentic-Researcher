@@ -20,7 +20,7 @@ target:
   project_id: string             # required for project scope when not inferred
   work_branch: string                  # required for work scope when not inferred
   note_name: string              # required; example: triton
-summary: string                  # required; short label for the update
+  summary: string                  # required; <=80 char Topic hints line: keywords/info that should trigger reading this note
 lesson: string                   # required; final note-ready guidance sentence
 rationale: string                # optional; why this lesson was learned
 source:
@@ -39,7 +39,7 @@ target:
   scope: project
   agent_type: all-agents
   note_name: triton
-summary: Triton cache location
+summary: triton, cache location, project working tree
 lesson: Keep Triton caches outside the project working tree.
 YAML
 ```
@@ -51,6 +51,10 @@ YAML
   reusable knowledge.
 - Keep notes terse: one compact bullet when possible, preserving only the
   important reusable meaning.
+- Use `summary` as the note's `Topic hints:` metadata, not as prose. Make it a
+  comma-separated or compact phrase list of the keywords, tools, runtimes,
+  packages, and action trigger that should make a future agent read the note.
+  Keep it at 80 characters or less.
 - Rewrite verbose incidents into final guidance. Do not include timestamps,
   long command output, full error strings, or rationale unless essential.
 - If the lesson is already present, do not add a duplicate.

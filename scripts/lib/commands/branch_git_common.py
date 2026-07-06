@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from command_common import CommandError, state_root
+from command_common import CommandError, bool_from, state_root
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -109,6 +109,14 @@ def write_yaml(path: Path, data: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=False), encoding="utf-8")
 
 
+def path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def resolve_project_dir(request: dict[str, Any]) -> Path:
     raw = request.get("project_dir") or "."
     project_dir = Path(str(raw)).expanduser().resolve()
@@ -197,6 +205,10 @@ def request_commit_message(request: dict[str, Any]) -> str:
 
 def snapshot_root(snapshot_id: str) -> Path:
     return state_root() / "commit-snapshots" / snapshot_id
+
+
+def commit_worktree_root() -> Path:
+    return state_root() / "commit-worktrees"
 
 
 def status_path(snapshot_dir: Path) -> Path:
@@ -580,3 +592,223 @@ def show_status(snapshot_dir: Path) -> dict[str, Any]:
         except PermissionError:
             status["pid_alive"] = True
     return status
+
+
+def parse_datetime(value: Any) -> dt.datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def snapshot_timestamp(snapshot_dir: Path, status: dict[str, Any], metadata: dict[str, Any]) -> dt.datetime:
+    for key in ("finished_at", "failed_at", "updated_at", "created_at"):
+        parsed = parse_datetime(status.get(key) or metadata.get(key))
+        if parsed is not None:
+            return parsed
+    return dt.datetime.fromtimestamp(snapshot_dir.stat().st_mtime, tz=dt.timezone.utc)
+
+
+def requested_states(request: dict[str, Any]) -> set[str]:
+    raw = request.get("states")
+    if raw is None:
+        return {"committed", "failed", "snapshotted"}
+    if not isinstance(raw, list) or not raw:
+        raise CommandError("states must be a non-empty list")
+    states = {str(item).strip() for item in raw if str(item).strip()}
+    if not states:
+        raise CommandError("states must include at least one non-empty value")
+    return states
+
+
+def requested_snapshot_dirs(request: dict[str, Any]) -> list[Path] | None:
+    raw = request.get("snapshot_dirs")
+    if raw is None:
+        raw_single = request.get("snapshot_dir")
+        if raw_single is None:
+            return None
+        raw = [raw_single]
+    if not isinstance(raw, list) or not raw:
+        raise CommandError("snapshot_dirs must be a non-empty list")
+    return [Path(str(item)).expanduser().resolve() for item in raw]
+
+
+def snapshot_dirs_for_cleanup(request: dict[str, Any]) -> list[Path]:
+    explicit = requested_snapshot_dirs(request)
+    if explicit is not None:
+        return explicit
+    root = state_root() / "commit-snapshots"
+    if not root.exists():
+        return []
+    return sorted(path for path in root.iterdir() if path.is_dir())
+
+
+def non_negative_int_request(request: dict[str, Any], key: str, default: int) -> int:
+    value = request.get(key, default)
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise CommandError(f"{key} must be a non-negative integer") from exc
+    if number < 0:
+        raise CommandError(f"{key} must be a non-negative integer")
+    return number
+
+
+def project_filter_path(request: dict[str, Any]) -> Path | None:
+    value = request.get("project_dir")
+    if value is None or str(value).strip() == "":
+        return None
+    return Path(str(value)).expanduser().resolve()
+
+
+def pid_alive(pid: Any) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def load_snapshot_files(snapshot_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    metadata_file = metadata_path(snapshot_dir)
+    status_file = status_path(snapshot_dir)
+    metadata = safe_load_yaml(metadata_file) if metadata_file.exists() else {}
+    status = safe_load_yaml(status_file) if status_file.exists() else {}
+    return metadata, status
+
+
+def compact_worktree_parents(worktree: Path) -> None:
+    root = commit_worktree_root().resolve()
+    current = worktree.parent
+    for _ in range(2):
+        try:
+            current.resolve().relative_to(root)
+        except ValueError:
+            return
+        if current == root:
+            return
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+def remove_registered_worktree(project_dir: Path | None, worktree: Path) -> list[str]:
+    warnings: list[str] = []
+    if not path_is_relative_to(worktree, commit_worktree_root()):
+        raise CommandError(f"refusing to remove worktree outside commit-worktrees: {worktree}")
+    if project_dir is not None and project_dir.exists():
+        result = git(project_dir, "worktree", "remove", "--force", str(worktree), check=False)
+        if result.returncode == 0:
+            git(project_dir, "worktree", "prune", check=False)
+            compact_worktree_parents(worktree)
+            return warnings
+        detail = (result.stderr or result.stdout or "").strip()
+        warnings.append(f"git worktree remove failed for {worktree}: {detail}")
+
+    common_dir = None
+    if worktree.exists():
+        result = git(worktree, "rev-parse", "--git-common-dir", check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            common_dir = Path(result.stdout.strip()).expanduser()
+            if not common_dir.is_absolute():
+                common_dir = (worktree / common_dir).resolve()
+
+    if worktree.exists():
+        shutil.rmtree(worktree)
+    if common_dir is not None and common_dir.exists():
+        run(["git", "--git-dir", str(common_dir), "worktree", "prune"], check=False)
+    compact_worktree_parents(worktree)
+    return warnings
+
+
+def cleanup_commit_artifacts(request: dict[str, Any]) -> dict[str, Any]:
+    dry_run = bool_from(request.get("dry_run"), default=True)
+    states = requested_states(request)
+    older_than_days = non_negative_int_request(request, "older_than_days", 7)
+    cutoff = None
+    if older_than_days > 0:
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=older_than_days)
+    project_filter = project_filter_path(request)
+    include_active = bool_from(request.get("include_active"), default=False)
+
+    removed: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    planned: list[dict[str, Any]] = []
+
+    for snapshot_dir in snapshot_dirs_for_cleanup(request):
+        base_entry: dict[str, Any] = {"snapshot_dir": str(snapshot_dir)}
+        if not snapshot_dir.exists():
+            skipped.append({**base_entry, "reason": "missing"})
+            continue
+        if not path_is_relative_to(snapshot_dir, state_root() / "commit-snapshots"):
+            skipped.append({**base_entry, "reason": "outside commit-snapshots"})
+            continue
+
+        metadata, status = load_snapshot_files(snapshot_dir)
+        snapshot_id = str(metadata.get("snapshot_id") or status.get("snapshot_id") or snapshot_dir.name)
+        state = str(status.get("state") or "unknown")
+        project_dir = Path(str(metadata["project_dir"])).expanduser().resolve() if metadata.get("project_dir") else None
+        timestamp = snapshot_timestamp(snapshot_dir, status, metadata)
+        worktree_raw = status.get("worktree")
+        worktree = Path(str(worktree_raw)).expanduser().resolve() if worktree_raw else None
+        entry = {
+            **base_entry,
+            "snapshot_id": snapshot_id,
+            "state": state,
+            "updated_at": timestamp.isoformat(timespec="seconds"),
+            "project_dir": str(project_dir) if project_dir is not None else None,
+            "worktree": str(worktree) if worktree is not None else None,
+        }
+
+        if project_filter is not None and project_dir != project_filter:
+            skipped.append({**entry, "reason": "project filter"})
+            continue
+        if state not in states:
+            skipped.append({**entry, "reason": "state not selected"})
+            continue
+        if cutoff is not None and timestamp > cutoff:
+            skipped.append({**entry, "reason": "younger than retention"})
+            continue
+        if state in {"queued", "running"} and not include_active:
+            skipped.append({**entry, "reason": "active state"})
+            continue
+        if state in {"queued", "running"} and pid_alive(status.get("pid")):
+            skipped.append({**entry, "reason": "pid alive"})
+            continue
+
+        if dry_run:
+            planned.append(entry)
+            continue
+
+        warnings: list[str] = []
+        if worktree is not None:
+            warnings = remove_registered_worktree(project_dir, worktree)
+        shutil.rmtree(snapshot_dir)
+        removed.append({**entry, "warnings": warnings})
+
+    return {
+        "dry_run": dry_run,
+        "state_root": str(state_root()),
+        "older_than_days": older_than_days,
+        "selected_states": sorted(states),
+        "planned": planned,
+        "removed": removed,
+        "skipped": skipped,
+        "planned_count": len(planned),
+        "removed_count": len(removed),
+        "skipped_count": len(skipped),
+    }

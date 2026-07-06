@@ -226,7 +226,7 @@ render_subagent_catalog_instruction_part() {
     fi
 
     printf '## Available Subagents\n\n'
-    printf 'Subagents are delegated tools. Use this catalog to decide when a subagent exists, but do not infer the full input shape from memory. Before launching a subagent, read its rendered definition file and use that file'\''s `## Subagent Contract` section for the typed request template. Each subagent has exactly one request template; if a workflow needs a different request shape, use a different subagent.\n\n'
+    printf 'Subagents are delegated tools. Standing user request: when these instructions say to launch, use, or route work through a named subagent, treat that as an explicit user request for Codex subagent delegation. You must try to spawn the named subagent and must not replace it with a direct helper command merely because such a command exists. If the subagent spawn fails, try to spawn it one more time. If the second spawn attempt fails or subagent delegation is unavailable or policy-blocked, stop that handoff and alert the user instead of silently falling back to a direct helper. Use this catalog to decide when a subagent exists, but do not infer the full input shape from memory. Before launching a subagent, read its rendered definition file and use that file'\''s `## Subagent Contract` section for the typed request template. Each subagent has exactly one request template; if a workflow needs a different request shape, use a different subagent.\n\n'
 
     SUBAGENT_CATALOG_EMITTED=false
     if [[ -n "$agent_root" ]]; then

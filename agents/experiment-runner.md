@@ -31,8 +31,13 @@ Returns: experiment ID or local name, files changed, commands run, result metric
 - Run one clearly scoped experiment at a time.
 - Change only the files needed for the assigned experiment.
 - Preserve fixed constraints and evaluation integrity from the project instruction file.
-- Record completed meaningful experiments by launching the `experiment-logger` subagent with the rendered experiment-logger contract when the active work branch's Agentic Team experiment log is available.
-- Use work-branch `report.md` for narrative analysis and work-branch `TODO.md` for follow-ups in the work-state checkout; do not create canonical worktree `report.md` or `TODO.md` files.
+- Record completed meaningful experiments by launching the `experiment-logger`
+  subagent with the rendered experiment-logger contract when the active work
+  branch's Agentic Team experiment log is available. This is a required
+  subagent handoff: try to spawn `experiment-logger`, retry once if spawning
+  fails, and alert the parent/user if it still cannot be spawned. Do not
+  replace it with a direct `experiment-log` command.
+- Use work-branch `report.md` for narrative analysis, work-branch `TODO.md` for follow-ups, and work-state `images/` for report-ready figures; do not create canonical worktree `report.md`, `TODO.md`, or report `images/` files.
 - Use local GPUs when they are available and assigned. If an External Job Backend is active, use the backend instructions before dispatching remote jobs.
 
 Return a concise summary with:

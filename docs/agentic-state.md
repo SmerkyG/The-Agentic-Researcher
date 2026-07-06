@@ -30,6 +30,8 @@ Agentic Team keeps local state checkouts under `$AR_STATE_ROOT`, which defaults 
 
 ```text
 $AR_STATE_ROOT/
+  commit-snapshots/                     # branch-snapshot metadata, patches, and logs
+  commit-worktrees/                     # temporary branch-commit Git worktrees
   repos/
     org-agentic-notes/                  # optional org repo checkout
   projects/
@@ -42,6 +44,24 @@ $AR_STATE_ROOT/
 ```
 
 In container mode, the launcher mounts the Agentic Team install read-only at `/opt/agentic-team` and mounts `$AR_STATE_ROOT` read-write. The org checkout, project state checkout, and work-branch state checkouts live under that writable state root, not inside the read-only install mount.
+
+Commit snapshots and temporary commit worktrees are local operational artifacts.
+They are useful for status checks and debugging after `branch-commit`, but they
+are not durable project records. Use `branch-commit-cleanup` to dry-run and prune
+old committed, failed, or abandoned snapshot artifacts without removing the
+project/work-branch state checkouts:
+
+```bash
+branch-commit-cleanup <<'YAML'
+dry_run: true
+older_than_days: 7
+YAML
+
+branch-commit-cleanup <<'YAML'
+dry_run: false
+older_than_days: 7
+YAML
+```
 
 ## State Branches
 
@@ -73,6 +93,7 @@ agent-notes/
     always-injected.md
 report.md                      # research workflow, when created
 TODO.md                         # research workflow, when created
+images/                         # report-ready figures referenced by report.md
 experiment-log/                 # experiment-log capability, when used
 ```
 

@@ -169,10 +169,10 @@ def seed_org_remote(tmp_path: Path) -> Path:
         "org-notes",
         {
             "agent-notes/all-agents/always-injected.md": "# Org Notes\n\nOrg body.\n",
-            "agent-notes/all-agents/triton.md": "# Triton\n\nUse Triton-specific launch checks.\n",
-            "agent-notes/all-agents/pytorch.md": "# PyTorch\n\nUse PyTorch-specific launch checks.\n",
+            "agent-notes/all-agents/triton.md": "# Triton\n\nTopic hints: triton, launch checks\n\nUse Triton-specific launch checks.\n",
+            "agent-notes/all-agents/pytorch.md": "# PyTorch\n\nTopic hints: pytorch, launch checks\n\nUse PyTorch-specific launch checks.\n",
             "agent-notes/gpu-kernel-engineer/always-injected.md": "# Agent Type Notes\n\nAgent Type body.\n",
-            "agent-notes/gpu-kernel-engineer/kernel-optimization.md": "# Kernel Optimization\n\nUse occupancy checks.\n",
+            "agent-notes/gpu-kernel-engineer/kernel-optimization.md": "# Kernel Optimization\n\nTopic hints: occupancy, kernels\n\nUse occupancy checks.\n",
         },
     )
 
@@ -194,7 +194,7 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
         "# Project Notes\n\nProject body.\n", encoding="utf-8"
     )
     (state / "agent-notes" / "all-agents" / "evaluation.md").write_text(
-        "# Evaluation\n\nUse the fixed evaluation command.\n", encoding="utf-8"
+        "# Evaluation\n\nTopic hints: eval command, fixed split\n\nUse the fixed evaluation command.\n", encoding="utf-8"
     )
     project_agent = state / "agent-notes" / "gpu-kernel-engineer"
     project_agent.mkdir(parents=True, exist_ok=True)
@@ -203,7 +203,7 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
         encoding="utf-8",
     )
     (project_agent / "benchmarking.md").write_text(
-        "# Project Benchmarking\n\nUse project benchmark scripts.\n", encoding="utf-8"
+        "# Project Benchmarking\n\nTopic hints: benchmark scripts\n\nUse project benchmark scripts.\n", encoding="utf-8"
     )
     git(
         state,
@@ -243,11 +243,11 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     assert "(none)" not in text
     assert "### Available On-Demand Note Topics" in text
     assert "--agent-type gpu-kernel-engineer NOTE_TOPIC" in text
-    assert "- `triton`" in text
-    assert "- `pytorch`" in text
-    assert "- `kernel-optimization`" in text
-    assert "- `evaluation`" in text
-    assert "- `benchmarking`" in text
+    assert "- `triton` - triton, launch checks" in text
+    assert "- `pytorch` - pytorch, launch checks" in text
+    assert "- `kernel-optimization` - occupancy, kernels" in text
+    assert "- `evaluation` - eval command, fixed split" in text
+    assert "- `benchmarking` - benchmark scripts" in text
     assert "- `always-injected`" not in text
 
     rendered_note = run(
@@ -603,12 +603,12 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
 
     result = run(
         [
-                sys.executable,
-                str(hook),
-                str(project / "AGENTS.md"),
-                str(REPO_ROOT / "scripts" / "bin" / "capability-refresh"),
-                str(project),
-                "research-coordinator",
+            sys.executable,
+            str(hook),
+            str(project / "AGENTS.md"),
+            str(REPO_ROOT / "scripts" / "bin" / "capability-refresh"),
+            str(project),
+            "research-coordinator",
             "codex",
         ],
         env=env,
@@ -622,6 +622,45 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     assert "Fresh org body." in text
     assert "Fresh project body." in text
     assert "Old project body." not in text
+
+    post_compact_result = run(
+        [
+            sys.executable,
+            str(hook),
+            "post-compact",
+            str(project / "AGENTS.md"),
+            str(REPO_ROOT / "scripts" / "bin" / "capability-refresh"),
+            str(project),
+            "research-coordinator",
+            "codex",
+        ],
+        env=env,
+        input='{"hook_event_name":"PostCompact"}',
+    )
+    post_compact_payload = json.loads(post_compact_result.stdout)
+    assert "just experienced context compaction" in post_compact_payload["systemMessage"]
+    assert "hookSpecificOutput" not in post_compact_payload
+    assert (hook.parent / ".agentic-team-compaction.pending").exists()
+
+    inject_result = run(
+        [
+            sys.executable,
+            str(hook),
+            "inject-pending",
+            str(project / "AGENTS.md"),
+            str(REPO_ROOT / "scripts" / "bin" / "capability-refresh"),
+            str(project),
+            "research-coordinator",
+            "codex",
+        ],
+        env=env,
+        input='{"hook_event_name":"UserPromptSubmit"}',
+    )
+    inject_payload = json.loads(inject_result.stdout)
+    assert inject_payload["suppressOutput"] is True
+    assert inject_payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    assert "just experienced context compaction" in inject_payload["hookSpecificOutput"]["additionalContext"]
+    assert not (hook.parent / ".agentic-team-compaction.pending").exists()
 
 
 def test_note_updater_creates_new_org_note_and_commits(tmp_path: Path) -> None:
@@ -669,6 +708,7 @@ def test_note_update_stores_lesson_without_summary_or_rationale_boilerplate(tmp_
 
     checkout = org_checkout(env)
     text = (checkout / "agent-notes" / "all-agents" / "gpu-runtime.md").read_text()
+    assert "Topic hints: ROCm runtime mismatch" in text
     assert "- Check PyTorch device visibility before launching local ROCm GPU jobs." in text
     assert "ROCm runtime mismatch:" not in text
     assert "rocm-smi listed devices" not in text
@@ -800,6 +840,7 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     plan = tmp_path / "plan.md"
     report = tmp_path / "report.md"
     todo = tmp_path / "TODO.md"
+    figure = tmp_path / "baseline.png"
     plan.write_text(
         "# Research Plan: kernel-search\n\n"
         "**Goal:** Find a faster sparse attention kernel.\n\n"
@@ -812,6 +853,7 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
         encoding="utf-8",
     )
     todo.write_text("- [ ] Run baseline benchmark\n", encoding="utf-8")
+    figure.write_bytes(b"not-a-real-png")
 
     run(
         [
@@ -838,7 +880,9 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     work_state = work_state_dir(env)
     (work_state / "report.md").write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
     (work_state / "TODO.md").write_text(todo.read_text(encoding="utf-8"), encoding="utf-8")
-    git(work_state, "add", "report.md", "TODO.md")
+    (work_state / "images").mkdir()
+    (work_state / "images" / "baseline.png").write_bytes(figure.read_bytes())
+    git(work_state, "add", "report.md", "TODO.md", "images/")
     git(work_state, "commit", "-m", "work-state: update research records")
     git(work_state, "push")
 
@@ -846,13 +890,22 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     assert stored_plan.read_text(encoding="utf-8") == plan.read_text(encoding="utf-8")
     assert (work_state / "report.md").read_text(encoding="utf-8") == report.read_text(encoding="utf-8")
     assert (work_state / "TODO.md").read_text(encoding="utf-8") == todo.read_text(encoding="utf-8")
+    assert (work_state / "images" / "baseline.png").read_bytes() == figure.read_bytes()
     assert not (project / "report.md").exists()
     assert not (project / "TODO.md").exists()
+    assert not (project / "images" / "baseline.png").exists()
 
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "## Agentic State" in instruction_text
     assert "agentic/work-state/kernel-search" in instruction_text
     assert 'WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/${AR_WORK_BRANCH:?}"' in instruction_text
+    assert 'mkdir -p "$WORK_STATE_DIR/images"' in instruction_text
+    assert 'git -C "$WORK_STATE_DIR" add report.md TODO.md images/' in instruction_text
+    assert "$WORK_STATE_DIR/images/" in instruction_text
+    assert (
+        "do not skip report-ready PNG/PDF figures merely because they are binary files"
+        in " ".join(instruction_text.split())
+    )
     assert "**Goal:** Find a faster sparse attention kernel." in instruction_text
     assert "#### Work branch: kernel-search / research-coordinator" in instruction_text
     assert "No work-branch always-injected guidance" not in instruction_text
@@ -1727,6 +1780,8 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert "<!-- AGENTIC-TEAM-MAIN-AGENT-START" not in instruction_text
     assert "<!-- AGENTIC-TEAM-SUBAGENTS-START" not in instruction_text
     assert "## Available Subagents" in instruction_text
+    assert "Standing user request" in instruction_text
+    assert "If the subagent spawn fails, try to spawn it one more time" in instruction_text
     assert "- `experiment-logger`:" in instruction_text
     assert "- `experiment-corrector`:" in instruction_text
     assert "- `branch-committer`:" not in instruction_text

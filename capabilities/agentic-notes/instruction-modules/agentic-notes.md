@@ -7,11 +7,14 @@ and active-work-branch state checkouts under `agent-notes/all-agents/` and
 This document may include a generated **Agentic Notes** section below.
 Injected `always-injected.md` note content is already part of the instruction context.
 Never open source note files named `always-injected.md` directly. The generated section
-also lists on-demand note topics. Before working on a package, library,
-architecture, benchmark, project convention, or other work item that appears
-related to a listed on-demand note topic, use the generated `agentic-notes read-note`
-command to read the rendered note if you have not read it since the last
-compaction.
+also lists on-demand note topics with terse `Topic hints` metadata when available.
+On-demand notes are read-before-acting guidance. Before taking an action whose
+tool, package, runtime, backend, architecture, project convention, or work item
+plausibly matches a listed topic or hint, use the generated `agentic-notes
+read-note` command to read the rendered note if you have not read it since the
+last compaction. This applies to setup checks and routine workflow actions too,
+not only implementation work. Avoid re-reading a note already read since the
+last compaction unless you need to verify changed content.
 Rendered notes dynamically combine all available organization, project, and
 work-branch note portions for `all-agents` plus the current agent type.
 
@@ -19,9 +22,13 @@ Before final response, and after correcting any wrong assumption, failed
 workflow, missing setup step, undocumented tool behavior, or user correction,
 ask whether the lesson would help a future agent. If yes, launch the
 `note-updater` subagent and follow its rendered contract before reporting
-completion. Do not wait for the user to ask for a note. Prefer a terse
-project or work-branch note over losing reusable knowledge. Notes should be
-short reusable guidance, not incident reports.
+completion. This is a required subagent handoff under the standing user request
+in the subagent catalog: try to spawn `note-updater`, retry once if spawning
+fails, and alert the user if it still cannot be spawned. Do not replace it with
+a direct `agentic-notes` command from the parent agent. Do not wait for the
+user to ask for a note. Prefer a terse project or work-branch note over losing
+reusable knowledge. Notes should be short reusable guidance, not incident
+reports.
 Choose the target scope when creating the note. Use the narrowest scope that
 will help future agents: `work` for the active work branch only, `project` for
 future work in this repository, and `org` only for lessons that apply across

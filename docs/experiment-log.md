@@ -49,6 +49,11 @@ Working agents do not write experiment-log state directly. They use subagents:
 - `experiment-corrector` appends corrections to existing experiment files.
 - `branch-commit` can finalize an experiment log entry automatically after a code commit hash exists, when the snapshot includes an `after_commit.experiment_log` payload.
 
+Generated instructions treat `experiment-logger` and `experiment-corrector` as
+required subagent handoffs: the parent agent should try to spawn the named
+subagent, retry once if spawning fails, and alert the user if it still cannot be
+spawned rather than silently calling `experiment-log` directly.
+
 When logging an experiment, the experiment logger pulls latest work-branch state, reads the counter, writes one YAML file, increments the counter, appends one row to `SUMMARY.md`, commits, and pushes.
 
 If a push is rejected, the helper retries from the latest remote state. If it cannot safely merge the requested append, it reports the error instead of rewriting existing experiment history.
@@ -83,4 +88,7 @@ experiment-log correct --request REQUEST.yaml --project-dir PATH --work-branch W
 experiment-log summary --project-dir PATH --work-branch WORK_BRANCH
 ```
 
-Research workflows often keep `report.md` and `TODO.md` on the same work-branch state branch. Those files are mutable synthesis/checklist records owned by the research workflow, not by the experiment-log capability.
+Research workflows often keep `report.md`, `TODO.md`, and report-ready figures
+under `images/` on the same work-branch state branch. Those files are mutable
+synthesis/checklist/report-asset records owned by the research workflow, not by
+the experiment-log capability.

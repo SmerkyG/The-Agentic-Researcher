@@ -83,17 +83,23 @@ tells you whether a 2% improvement is nearly optimal or barely scratching the su
 - Every meaningful completed experiment must be logged in the active work
   branch's Agentic Researcher experiment log when that mechanism is available. Launch the
   `experiment-logger` subagent and follow its rendered contract so the shared
-  state write is handled consistently. The work-branch experiment log is the
-  durable ledger for the current top-level agent work branch.
+  state write is handled consistently. This is a required subagent handoff:
+  try to spawn `experiment-logger`, retry once if spawning fails, and alert the
+  user if it still cannot be spawned. Do not replace it with a direct
+  `experiment-log` command from the parent agent. The work-branch experiment log
+  is the durable ledger for the current top-level agent work branch.
 - Use `report.md` for branch-local narrative research writing: derivations,
   methods, detailed analysis, verification blocks, figures, and selected result
   tables. Do not treat `report.md` as the shared experiment index in
   multi-agent projects.
-- When analyzing distributions, comparisons, or scaling, **create plots**. Save as
-  PDF+PNG in `images/`. Claims about "large", "extreme", or "balanced" quantities
-  must be backed by a figure. In `report.md`, embed PNG previews with Markdown
-  image syntax such as `![caption](images/name.png)`; link PDFs only as
-  secondary artifacts. Visualize, don't just describe.
+- When analyzing distributions, comparisons, or scaling, **create plots**. Save
+  report-ready PDF+PNG figures in `$WORK_STATE_DIR/images/` so they live beside
+  the work-state `report.md`. Claims about "large", "extreme", or "balanced"
+  quantities must be backed by a figure. In `report.md`, embed PNG previews with
+  Markdown image syntax such as `![caption](images/name.png)`; link PDFs only as
+  secondary artifacts. Commit `images/` with the work-state report update; do
+  not skip report-ready PNG/PDF figures merely because they are binary files.
+  Visualize, don't just describe.
 - **Maintain `TODO.md` as a branch-local/session-local checklist**, not as a
   shared multi-agent work queue. Add open questions, unverified claims, and
   deferred checks relevant to the current branch. Check off items when resolved.

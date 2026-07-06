@@ -83,6 +83,7 @@ render_compaction_context_hook_script() {
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 
 def run_command(command: list[str]) -> tuple[bool, str]:
@@ -113,24 +114,22 @@ def run_refresh(capability_refresh_cli: str, instruction_path: str, project_dir:
     return run_command(command)
 
 
-def main() -> None:
-    instruction_path = sys.argv[1] if len(sys.argv) > 1 else "AGENTS.md"
-    capability_refresh_cli = sys.argv[2] if len(sys.argv) > 2 else ""
-    project_dir = sys.argv[3] if len(sys.argv) > 3 else "."
-    agent_type = sys.argv[4] if len(sys.argv) > 4 else "research-coordinator"
-    cli = sys.argv[5] if len(sys.argv) > 5 else "codex"
+def read_hook_input() -> dict:
     try:
-        hook_input = json.load(sys.stdin)
+        value = json.load(sys.stdin)
     except Exception:
-        hook_input = {}
-    event_name = hook_input.get("hook_event_name") or "SessionStart"
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def refresh_message(instruction_path: str, capability_refresh_cli: str, project_dir: str, agent_type: str, cli: str) -> str:
     refreshed, refresh_status = run_refresh(capability_refresh_cli, instruction_path, project_dir, agent_type, cli)
     refresh_sentence = (
         "Agentic Team just refreshed configured capabilities and rematerialized the rendered instruction file."
         if refreshed
         else f"Agentic Team tried to refresh configured capabilities, but refresh failed: {refresh_status}"
     )
-    message = (
+    return (
         "You have just experienced context compaction. Treat this moment as "
         "the new `since the last compaction` boundary for Agentic Notes. "
         f"{refresh_sentence} Before continuing, read "
@@ -138,6 +137,79 @@ def main() -> None:
         "specific Agentic Team invocation, then continue with whatever "
         "task was in progress before compaction. Do not restart from scratch."
     )
+
+
+def marker_path() -> Path:
+    return Path(__file__).with_name(".agentic-team-compaction.pending")
+
+
+def mark_pending(message: str) -> None:
+    marker_path().write_text(json.dumps({"message": message}) + "\n", encoding="utf-8")
+
+
+def inject_pending() -> None:
+    read_hook_input()
+    marker = marker_path()
+    if not marker.exists():
+        print("{}")
+        return
+
+    try:
+        marker_data = json.loads(marker.read_text(encoding="utf-8"))
+    except Exception:
+        marker_data = {}
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        pass
+
+    message = marker_data.get("message")
+    if not isinstance(message, str) or not message:
+        print("{}")
+        return
+
+    print(json.dumps({
+        "suppressOutput": True,
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": message,
+        },
+    }))
+
+
+def parse_args() -> tuple[str, str, str, str, str, str]:
+    modes = {"session-start", "post-compact", "inject-pending"}
+    if len(sys.argv) > 1 and sys.argv[1] in modes:
+        mode = sys.argv[1]
+        offset = 2
+    else:
+        mode = "session-start"
+        offset = 1
+
+    instruction_path = sys.argv[offset] if len(sys.argv) > offset else "AGENTS.md"
+    capability_refresh_cli = sys.argv[offset + 1] if len(sys.argv) > offset + 1 else ""
+    project_dir = sys.argv[offset + 2] if len(sys.argv) > offset + 2 else "."
+    agent_type = sys.argv[offset + 3] if len(sys.argv) > offset + 3 else "research-coordinator"
+    cli = sys.argv[offset + 4] if len(sys.argv) > offset + 4 else "codex"
+    return mode, instruction_path, capability_refresh_cli, project_dir, agent_type, cli
+
+
+def main() -> None:
+    mode, instruction_path, capability_refresh_cli, project_dir, agent_type, cli = parse_args()
+    if mode == "inject-pending":
+        inject_pending()
+        return
+
+    hook_input = read_hook_input()
+    event_name = hook_input.get("hook_event_name") or "SessionStart"
+    message = refresh_message(instruction_path, capability_refresh_cli, project_dir, agent_type, cli)
+    if mode == "post-compact":
+        mark_pending(message)
+        print(json.dumps({
+            "systemMessage": message,
+        }))
+        return
+
     print(json.dumps({
         "systemMessage": "Agentic Team refreshed post-compaction instructions.",
         "hookSpecificOutput": {

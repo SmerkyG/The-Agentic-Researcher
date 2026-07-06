@@ -317,6 +317,120 @@ def test_branch_commit_status_accepts_snapshot_dir_or_status_path(tmp_path: Path
     assert by_status_path["snapshot_dir"] == snapshot["snapshot_dir"]
 
 
+def test_branch_commit_cleanup_removes_committed_snapshot_and_worktree(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    env = os.environ.copy()
+    env["AR_STATE_ROOT"] = str(tmp_path / "state")
+    env["AR_WORK_BRANCH"] = "kernel-search"
+    (repo / "README.md").write_text("cleanup target\n", encoding="utf-8")
+    snapshot = json.loads(
+        run_agent_command(
+            "branch-snapshot",
+            {
+                "project_dir": str(repo),
+                "paths": ["README.md"],
+                "commit_message": "test: cleanup target",
+            },
+            env=env,
+        ).stdout
+    )
+    committed = json.loads(
+        run_agent_command(
+            "branch-commit",
+            {"snapshot_dir": snapshot["snapshot_dir"], "background": False},
+            env=env,
+        ).stdout
+    )
+    snapshot_dir = Path(snapshot["snapshot_dir"])
+    worktree = Path(committed["worktree"])
+    assert snapshot_dir.exists()
+    assert worktree.exists()
+    assert str(worktree) in git(repo, "worktree", "list", "--porcelain")
+
+    dry_run = json.loads(
+        run_agent_command(
+            "branch-commit-cleanup",
+            {
+                "dry_run": True,
+                "older_than_days": 0,
+                "states": ["committed"],
+                "project_dir": str(repo),
+            },
+            env=env,
+        ).stdout
+    )
+    assert dry_run["planned_count"] == 1
+    assert dry_run["removed_count"] == 0
+    assert snapshot_dir.exists()
+    assert worktree.exists()
+
+    cleaned = json.loads(
+        run_agent_command(
+            "branch-commit-cleanup",
+            {
+                "dry_run": False,
+                "older_than_days": 0,
+                "states": ["committed"],
+                "project_dir": str(repo),
+            },
+            env=env,
+        ).stdout
+    )
+    assert cleaned["removed_count"] == 1
+    assert cleaned["planned_count"] == 0
+    assert not snapshot_dir.exists()
+    assert not worktree.exists()
+    assert str(worktree) not in git(repo, "worktree", "list", "--porcelain")
+
+
+def test_branch_commit_cleanup_skips_live_running_snapshot(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["AR_STATE_ROOT"] = str(tmp_path / "state")
+    snapshot_dir = Path(env["AR_STATE_ROOT"]) / "commit-snapshots" / "running"
+    worktree = Path(env["AR_STATE_ROOT"]) / "commit-worktrees" / "running" / "kernel-search"
+    snapshot_dir.mkdir(parents=True)
+    worktree.mkdir(parents=True)
+    timestamp = "2000-01-01T00:00:00+00:00"
+    write_yaml(
+        snapshot_dir / "metadata.yaml",
+        {
+            "snapshot_id": "running",
+            "created_at": timestamp,
+            "project_dir": str(tmp_path / "project"),
+        },
+    )
+    write_yaml(
+        snapshot_dir / "status.yaml",
+        {
+            "snapshot_id": "running",
+            "state": "running",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "pid": os.getpid(),
+            "worktree": str(worktree),
+        },
+    )
+
+    result = json.loads(
+        run_agent_command(
+            "branch-commit-cleanup",
+            {
+                "dry_run": False,
+                "older_than_days": 0,
+                "states": ["running"],
+                "include_active": True,
+            },
+            env=env,
+        ).stdout
+    )
+
+    assert result["removed_count"] == 0
+    assert result["skipped_count"] == 1
+    assert result["skipped"][0]["reason"] == "pid alive"
+    assert snapshot_dir.exists()
+    assert worktree.exists()
+
+
 def test_commit_snapshot_times_out_stuck_check(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     env = os.environ.copy()
@@ -444,7 +558,7 @@ def test_commit_snapshot_uses_configured_agentic_team_identity(tmp_path: Path) -
 
 
 def test_branch_commands_have_help() -> None:
-    for command_name in ["branch-snapshot", "branch-commit", "branch-commit-status"]:
+    for command_name in ["branch-snapshot", "branch-commit", "branch-commit-status", "branch-commit-cleanup"]:
         result = run([str(BIN_DIR / command_name), "--help"])
         assert result.returncode == 0
         assert "Reads YAML from stdin" in result.stdout

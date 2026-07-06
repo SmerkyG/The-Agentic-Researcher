@@ -70,8 +70,12 @@ Before final response, check whether this task revealed a reusable lesson: a
 missing setup requirement, tool or platform gotcha, project convention,
 incorrect assumption you corrected, or user correction that future agents should
 not repeat. If yes, launch `note-updater` before reporting completion. Keep the
-note to terse reusable guidance at the narrowest useful scope. Do not create
-notes for one-off command output, transient task status, or unverified guesses.
+note to terse reusable guidance at the narrowest useful scope. This is a
+required subagent handoff under the standing user request in the subagent
+catalog: try to spawn `note-updater`, retry once if spawning fails, and alert
+the user if it still cannot be spawned. Do not replace it with a direct
+`agentic-notes` command from the parent agent. Do not create notes for one-off
+command output, transient task status, or unverified guesses.
 
 ## Commit Handoff
 
@@ -107,6 +111,10 @@ For a coherent completed change set, offload the commit:
    commit hash, progress, or an error. It accepts either the returned
    `snapshot_dir` or `status_path` as a positional argument.
 
+Use `branch-commit-cleanup` for old local snapshot metadata and temporary commit
+worktrees only after they are no longer needed for status checks or debugging.
+Run it as a dry run first.
+
 Ordinary systems-development commits do not need experiment logging.
 
 ## Subagents
@@ -118,6 +126,11 @@ Ordinary systems-development commits do not need experiment logging.
   Agentic Team workflow lesson.
 - Use specialized subagents only when their role fits the task. Do not launch
   `experiment-logger` for ordinary software development work.
+
+When these instructions say to use a named subagent, try to spawn it, retry once
+if spawning fails, and alert the user if it still cannot be spawned. Do not
+replace required subagent handoffs with direct helper commands from the parent
+agent.
 
 ## Test Hygene
 

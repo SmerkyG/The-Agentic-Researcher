@@ -257,6 +257,21 @@ def note_topics(directory: Path) -> set[str]:
     return {name.removesuffix(".md") for name in note_names(directory)}
 
 
+def shorten_summary(text: str, max_len: int = 80) -> str:
+    text = " ".join(text.split())
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3].rstrip() + "..."
+
+
+def note_topic_summary(path: Path) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"^Topic hints:\s*(.+?)\s*$", text, flags=re.MULTILINE)
+    return shorten_summary(match.group(1)) if match else ""
+
+
 def read_text_if_exists(path: Path) -> str | None:
     if not path.exists():
         return None
@@ -336,6 +351,10 @@ def append_composed_note(lines: list[str], title: str, parts: list[tuple[str, st
 
 
 def scoped_on_demand_topics(project_dir: Path, agent_type_value: str) -> list[str]:
+    return [topic for topic, _summary in scoped_on_demand_topic_summaries(project_dir, agent_type_value)]
+
+
+def scoped_on_demand_topic_summaries(project_dir: Path, agent_type_value: str) -> list[tuple[str, str]]:
     project_repo = project_state_path(project_dir)
     work_branch_value = os.environ.get("AR_WORK_BRANCH")
     work_state_repo = ensure_work_agent_notes_state(project_dir, work_branch_value, pull_remote=False, push_changes=False) if work_branch_value else None
@@ -355,10 +374,14 @@ def scoped_on_demand_topics(project_dir: Path, agent_type_value: str) -> list[st
         directories.append(agent_notes_dir(work_state_repo, "work", ALL_AGENTS_TYPE))
         if agent_type_value != ALL_AGENTS_TYPE:
             directories.append(agent_notes_dir(work_state_repo, "work", agent_type_value))
-    topics: set[str] = set()
+    summaries: dict[str, str] = {}
     for directory in directories:
-        topics.update(note_topics(directory))
-    return sorted(topics)
+        for name in note_names(directory):
+            topic = name.removesuffix(".md")
+            summary = note_topic_summary(directory / name)
+            # Later directories are more specific; let them refine the summary.
+            summaries[topic] = summary or summaries.get(topic, "")
+    return [(topic, summaries[topic]) for topic in sorted(summaries)]
 
 
 def build_notes_section(
@@ -368,7 +391,7 @@ def build_notes_section(
     include_guidance: bool = True,
 ) -> str:
     always_parts = compose_scoped_note(project_dir, agent_type_value, ALWAYS_INJECTED_NOTE_STEM)
-    topics = scoped_on_demand_topics(project_dir, agent_type_value)
+    topics = scoped_on_demand_topic_summaries(project_dir, agent_type_value)
 
     lines: list[str] = []
     if include_guidance:
@@ -378,10 +401,10 @@ def build_notes_section(
                 "",
                 "Git-backed Agentic Notes contain helpful knowledge about packages, tools, architectures, project conventions, and agent-type-specific work.",
                 "",
-                "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. Before working on a package, library, architecture, benchmark, project convention, or other work item that appears related to one of the listed on-demand note topics, read the rendered note with `agentic-notes read-note --project-dir . --agent-type "
-                f"{agent_type_value} NOTE_TOPIC` if you have not read it since the last compaction. That command dynamically combines all available org/project/work-branch and all-agents/agent-type portions for this project, work branch, and agent type.",
+                "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. On-demand notes are listed with terse `Topic hints` metadata when available. They are read-before-acting guidance: before taking an action whose tool, package, runtime, backend, architecture, project convention, or work item plausibly matches a listed topic or hint, read the rendered note with `agentic-notes read-note --project-dir . --agent-type "
+                f"{agent_type_value} NOTE_TOPIC` if you have not read it since the last compaction. This applies to setup checks and routine workflow actions too, not only implementation work. Avoid re-reading a note already read since the last compaction unless you need to verify changed content. That command dynamically combines all available org/project/work-branch and all-agents/agent-type portions for this project, work branch, and agent type.",
                 "",
-                "Before final response, and after correcting any wrong assumption, failed workflow, missing setup step, undocumented tool behavior, or user correction, ask whether the lesson would help a future agent. If yes, launch the `note-updater` subagent and tell it which note to update or create before reporting completion. Do not wait for the user to ask for a note. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence, omit timestamps, long command output, and rationale unless essential. Choose the narrowest useful scope when creating a note: work for the active work branch only, project for future work in this repository, and org only for lessons that apply across projects. Ordinary working agents do not promote, move, or copy existing notes between scopes. On-demand topic lists are merged and do not show which scope introduced a topic; `agentic-notes read-note` output labels each rendered note portion after you read it. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. Use `all-agents` for lessons useful to every agent in the chosen scope and agent-type notes for lessons useful only to one main agent or subagent type. Use `always-injected.md` only for short guidance worth injecting into future contexts. Do not create notes for one-off command output, transient task status, speculation that has not been verified, temporary workarounds, or fix-needed defects. If a command, dependency, service, environment, policy, or other system is confusing or broken and a user, sysadmin, upstream maintainer, or tool owner could fix it, record an actionable fix request in the appropriate local work record (`HELP.md`, issue tracker, or final user report) and alert the user/sysadmin instead of creating a project or work-branch note. Use an org note only when the workaround is durable across projects and no near-term fix can be expected.",
+                "Before final response, and after correcting any wrong assumption, failed workflow, missing setup step, undocumented tool behavior, or user correction, ask whether the lesson would help a future agent. If yes, launch the `note-updater` subagent and tell it which note to update or create before reporting completion. This is a required subagent handoff under the standing user request in the subagent catalog: try to spawn `note-updater`, retry once if spawning fails, and alert the user if it still cannot be spawned. Do not replace it with a direct `agentic-notes` command from the parent agent. Do not wait for the user to ask for a note. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence, omit timestamps, long command output, and rationale unless essential. Choose the narrowest useful scope when creating a note: work for the active work branch only, project for future work in this repository, and org only for lessons that apply across projects. Ordinary working agents do not promote, move, or copy existing notes between scopes. On-demand topic lists are merged and do not show which scope introduced a topic; `agentic-notes read-note` output labels each rendered note portion after you read it. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. Use `all-agents` for lessons useful to every agent in the chosen scope and agent-type notes for lessons useful only to one main agent or subagent type. Use `always-injected.md` only for short guidance worth injecting into future contexts. Do not create notes for one-off command output, transient task status, speculation that has not been verified, temporary workarounds, or fix-needed defects. If a command, dependency, service, environment, policy, or other system is confusing or broken and a user, sysadmin, upstream maintainer, or tool owner could fix it, record an actionable fix request in the appropriate local work record (`HELP.md`, issue tracker, or final user report) and alert the user/sysadmin instead of creating a project or work-branch note. Use an org note only when the workaround is durable across projects and no near-term fix can be expected.",
                 "",
             ]
         )
@@ -390,7 +413,11 @@ def build_notes_section(
 
     if topics:
         lines.extend(["### Available On-Demand Note Topics", ""])
-        lines.extend([f"- `{topic}`" for topic in topics])
+        for topic, summary in topics:
+            if summary:
+                lines.append(f"- `{topic}` - {summary}")
+            else:
+                lines.append(f"- `{topic}`")
         lines.append("")
 
     return "\n".join(lines)
@@ -564,11 +591,32 @@ def canonical_lesson(request: dict[str, Any]) -> str:
     return " ".join(summary.split())
 
 
+def canonical_topic_hints(request: dict[str, Any], note_path: Path) -> str:
+    if note_path.name == ALWAYS_INJECTED_NOTE:
+        return ""
+    summary = " ".join(str(request.get("summary") or "").split())
+    return shorten_summary(summary) if summary else ""
+
+
 def note_title(note_path: Path) -> str:
     title = note_path.stem.replace("-", " ").replace("_", " ").title()
     if note_path.name == ALWAYS_INJECTED_NOTE:
         title = "Always-Injected Notes"
     return title
+
+
+def apply_topic_hints(text: str, hints: str) -> str:
+    if not hints:
+        return text
+    line = f"Topic hints: {hints}"
+    if re.search(r"^Topic hints:\s*.*$", text, flags=re.MULTILINE):
+        return re.sub(r"^Topic hints:\s*.*$", line, text, count=1, flags=re.MULTILINE)
+    stripped = text.rstrip()
+    title_match = re.match(r"^(# .+?\n)(?:\n)?(.*)$", stripped, flags=re.DOTALL)
+    if title_match:
+        rest = title_match.group(2)
+        return f"{title_match.group(1)}\n{line}\n\n{rest}".rstrip() + "\n"
+    return f"{line}\n\n{stripped}\n"
 
 
 def merge_note_text(existing: str, request: dict[str, Any], note_path: Path) -> str:
@@ -577,18 +625,20 @@ def merge_note_text(existing: str, request: dict[str, Any], note_path: Path) -> 
     if not lesson and not summary:
         raise AtNotesError("note update request requires lesson or summary")
 
+    topic_hints = canonical_topic_hints(request, note_path)
+    text = apply_topic_hints(existing.rstrip(), topic_hints).rstrip() if existing.strip() else ""
     normalized_existing = " ".join(existing.split())
     if lesson and lesson in normalized_existing:
-        return existing.rstrip() + "\n"
+        return text + "\n"
     if summary and summary in normalized_existing and not lesson:
-        return existing.rstrip() + "\n"
+        return text + "\n"
 
     bullet = lesson or summary
 
     if not existing.strip():
-        return f"# {note_title(note_path)}\n\n## Lessons\n\n- {bullet}\n"
+        hints = f"\n\nTopic hints: {topic_hints}" if topic_hints else ""
+        return f"# {note_title(note_path)}{hints}\n\n## Lessons\n\n- {bullet}\n"
 
-    text = existing.rstrip()
     if "## Lessons" not in text:
         text += "\n\n## Lessons"
     text += f"\n\n- {bullet}\n"

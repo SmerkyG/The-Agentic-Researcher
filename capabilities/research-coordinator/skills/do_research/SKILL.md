@@ -38,9 +38,11 @@ The active work branch's durable state lives on the project work state branch
   workflow creates it.
 - `TODO.md` is the mutable work-branch-local checklist when this research workflow
   creates it.
+- `images/` stores report-ready figures referenced by `report.md`.
 
 Code branches and experiment subbranches hold code. Do not treat worktree
-`report.md` or worktree `TODO.md` as canonical work-branch records.
+`report.md`, worktree `TODO.md`, or worktree report `images/` as canonical
+work-branch records.
 
 ## Detect Resume vs Fresh Start
 
@@ -172,7 +174,9 @@ Wait for the user to respond before continuing.
 4. Save the approved plan to `$WORK_STATE_DIR/agent-notes/$MAIN_AGENT/always-injected.md`
    and commit it on the work-state branch. This setup step initializes the
    work-branch plan directly; normal learned note updates still go through the
-   `note-updater` subagent.
+   `note-updater` subagent. For normal learned note updates, try to spawn
+   `note-updater`, retry once if spawning fails, and alert the user if it still
+   cannot be spawned instead of silently calling `agentic-notes` directly.
 
 ```bash
 mkdir -p "$WORK_STATE_DIR/agent-notes/$MAIN_AGENT"
@@ -209,15 +213,20 @@ cat > "$WORK_STATE_DIR/TODO.md" <<'MARKDOWN'
 - [ ] Run baseline evaluation
 MARKDOWN
 
-git -C "$WORK_STATE_DIR" add report.md TODO.md
+mkdir -p "$WORK_STATE_DIR/images"
+git -C "$WORK_STATE_DIR" add report.md TODO.md images/
 git -C "$WORK_STATE_DIR" commit -m "work-state: initialize $WORK_BRANCH research records"
 git -C "$WORK_STATE_DIR" push
 ```
 
 Use Markdown headings and tables in `report.md`; embed LaTeX math only when it
 helps the derivation. Use Markdown image links for figures, embedding PNGs
-such as `![caption](images/name.png)` rather than PDF-only links. Use
-`TODO.md` checklist items in `- [ ] item` format.
+such as `![caption](images/name.png)` rather than PDF-only links. Save
+report-ready PNG/PDF figures under `$WORK_STATE_DIR/images/` and commit
+`images/` with the report even though those files are binary. Keep raw arrays,
+checkpoints, full logs, datasets, and other bulky generated artifacts in
+artifact/cache storage instead. Use `TODO.md` checklist items in `- [ ] item`
+format.
 
 6. Proceed with initial setup:
    - Explore the codebase structure and understand the architecture
@@ -225,13 +234,15 @@ such as `![caption](images/name.png)` rather than PDF-only links. Use
      `rocm-smi`
    - Install dependencies with `uv sync`
    - Run the baseline evaluation command from the research plan
-   - Update work-branch `report.md` and `TODO.md` by editing the work-state
-     checkout and committing those files there
+   - Update work-branch `report.md`, `TODO.md`, and report figures by editing
+     the work-state checkout and committing those files there
    - If the baseline is a meaningful completed experiment, launch
-     `experiment-logger` so the active work-branch summary receives an experiment ID
+     `experiment-logger` so the active work-branch summary receives an
+     experiment ID; retry once if spawning fails and alert the user if it still
+     cannot be spawned
    - Commit only code/config/script changes that belong in the code branch; do
-     not commit work-branch Agentic Notes, `report.md`, or `TODO.md` to the code
-     branch
+     not commit work-branch Agentic Notes, `report.md`, `TODO.md`, or report
+     `images/` to the code branch
    - Begin the autonomous experiment loop and keep repeating it until no useful
      autonomous work remains
 

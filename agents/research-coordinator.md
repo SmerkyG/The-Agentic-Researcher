@@ -108,10 +108,10 @@ Do this every session or after context compaction:
 4. If the active work branch experiment log is available, read its `SUMMARY.md`
    first with `experiment-log summary --project-dir . --work-branch
    "$AR_WORK_BRANCH"`; open individual experiment YAML files only when needed.
-5. Read work-branch `report.md` and `TODO.md` from the work-state checkout
-   when needed for narrative analysis, derivations, detailed results, open
-   questions, and deferred work. These records live on the work state branch,
-   not in the code worktree.
+5. Read work-branch `report.md`, `TODO.md`, and report figures from the
+   work-state checkout when needed for narrative analysis, derivations, detailed
+   results, open questions, and deferred work. These records live on the work
+   state branch, not in the code worktree.
 6. Run `git log --oneline -20` and `git status`.
 7. Check local GPUs: run `nvidia-smi`; if no usable NVIDIA GPU is visible, run
    `rocm-smi`.
@@ -130,15 +130,20 @@ Do this every session or after context compaction:
 3. **Implement** minimal, focused changes. Keep diffs small.
 4. **Evaluate** using the three-tier strategy from the shared commitments.
 5. **Analyze** honestly. Write a hypothesis for why it worked or did not.
-6. **Update work-branch records**: keep analysis and follow-ups in work-branch
-   `report.md` and `TODO.md` by editing those normal files in the work-state
-   checkout, then committing and pushing only those work-state files. Prepare
-   experiment-log request content when the result is meaningful.
+6. **Update work-branch records**: keep analysis, follow-ups, and report figures
+   in work-branch `report.md`, `TODO.md`, and `images/` by editing those normal
+   files in the work-state checkout, then committing and pushing only those
+   work-state files. Prepare experiment-log request content when the result is
+   meaningful.
 7. **Capture reusable lessons**: if debugging, failed runs, corrected
    assumptions, missing setup, or user corrections revealed guidance that would
-   help future agents, launch `note-updater` before reporting completion. Notes
-   are terse reusable guidance, not incident reports; experiment outcomes still
-   go in the experiment log.
+   help future agents, launch `note-updater` before reporting completion. This
+   is a required subagent handoff under the standing user request in the
+   subagent catalog: try to spawn `note-updater`, retry once if spawning fails,
+   and alert the user if it still cannot be spawned. Do not replace it with a
+   direct `agentic-notes` command from the parent agent. Notes are terse
+   reusable guidance, not incident reports; experiment outcomes still go in the
+   experiment log.
 8. **Hand off completed change sets and finalize logging** using the helper
    commands and subagents described in the Experiment Logging and Research
    Record plus Git Discipline sections below. Code snapshots contain
@@ -183,7 +188,11 @@ The active work branch's Agentic Researcher experiment log is the durable append
 experiment ledger when available. It lives on the work state branch, not in
 the normal code worktree. Log completed meaningful
 experiments by launching the `experiment-logger` subagent. Append corrections
-by launching the `experiment-corrector` subagent. Before launching either one,
+by launching the `experiment-corrector` subagent. These are required subagent
+handoffs under the standing user request in the subagent catalog: try to spawn
+the named subagent, retry once if spawning fails, and alert the user if it
+still cannot be spawned. Do not replace these handoffs with direct
+`experiment-log` commands from the parent agent. Before launching either one,
 read its rendered subagent definition and use its `## Subagent Contract`
 section for the exact request shape. The subagent uses the provided helper so
 the work-branch-local counter, per-experiment YAML file, and work-branch `SUMMARY.md` row
@@ -218,9 +227,11 @@ commit and push that checkout. Do not place these files in the code worktree.
 
 ```bash
 git -C "$WORK_STATE_DIR" pull --ff-only
-# Edit "$WORK_STATE_DIR/report.md" and/or "$WORK_STATE_DIR/TODO.md".
+# Edit "$WORK_STATE_DIR/report.md", "$WORK_STATE_DIR/TODO.md", and report
+# figures under "$WORK_STATE_DIR/images/".
+mkdir -p "$WORK_STATE_DIR/images"
 git -C "$WORK_STATE_DIR" status --short
-git -C "$WORK_STATE_DIR" add report.md TODO.md
+git -C "$WORK_STATE_DIR" add report.md TODO.md images/
 git -C "$WORK_STATE_DIR" commit -m "work-state: update $AR_WORK_BRANCH research records"
 git -C "$WORK_STATE_DIR" push
 ```
@@ -230,8 +241,9 @@ Skip the commit if there are no work-state changes.
 For experiments that include code changes, prefer the commit handoff path:
 
 1. Create the snapshot yourself with `branch-snapshot` and YAML on stdin.
-   Include explicit paths, commit message, and focused checks. Never include work-branch Agentic Notes, work-branch `report.md`,
-   work-branch `TODO.md`, `.`, or glob paths.
+   Include explicit paths, commit message, and focused checks. Never include
+   work-branch Agentic Notes, work-branch `report.md`, work-branch `TODO.md`,
+   work-state `images/`, `.`, or glob paths.
 2. If the completed change set is a meaningful experiment result that belongs in
    the active work branch experiment log, read the rendered `experiment-logger`
    contract and include its experiment-log payload under
@@ -268,6 +280,10 @@ For experiments that include code changes, prefer the commit handoff path:
    commit or experiment-log success. If status later reports an experiment-log
    error, surface it to the user or retry the logging follow-up deliberately.
 
+Use `branch-commit-cleanup` for old local snapshot metadata and temporary commit
+worktrees only after they are no longer needed for status checks or debugging.
+Run it as a dry run first.
+
 This keeps the experiment log tied to the final code commit without blocking
 the main agent during checks after the snapshot has been captured.
 
@@ -291,8 +307,10 @@ most Markdown previews will not render them as tables or images.
 - **Implementation**: files and lines changed
 - **Results table**: properly formatted Markdown table with clear columns,
   units, and metric direction.
-- **Figures**: save a PNG preview alongside any PDF, then embed the PNG with
-  `![short caption](images/file.png)`.
+- **Figures**: save report-ready PNG/PDF figures under
+  `$WORK_STATE_DIR/images/`, then embed the PNG with
+  `![short caption](images/file.png)`. Commit those PNG/PDF files with the
+  work-state report update; do not skip them merely because they are binary.
 - **Analysis**: why it worked or did not, what it reveals
 - **Next steps**: what to try based on these results
 - **Verification block**: for non-trivial implementations
@@ -357,7 +375,9 @@ Include in work-branch `report.md`:
   background branch commit that has already been started.
 - When the user asks to integrate completed branch work into `dev`, `main`, or
   another development branch, launch the `branch-integrator` subagent instead
-  of switching this top-level session onto the target branch.
+  of switching this top-level session onto the target branch. Try to spawn it,
+  retry once if spawning fails, and alert the user if it still cannot be
+  spawned.
 - If the user explicitly asks you to bypass the subagent workflow and perform
   Git operations yourself, first confirm that they really want this exception.
   Never force-push or rewrite shared history unless they explicitly ask for
@@ -376,11 +396,11 @@ Include in work-branch `report.md`:
 | Work-branch `TODO.md` | Work-branch-local checklist for open questions, unverified claims, deferred work |
 | `REVISION.md` | Agent improvement notes from `/retro`, append-only |
 | `scripts/verify_*.py` | Verification scripts |
-| `scripts/plot_*.py` | Plotting scripts, one per figure, PDF+PNG to `images/` |
-| `images/` | Generated figures; include PNG previews referenced from `report.md` |
+| `scripts/plot_*.py` | Plotting scripts, one per figure; save report-ready outputs under `$WORK_STATE_DIR/images/` |
+| Work-state `images/` | Generated report figures; include PNG previews referenced from work-state `report.md` |
 
-Keep workspace root clean. Do not create canonical `report.md` or `TODO.md` in
-the code worktree for work state.
+Keep workspace root clean. Do not create canonical `report.md`, `TODO.md`, or
+report `images/` in the code worktree for work state.
 
 ## 7. Troubleshooting
 

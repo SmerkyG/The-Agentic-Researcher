@@ -67,8 +67,8 @@ Reflect on these additional dimensions:
 
 ### B. Experiment Log and Report Quality
 - Is the shared experiment log complete enough to reconstruct what was run?
-- Were completed meaningful experiments routed through the `experiment-logger` subagent when available?
-- Were corrections routed through the `experiment-logger` subagent instead of manually altering old experiment fields?
+- Were completed meaningful experiments routed through the `experiment-logger` subagent, with one retry and user alert if spawning failed?
+- Were corrections routed through the `experiment-corrector` subagent instead of manually altering old experiment fields?
 - Was `SUMMARY.md` append-maintained rather than regenerated or hand-edited?
 - Is the report clear, well-structured, and useful as a work-branch-local narrative record?
 - Are report entries detailed enough to understand methods, analysis, and verification?
@@ -97,7 +97,7 @@ Reflect on these additional dimensions:
 ### G. Agentic Notes Hygiene
 - Were injected `always-injected.md` notes treated as active guidance without opening source `always-injected.md` note files?
 - Were relevant on-demand notes read before work that depended on those packages, libraries, architectures, benchmarks, or conventions?
-- Were reusable lessons routed through the `note-updater` subagent instead of direct note edits by the main agent?
+- Were reusable lessons routed through the `note-updater` subagent, with one retry and user alert if spawning failed, instead of direct note edits by the main agent?
 - Were notes kept distinct from work-branch `TODO.md` items and experiment history?
 
 ### H. User-Specific Feedback
