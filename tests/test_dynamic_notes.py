@@ -1760,11 +1760,9 @@ def test_launcher_uses_unoccupied_agent_branch(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "Work branch:   kernel-search" in result.stdout
-    assert "Ownership:      exclusive" in result.stdout
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "## Agent Branch" not in instruction_text
     assert "Active branch: `kernel-search`." not in instruction_text
-    assert "Branch ownership mode: `exclusive`." not in instruction_text
     assert "No conflicting local branch guard was detected at launch." not in instruction_text
     assert "The user explicitly accepted the launcher branch warning" not in instruction_text
     assert "kernel-search/exp/<experiment-name>" not in instruction_text
@@ -2162,6 +2160,47 @@ def test_launcher_renders_org_main_agent_override_without_subagent(tmp_path: Pat
     assert "# Research Coordinator Instructions" not in instruction_text
     assert "Use the org coordinator note." in instruction_text
     assert not (project / ".codex" / "agents" / "research-coordinator.toml").exists()
+
+
+def test_main_agent_branch_ownership_frontmatter_is_removed(tmp_path: Path) -> None:
+    org_remote = init_bare_remote(
+        tmp_path,
+        "org-main-agent-branch-ownership",
+        {
+            "agents/readonly-reporter.md": (
+                "---\n"
+                "name: readonly-reporter\n"
+                "kind: main\n"
+                "description: Old readonly reporter.\n"
+                "branch_ownership: readonly\n"
+                "---\n\n"
+                "# Readonly Reporter\n\n"
+            ),
+        },
+    )
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path, org_remote)
+
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--sandbox",
+            "none",
+            "--cli",
+            "codex",
+            "--render-only",
+            "--main-agent",
+            "readonly-reporter",
+            str(project),
+        ],
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "uses branch_ownership, which has been removed" in result.stdout
+    assert "All main agents require their own branches" in result.stdout
 
 
 def test_multiple_main_agents_use_separate_worktrees_and_project_agent_notes(tmp_path: Path) -> None:

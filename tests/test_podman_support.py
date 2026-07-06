@@ -774,6 +774,24 @@ def test_gpu_backend_flag_is_removed(base_env: dict[str, str], tmp_path: Path) -
     assert "--capability cluster-run" in result.stdout
 
 
+def test_allow_shared_branch_flag_is_removed(base_env: dict[str, str], tmp_path: Path) -> None:
+    workspace = tmp_path / "ws-removed-shared-branch"
+    init_work_branch_workspace(workspace)
+
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--allow-shared-branch",
+            str(workspace),
+        ],
+        base_env,
+    )
+
+    assert result.returncode == 1
+    assert "--allow-shared-branch has been removed" in result.stdout
+    assert "Launch a separate AT work entry instead" in result.stdout
+
+
 def test_remote_run_capability_checks_its_own_sandbox_requirement(
     base_env: dict[str, str], tmp_path: Path
 ) -> None:

@@ -34,7 +34,7 @@ The storage layout is simple enough that you can add or edit note files directly
 
 Agentic Team is split into a small launcher, a shared Git-backed state substrate, and optional capabilities.
 
-**Launcher.** The `agentic-team` command prepares the selected project worktree, materializes the invocation-specific instruction file (`AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`), renders the selected main agent and subagent definitions, runs enabled capability hooks, sets up PATH/env/binds, and then launches the selected LLM CLI in the selected sandbox. The launcher owns CLI and sandbox integration, instruction materialization, branch-ownership prompts, and capability selection. It does not own the schemas for notes or experiment logs.
+**Launcher.** The `agentic-team` command prepares the selected project worktree, materializes the invocation-specific instruction file (`AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`), renders the selected main agent and subagent definitions, runs enabled capability hooks, sets up PATH/env/binds, and then launches the selected LLM CLI in the selected sandbox. The launcher owns CLI and sandbox integration, instruction materialization, AT work entry prompts, and capability selection. It does not own the schemas for notes or experiment logs.
 
 **Agentic State.** Agentic State is the shared storage substrate used by capabilities. It manages visible Git worktrees under `$AR_WORKSPACE_ROOT`, serializes local project/work updates with locks under `$AR_RUNTIME_ROOT`, and performs ordinary Git fetch/merge/commit/push operations. Organization scope lives in the optional org repo. Project scope lives on the project repo's orphan `agentic/project-state` branch. Work-branch scope lives on one orphan `agentic/work-state/<work-branch>` branch per work branch. Agentic State provides the storage mechanics; capabilities decide what files and schemas they store there.
 
@@ -88,19 +88,15 @@ Relaunch Agentic Team by naming the AT workspace and work entry:
 agentic-team ~/my-project-at research-main
 ```
 
-The rendered instructions include injected shared notes, active work branch Agentic Notes when present, and capability-owned sections for the selected workflow. Use the `do_research` skill on resume only when you want a structured recap or to create/revise research work-branch guidance.
+### Running More Agents in Parallel
 
-### Multiple Agents in One Project
-
-Create another named AT effort from an existing work entry with `--from`:
+Each AT agent requires its own branch. To create and launch a new AT branch forked from an existing branch, use `--from`:
 
 ```bash
 agentic-team ~/my-project-at kdtree-bounds --from research-main
 ```
 
-If `--from` names an existing AT work entry, enabled capabilities may inherit relevant context. For example, the `research-coordinator` capability copies only the immediate parent's lightweight `report.md` and `TODO.md` into `state/context/parent/`, writes a flattened `state/context/manifest.yaml` that references inherited reports, TODOs, and images by state commit, and creates a fresh report/TODO for the new branch. If `--from` names only a Git ref such as `main` or `dev`, the new work starts with clean state by default. Use `--state clean` to skip inherited context when creating from an AT work entry.
-
-Agentic Team also supports multiple agents intentionally sharing one branch, but branch-exclusive main agents should normally use one AT workspace entry per independent effort.
+If `--from` names only a Git ref such as `main` or `dev`, the new work starts the same way as your first agent would. If `--from` names an existing AT work entry (e.g. `research-main`), enabled capabilities inherit relevant state context for reference by the new agent. Use `--state clean` to skip inherited context when creating from an AT work entry.
 
 ## Sandbox
 
@@ -126,7 +122,7 @@ Run `agentic-team --setup` to create a configuration file at `${XDG_CONFIG_HOME:
 - **Custom API endpoint** — point Claude at an Anthropic-compatible proxy or gateway
 - **Org repo** (`AR_ORG_NOTES_REPO`) — optional shared Git repo for organization-wide notes, agents, and capabilities
 - **Main agent** (`AR_MAIN_AGENT`) — top-level agent definition to render into the workspace instruction file. Defaults to `research-coordinator`
-- **Work branch** (`AR_WORK_BRANCH` or `--work-branch`) — Git branch used by the top-level agent. Main-agent frontmatter can set `branch_ownership: exclusive|shared|readonly`; the default is `exclusive`
+- **Work branch** (`AR_WORK_BRANCH` or `--work-branch`) — Git branch used by the top-level agent. Each top-level agent requires its own branch.
 - **Git identity** (`AR_GIT_NAME`, `AR_GIT_EMAIL`) — repo-local fallback identity for Agentic Team-created commits when the project checkout does not already have `user.name` / `user.email`
 - **AT workspace root** (`AR_WORKSPACE_ROOT`) — optional override for the visible workspace root that contains linked worktrees for `project-state/` plus `<work-name>/code` and `<work-name>/state`. By default it is a sibling named `<checkout-dir-name>-at`
 - **Project runtime root** (`AR_RUNTIME_ROOT`) — optional override for hidden per-project runtime machinery. Defaults to `$AR_WORKSPACE_ROOT/.runtime`
@@ -219,7 +215,7 @@ The main state scopes are:
 
 State branches start as orphan branches with empty filesets. They contain only state files created by enabled capabilities, such as Agentic Notes, work-branch research records, and experiment logs. They do not contain `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or your code tree. Locally, those branches are linked worktrees at `PROJECT-at/project-state` and `PROJECT-at/<work-name>/state`.
 
-Multiple top-level agents should usually work in separate AT workspace entries. Branch-exclusive agents prompt before running on protected or locally occupied branches; shared and readonly branch modes are also supported through main-agent frontmatter. Branch guard files are local-only under `$AR_RUNTIME_ROOT/branch-guards/`; Git remains the real conflict mechanism.
+Multiple top-level agents must work in separate AT workspace entries with separate work branches. Branch guard files are local-only under `$AR_RUNTIME_ROOT/branch-guards/`; Git remains the real conflict mechanism.
 
 When the top-level agent has a coherent change set ready to commit, it uses `branch-snapshot` plus `branch-commit` directly so checks and commit creation happen from a temporary worktree. Snapshot metadata and temporary commit worktrees are retained locally for status checks and debugging; prune old completed or abandoned artifacts with `branch-commit-cleanup` after a dry run. When completed work-branch changes should land in a development branch such as `dev` or `main`, use the `branch-integrator` subagent.
 

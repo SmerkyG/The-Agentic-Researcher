@@ -157,7 +157,6 @@ main() {
     if [[ -n "${AR_WORK_BRANCH:-}" ]]; then
         echo "Work branch:   $AR_WORK_BRANCH"
         echo "Current branch: ${WORKSPACE_GIT_BRANCH:-$AR_WORK_BRANCH}"
-        echo "Ownership:      ${AR_BRANCH_OWNERSHIP:-exclusive}"
     fi
     if [[ "$AR_SANDBOX" == "none" ]]; then
         echo "Sandboxed:      No (sandbox none; full host filesystem access)"

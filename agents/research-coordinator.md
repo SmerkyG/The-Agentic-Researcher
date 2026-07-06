@@ -3,7 +3,6 @@ name: research-coordinator
 kind: main
 description: Coordinate autonomous research work, experiments, verification, and research records.
 codex_reasoning_effort: high
-branch_ownership: exclusive
 required_capabilities:
   - agentic-notes
   - experiment-log

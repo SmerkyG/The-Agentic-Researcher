@@ -138,7 +138,6 @@ print_debug_launch() {
     echo "  CLI:            $AR_CLI"
     echo "  Work branch:   ${AR_WORK_BRANCH:-none}"
     echo "  Current branch: ${WORKSPACE_GIT_BRANCH:-none}"
-    echo "  Ownership:      ${AR_BRANCH_OWNERSHIP:-exclusive}"
     echo "  Job backend:    ${JOB_BACKEND:-none}"
     echo "  Workspace:      $WORKSPACE_DIR"
     echo "  AT workspace:   $AR_WORKSPACE_ROOT"

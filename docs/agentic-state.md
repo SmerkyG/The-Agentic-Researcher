@@ -142,11 +142,11 @@ These are examples, not launcher requirements. Capabilities own their own file l
 
 ## Multiple Worktrees and Agents
 
-Multiple top-level agents should usually work in separate AT workspace entries. Their code branches and materialized instruction files stay independent, while project state updates go through the shared visible `project-state/` worktree.
+Multiple top-level agents work in separate AT workspace entries. Their code branches and materialized instruction files stay independent, while project state updates go through the shared visible `project-state/` worktree.
 
 Work-branch state is scoped by work branch. Updates to `agentic/work-state/feature/kernel-search` do not block or share commit cadence with updates to `agentic/work-state/paper/draft`.
 
-Branch-exclusive main agents are intended to have one mutating top-level agent per work branch. This is a workflow convention enforced by local branch guard prompts, not a global distributed lock. Git remains the real conflict mechanism.
+Each main agent has one top-level agent per work branch. This is a workflow convention enforced by local branch guard prompts, not a global distributed lock. Git remains the real conflict mechanism.
 
 ## Locking and Refresh
 

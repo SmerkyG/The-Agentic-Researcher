@@ -188,7 +188,6 @@ ar_agent_context_env_pairs() {
     printf 'AR_WORK_BRANCH_ID=%s\n' "${AR_WORK_BRANCH_ID:-}"
     printf 'AR_WORK_NAME=%s\n' "${AR_WORK_NAME:-}"
     printf 'AR_WORK_BRANCH_PREFIX=%s\n' "${AR_WORK_BRANCH_PREFIX:-}"
-    printf 'AR_BRANCH_OWNERSHIP=%s\n' "${AR_BRANCH_OWNERSHIP:-exclusive}"
     printf 'AR_SESSION_ID=%s\n' "${AR_SESSION_ID:-}"
     printf 'AR_USER_ID=%s\n' "${AR_USER_ID:-$USER}"
     printf 'AR_PROJECT_STATE_DIR=%s\n' "${AR_PROJECT_STATE_DIR:-}"

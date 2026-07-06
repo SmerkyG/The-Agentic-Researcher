@@ -3,7 +3,6 @@ name: systems-developer
 kind: main
 description: Interactive software development for Linux-focused systems, developer tools, and automation.
 codex_reasoning_effort: high
-branch_ownership: exclusive
 required_capabilities:
   - agentic-notes
 ---

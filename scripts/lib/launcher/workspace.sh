@@ -1,4 +1,4 @@
-# Sourced by agentic-team. Project/worktree validation and branch ownership guard logic.
+# Sourced by agentic-team. Project/worktree validation and branch guard logic.
 
 validate_workspace() {
     # Default to current directory
@@ -676,7 +676,6 @@ create_worktree() {
 print_branch_decision_context() {
     local branch="$1" occupied="$2" dirty="$3" base_ref="$4" active_guard="${5:-}"
     echo "Branch:          $branch"
-    echo "Ownership:       $AR_BRANCH_OWNERSHIP"
     echo "Another agent:   $occupied"
     echo "Uncommitted:     $dirty"
     echo "Base for branch: $base_ref"
@@ -695,31 +694,28 @@ prepare_work_branch_interactive() {
     base_ref="$(infer_work_branch_base_ref "$owner_branch" "$branch")"
     candidate="$(unused_work_branch_candidate)"
 
-    echo "Exclusive main agent '$AR_MAIN_AGENT' should normally use its own work branch."
+    echo "Agentic Team main agents require their own work branch."
     print_branch_decision_context "$branch" "$occupied" "$dirty" "$base_ref" "$active_guard"
 
     if [[ "$occupied" == "yes" ]]; then
         echo "Choose how to continue:"
         echo "  1. Create a new worktree with a new work branch from $base_ref (recommended)"
-        echo "  2. Use the current branch anyway and allow shared-branch work"
-        echo "  3. Cancel"
-        max_choice=3
+        echo "  2. Cancel"
+        max_choice=2
         default_choice=1
     elif [[ "$dirty" == "yes" ]]; then
         echo "Choose how to continue:"
         echo "  1. Create a new clean AT worktree with a work branch from $base_ref (recommended)"
         echo "  2. Create a work branch in this worktree, carrying current changes"
-        echo "  3. Use the current branch anyway"
-        echo "  4. Cancel"
-        max_choice=4
+        echo "  3. Cancel"
+        max_choice=3
         default_choice=1
     else
         echo "Choose how to continue:"
         echo "  1. Create a new AT worktree with a work branch from $base_ref (recommended)"
         echo "  2. Create a work branch in this worktree: $candidate"
-        echo "  3. Use the current branch anyway"
-        echo "  4. Cancel"
-        max_choice=4
+        echo "  3. Cancel"
+        max_choice=3
         default_choice=1
     fi
 
@@ -737,22 +733,14 @@ prepare_work_branch_interactive() {
             ;;
         2)
             if [[ "$occupied" == "yes" ]]; then
-                BRANCH_GUARD_OVERRIDE=true
-                return 0
+                echo "Launch cancelled."
+                exit 1
             fi
             target_branch="$(prompt_work_branch_name "$candidate")"
             switch_to_work_branch "$target_branch" "HEAD" || exit 1
             return 0
             ;;
         3)
-            if [[ "$occupied" == "yes" ]]; then
-                echo "Launch cancelled."
-                exit 1
-            fi
-            BRANCH_GUARD_OVERRIDE=true
-            return 0
-            ;;
-        *)
             echo "Launch cancelled."
             exit 1
             ;;
@@ -779,7 +767,7 @@ prepare_at_work_entry_interactive() {
 }
 
 resolve_main_agent_metadata() {
-    local main_agent="${AR_MAIN_AGENT:-research-coordinator}" kind ownership
+    local main_agent="${AR_MAIN_AGENT:-research-coordinator}" kind legacy_ownership
 
     if ! valid_agent_name "$main_agent"; then
         echo "Error: Invalid AR_MAIN_AGENT: $main_agent"
@@ -798,19 +786,12 @@ resolve_main_agent_metadata() {
         exit 1
     fi
 
-    ownership="$(frontmatter_value "$MAIN_AGENT_SOURCE_PATH" "branch_ownership")"
-    ownership="${ownership:-exclusive}"
-    case "$ownership" in
-        exclusive|shared|readonly)
-            ;;
-        *)
-            echo "Error: Main agent '$main_agent' has invalid branch_ownership '$ownership'."
-            echo "Allowed values: exclusive, shared, readonly"
-            exit 1
-            ;;
-    esac
-    AR_BRANCH_OWNERSHIP="$ownership"
-    export AR_BRANCH_OWNERSHIP
+    legacy_ownership="$(frontmatter_value "$MAIN_AGENT_SOURCE_PATH" "branch_ownership")"
+    if [[ -n "$legacy_ownership" ]]; then
+        echo "Error: Main agent '$main_agent' uses branch_ownership, which has been removed."
+        echo "All main agents require their own branches. Remove branch_ownership from the agent definition."
+        exit 1
+    fi
 }
 
 ensure_branch_session_id() {
@@ -826,8 +807,6 @@ write_branch_guard_file() {
     {
         printf 'branch=%s\n' "$AR_WORK_BRANCH"
         printf 'current_branch=%s\n' "$WORKSPACE_GIT_BRANCH"
-        printf 'branch_ownership=%s\n' "$AR_BRANCH_OWNERSHIP"
-        printf 'override=%s\n' "$BRANCH_GUARD_OVERRIDE"
         printf 'session_id=%s\n' "$AR_SESSION_ID"
         printf 'main_agent=%s\n' "${AR_MAIN_AGENT:-research-coordinator}"
         printf 'user_id=%s\n' "${AR_USER_ID:-${USER:-user}}"
@@ -842,7 +821,6 @@ write_branch_guard_file() {
 
 register_branch_guard() {
     local guard_dir heartbeat_seconds launcher_pid
-    [[ "$AR_BRANCH_OWNERSHIP" == "exclusive" ]] || return 0
     [[ "$TEST_MODE" == "true" || "$RENDER_ONLY" == "true" ]] && return 0
     ensure_branch_session_id
     guard_dir="$(branch_guard_dir_for "$AR_WORK_BRANCH")"
@@ -882,8 +860,8 @@ prepare_work_branch() {
     [[ "$TEST_MODE" == "true" ]] && return 0
 
     if ! workspace_is_git_worktree; then
-        [[ "$RENDER_ONLY" == "true" || "$AR_BRANCH_OWNERSHIP" == "readonly" ]] && return 0
-        echo "Error: Agentic Team branch ownership requires launching from a Git worktree."
+        [[ "$RENDER_ONLY" == "true" ]] && return 0
+        echo "Error: Agentic Team main agents require launching from a Git worktree."
         echo ""
         echo "Create or enter a project Git checkout, then relaunch."
         exit 1
@@ -891,8 +869,8 @@ prepare_work_branch() {
 
     branch="$(current_workspace_git_branch)"
     if [[ -z "$branch" ]]; then
-        [[ "$RENDER_ONLY" == "true" || "$AR_BRANCH_OWNERSHIP" == "readonly" ]] && return 0
-        echo "Error: Agentic Team branch ownership requires a named Git branch, but this worktree is detached."
+        [[ "$RENDER_ONLY" == "true" ]] && return 0
+        echo "Error: Agentic Team main agents require a named Git branch, but this worktree is detached."
         exit 1
     fi
 
@@ -961,25 +939,13 @@ prepare_work_branch() {
         return 0
     fi
 
-    case "$AR_BRANCH_OWNERSHIP" in
-        readonly|shared)
-            return 0
-            ;;
-    esac
-
     if ! protected_work_branch "$branch" && ! branch_guard_is_occupied "$AR_WORK_BRANCH"; then
         register_branch_guard
         return 0
     fi
 
-    if [[ "$ALLOW_SHARED_BRANCH" == "true" ]]; then
-        BRANCH_GUARD_OVERRIDE=true
-        register_branch_guard
-        return 0
-    fi
-
     if ! launch_is_interactive; then
-        echo "Error: Exclusive main agent '$AR_MAIN_AGENT' cannot use this AT work entry as-is."
+        echo "Error: Main agent '$AR_MAIN_AGENT' cannot use this AT work entry as-is."
         echo "Current branch: $branch"
         echo "Another active agent: $occupied"
         echo "Uncommitted changes: $dirty"
@@ -1002,9 +968,6 @@ prepare_work_branch() {
             echo ""
             echo "Note: uncommitted changes in the current worktree stay where they are."
         fi
-        echo ""
-        echo "Or continue intentionally with shared-branch work:"
-        echo "  agentic-team --allow-shared-branch $WORKSPACE_DIR"
         exit 1
     fi
 
@@ -1012,11 +975,6 @@ prepare_work_branch() {
     branch="$(current_workspace_git_branch)"
     owner_branch="$(work_branch_from_branch "$branch")"
     set_work_branch_vars "$owner_branch" "$branch"
-
-    if [[ "$BRANCH_GUARD_OVERRIDE" == "true" ]]; then
-        register_branch_guard
-        return 0
-    fi
 
     if branch_guard_is_occupied "$AR_WORK_BRANCH"; then
         echo "Error: Branch '$AR_WORK_BRANCH' appears to have another active local agent session."

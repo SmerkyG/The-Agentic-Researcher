@@ -15,7 +15,6 @@ LAUNCHER_ENV_OVERRIDE_VARS=(
     AR_ORG_NOTES_REPO
     AR_MAIN_AGENT
     AR_WORK_BRANCH
-    AR_BRANCH_OWNERSHIP
     AR_USER_ID
     AR_PROJECT_STATE_BRANCH
     AR_NOTES_AUTO_REFRESH
@@ -129,7 +128,6 @@ apply_defaults() {
     AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
     AR_MAIN_AGENT="${AR_MAIN_AGENT:-research-coordinator}"
     AR_WORK_BRANCH="${AR_WORK_BRANCH:-}"
-    AR_BRANCH_OWNERSHIP="${AR_BRANCH_OWNERSHIP:-}"
     AR_USER_ID="${AR_USER_ID:-$USER}"
     AR_PROJECT_STATE_BRANCH="${AR_PROJECT_STATE_BRANCH:-agentic/project-state}"
     AR_NOTES_AUTO_REFRESH="${AR_NOTES_AUTO_REFRESH:-true}"
@@ -147,7 +145,6 @@ RENDER_ONLY=false
 REFRESH_CAPABILITIES=false
 MODEL_SPECIFIED=false
 DEBUG_LAUNCH=false
-ALLOW_SHARED_BRANCH=false
 WORKSPACE_DIR=""
 WORKSPACE_INPUT_DIR=""
 WORKTREE_PATH_ARG=""
@@ -166,7 +163,6 @@ CAPABILITY_CLEANUP_ENABLED=false
 INSTRUCTION_FILE_REGENERATED=false
 BRANCH_GUARD_FILE=""
 BRANCH_GUARD_HEARTBEAT_PID=""
-BRANCH_GUARD_OVERRIDE=false
 MAIN_AGENT_SOURCE_PATH=""
 AGENTIC_NOTES_CAPABILITY_SETUP=false
 
@@ -319,8 +315,8 @@ parse_arguments() {
                 exit 1
                 ;;
             --allow-shared-branch)
-                ALLOW_SHARED_BRANCH=true
-                shift
+                echo "Error: --allow-shared-branch has been removed. Launch a separate AT work entry instead."
+                exit 1
                 ;;
             --yolo)
                 YOLO_MODE=true
@@ -413,8 +409,6 @@ Options:
   --from REF_OR_WORK  Create missing AT work from a Git ref or existing AT work name
   --branch NAME       New Git branch when creating missing AT work
   --state MODE        Context inheritance for created AT work: auto or clean
-  --allow-shared-branch
-                      Continue on a branch that appears to have another active local writer
   --debug-launch      Print extra launcher details and enable CLI startup logs where supported
   --cli CLI           Select CLI ($cli_options)
   --yolo              Auto-approve tool call permissions where supported
