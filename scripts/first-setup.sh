@@ -326,18 +326,16 @@ AR_HTTP_PROXY="$AR_HTTP_PROXY"
 # Base directory for local state, caches, and container temp data
 AR_STATE_ROOT="$AR_STATE_ROOT"
 
-# Optional visible AT workspace root. Blank means sibling <project-id>-at.
+# Optional visible AT workspace root. Blank means sibling <repo-name>-at.
 AR_WORKSPACE_ROOT=""
 
 # Extra directories to bind into the sandbox (colon-separated)
 AR_EXTRA_BIND_DIRS="$AR_EXTRA_BIND_DIRS"
 
-# Agentic Notes and main-agent configuration. Agentic Team derives project identity from
-# the git origin remote by default; set AR_PROJECT_ID only when you need an override.
+# Agentic Notes and main-agent configuration.
 AR_ORG_NOTES_REPO="$AR_ORG_NOTES_REPO"
 AR_MAIN_AGENT="$AR_MAIN_AGENT"
 AR_USER_ID="\$USER"
-AR_PROJECT_ID=""
 AR_PROJECT_STATE_BRANCH="agentic/project-state"
 AR_NOTES_AUTO_REFRESH="true"
 # Git identity for Agentic Team-created commits when a repo lacks identity.

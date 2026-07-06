@@ -17,7 +17,6 @@ Request template:
 target:
   scope: org | project | work   # required
   agent_type: string             # required; all-agents or a specific agent type
-  project_id: string             # required for project scope when not inferred
   work_branch: string                  # required for work scope when not inferred
   note_name: string              # required; example: triton
   summary: string                  # required; <=80 char Topic hints line: keywords/info that should trigger reading this note
@@ -26,7 +25,6 @@ rationale: string                # optional; why this lesson was learned
 source:
   user_id: string                # optional
   agent_type: string             # optional
-  project_id: string             # optional
 ```
 
 Returns: command used, updated note path, whether cleanup was performed, and concise summary of the note change.
@@ -113,8 +111,7 @@ Target mapping:
 - Use `note_name: always-injected` only for lessons that should be injected into every future agent context for the selected scope and agent type.
 
 Cleanup rewrite request shape: run `agentic-notes rewrite-note` with `target.scope`,
-`target.agent_type`, `target.note_name`, optional `target.project_id`, optional
-`target.work_branch`, and `content` containing the complete cleaned-up Markdown
-for that one source note.
+`target.agent_type`, `target.note_name`, optional `target.work_branch`, and
+`content` containing the complete cleaned-up Markdown for that one source note.
 
 `agentic-notes update-note` and `agentic-notes rewrite-note` refresh the parent agent worktree instructions after a successful update when the current project directory is available.

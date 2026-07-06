@@ -90,9 +90,6 @@ render_args=(
     "--refresh-capabilities"
     "--main-agent" "$agent_type"
 )
-if [[ -n "${AR_PROJECT_ID:-}" ]]; then
-    render_args+=("--project-id" "$AR_PROJECT_ID")
-fi
 if [[ -n "${AR_WORK_BRANCH:-}" ]]; then
     render_args+=("--work-branch" "$AR_WORK_BRANCH")
 fi

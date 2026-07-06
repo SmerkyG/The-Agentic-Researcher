@@ -37,8 +37,6 @@ from agentic_state import (  # noqa: E402
     nonblocking_state_lock,
     org_checkout_path,
     parse_yaml_mapping,
-    project_id,
-    project_remote_name,
     project_state_path,
     pull_ff,
     push,
@@ -124,8 +122,6 @@ def render_parent_instructions(project_dir: Path, cli: str | None) -> None:
         "--main-agent",
         agent_type(),
     ]
-    if os.environ.get("AR_PROJECT_ID"):
-        command.extend(["--project-id", os.environ["AR_PROJECT_ID"]])
     if os.environ.get("AR_WORK_BRANCH"):
         command.extend(["--work-branch", os.environ["AR_WORK_BRANCH"]])
     command.append(str(project_dir))
@@ -137,12 +133,11 @@ def render_parent_instructions(project_dir: Path, cli: str | None) -> None:
 
 def ensure_project_state(
     project_dir: Path,
-    explicit_project_id: str | None = None,
     *,
     pull_remote: bool = True,
     push_changes: bool = True,
 ) -> Path:
-    repo = ensure_project_checkout(project_dir, explicit_project_id)
+    repo = ensure_project_checkout(project_dir)
     branch = state_branch()
     if pull_remote and git_remote(repo):
         pull_ff(repo, branch, missing_ok=True)
@@ -156,13 +151,12 @@ def ensure_project_state(
 def ensure_work_agent_notes_state(
     project_dir: Path,
     branch_name: str,
-    explicit_project_id: str | None = None,
     *,
     pull_remote: bool = True,
     push_changes: bool = True,
 ) -> Path:
     active_work_branch = work_branch(branch_name)
-    repo = ensure_work_state_checkout(project_dir, active_work_branch, explicit_project_id)
+    repo = ensure_work_state_checkout(project_dir, active_work_branch)
     branch = work_state_branch(active_work_branch)
     if pull_remote and git_remote(repo):
         pull_ff(repo, branch, missing_ok=True)
@@ -201,23 +195,20 @@ def refresh_loop(args: argparse.Namespace) -> None:
     interval_seconds = max(1, int(args.interval_seconds))
     stale_seconds = max(interval_seconds * 2, int(args.stale_seconds))
     heartbeat_dir = Path(args.heartbeat_dir).resolve()
-    loop_lock = lock_file_for(f"refresh-loop-{project_id(project_dir)}", project_dir)
+    loop_lock = lock_file_for("refresh-loop", project_dir)
 
     with nonblocking_state_lock(loop_lock) as acquired:
         if not acquired:
             return
         while wait_for_refresh_interval(heartbeat_dir, interval_seconds, stale_seconds):
             try:
-                refresh_locks = [lock_file_for(f"project-{project_id(project_dir)}", project_dir)]
+                refresh_locks = [lock_file_for("project", project_dir)]
                 if os.environ.get("AR_ORG_NOTES_REPO"):
                     refresh_locks.append(lock_file_for("org-agentic-notes"))
                 active_work_branch = os.environ.get("AR_WORK_BRANCH")
                 if active_work_branch:
                     refresh_locks.append(
-                        lock_file_for(
-                            f"project-{project_id(project_dir)}-work-{work_branch_id(active_work_branch)}",
-                            project_dir,
-                        )
+                        lock_file_for(f"work-{work_branch_id(active_work_branch)}", project_dir)
                     )
                 with ExitStack() as stack:
                     for lock_path in sorted(refresh_locks):
@@ -541,7 +532,6 @@ def note_path_for_target(
     project_dir: Path,
     note_name: str,
     agent_type_value: str,
-    project_id_value: str | None = None,
     work_branch_value: str | None = None,
 ) -> tuple[Path, Path]:
     normalized_note_name = normalize_note_name(note_name)
@@ -554,10 +544,10 @@ def note_path_for_target(
             raise AtNotesError("AR_ORG_NOTES_REPO is required for org note updates")
         note_path = agent_notes_dir(repo, "org", req_agent_type) / f"{normalized_note_name}.md"
     elif scope == "project":
-        repo = ensure_project_state(project_dir, project_id_value)
+        repo = ensure_project_state(project_dir)
         note_path = agent_notes_dir(repo, "project", req_agent_type) / f"{normalized_note_name}.md"
     elif scope == "work":
-        repo = ensure_work_agent_notes_state(project_dir, work_branch(work_branch_value), project_id_value)
+        repo = ensure_work_agent_notes_state(project_dir, work_branch(work_branch_value))
         note_path = agent_notes_dir(repo, "work", req_agent_type) / f"{normalized_note_name}.md"
     else:
         raise AtNotesError("target.scope must be org, project, or work")
@@ -574,14 +564,12 @@ def note_path_for_request(request: dict[str, Any], project_dir: Path) -> tuple[P
     req_agent_type = str(target.get("agent_type") or "")
     if not req_agent_type:
         raise AtNotesError("note update request target.agent_type is required; use all-agents for broad notes")
-    req_project_id = target.get("project_id") or source.get("project_id")
     req_work_branch = target.get("work_branch") or source.get("work_branch")
     return note_path_for_target(
         scope=scope,
         project_dir=project_dir,
         note_name=note_name,
         agent_type_value=req_agent_type,
-        project_id_value=str(req_project_id) if req_project_id else None,
         work_branch_value=str(req_work_branch) if req_work_branch else None,
     )
 
@@ -695,7 +683,6 @@ def replace_note(args: argparse.Namespace) -> None:
         project_dir=project_dir,
         note_name=args.note_name,
         agent_type_value=args.agent_type,
-        project_id_value=args.project_id,
         work_branch_value=args.work_branch,
     )
     text = Path(args.note_file).read_text(encoding="utf-8").rstrip() + "\n"
@@ -773,7 +760,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note-file", required=True)
     p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
     p.add_argument("--agent-type", required=True)
-    p.add_argument("--project-id", default=None)
     p.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH"))
     p.add_argument("--refresh-parent", action="store_true")
     p.add_argument("--cli", default=os.environ.get("AR_CLI", "codex"), choices=["claude", "gemini", "opencode", "codex", "pi"])
@@ -801,29 +787,21 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
     project_dir = Path(getattr(args, "project_dir", ".")).resolve()
     paths: list[Path] = []
 
-    def add_project_lock(explicit_project_id: str | None = None) -> None:
-        pid = project_id(project_dir, explicit_project_id)
-        paths.append(lock_file_for(f"project-{pid}", project_dir, explicit_project_id))
+    def add_project_lock() -> None:
+        paths.append(lock_file_for("project", project_dir))
 
-    def add_work_branch_lock(work_branch_value: str | None = None, explicit_project_id: str | None = None) -> None:
-        pid = project_id(project_dir, explicit_project_id)
-        paths.append(
-            lock_file_for(
-                f"project-{pid}-work-{work_branch_id(work_branch_value)}",
-                project_dir,
-                explicit_project_id,
-            )
-        )
+    def add_work_branch_lock(work_branch_value: str | None = None) -> None:
+        paths.append(lock_file_for(f"work-{work_branch_id(work_branch_value)}", project_dir))
 
     def add_org_lock() -> None:
         paths.append(lock_file_for("org-agentic-notes"))
 
     if command == "ensure-project-state":
-        add_project_lock(None)
+        add_project_lock()
     elif command == "refresh":
         if os.environ.get("AR_ORG_NOTES_REPO"):
             add_org_lock()
-        add_project_lock(None)
+        add_project_lock()
         work_branch_value = os.environ.get("AR_WORK_BRANCH")
         if work_branch_value:
             add_work_branch_lock(work_branch_value)
@@ -832,7 +810,7 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
     elif command in {"generate-instructions", "render-section", "render-sections", "read-note"}:
         if os.environ.get("AR_ORG_NOTES_REPO"):
             add_org_lock()
-        add_project_lock(None)
+        add_project_lock()
         work_branch_value = os.environ.get("AR_WORK_BRANCH")
         if work_branch_value:
             add_work_branch_lock(work_branch_value)
@@ -840,7 +818,7 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
         if getattr(args, "scope", "") == "org":
             add_org_lock()
         elif getattr(args, "scope", "") == "project":
-            add_project_lock(None)
+            add_project_lock()
         elif getattr(args, "scope", "") == "work":
             add_work_branch_lock(getattr(args, "work_branch", None))
     elif command == "update-note":
@@ -852,16 +830,14 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
         if scope == "org":
             add_org_lock()
         elif scope == "project":
-            explicit = target.get("project_id") or source.get("project_id")
-            add_project_lock(str(explicit) if explicit else None)
+            add_project_lock()
         elif scope == "work":
-            explicit = target.get("project_id") or source.get("project_id")
             work_branch_value = target.get("work_branch") or source.get("work_branch")
-            add_work_branch_lock(str(work_branch_value or "") or None, str(explicit) if explicit else None)
+            add_work_branch_lock(str(work_branch_value or "") or None)
         if getattr(args, "refresh_parent", False):
             if os.environ.get("AR_ORG_NOTES_REPO"):
                 add_org_lock()
-            add_project_lock(None)
+            add_project_lock()
             work_branch_value = os.environ.get("AR_WORK_BRANCH")
             if work_branch_value:
                 add_work_branch_lock(work_branch_value)
@@ -870,13 +846,13 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
         if scope == "org":
             add_org_lock()
         elif scope == "project":
-            add_project_lock(getattr(args, "project_id", None))
+            add_project_lock()
         elif scope == "work":
-            add_work_branch_lock(getattr(args, "work_branch", None), getattr(args, "project_id", None))
+            add_work_branch_lock(getattr(args, "work_branch", None))
         if getattr(args, "refresh_parent", False):
             if os.environ.get("AR_ORG_NOTES_REPO"):
                 add_org_lock()
-            add_project_lock(None)
+            add_project_lock()
             work_branch_value = os.environ.get("AR_WORK_BRANCH")
             if work_branch_value:
                 add_work_branch_lock(work_branch_value)

@@ -1,6 +1,6 @@
 # Agentic State
 
-Agentic State is the shared Git-backed storage substrate used by Agentic Team capabilities. It owns project identity, visible state worktree locations, state branch names, local locks, and Git synchronization. It does not decide what a note, experiment, report, checklist, or capability-specific record means.
+Agentic State is the shared Git-backed storage substrate used by Agentic Team capabilities. It owns visible state worktree locations, state branch names, local locks, and Git synchronization. It does not decide what a note, experiment, report, checklist, or capability-specific record means.
 
 Capabilities decide what files and schemas they store in Agentic State. Built-in examples are [Agentic Notes](agentic-notes.md), which owns `agent-notes/`, and [Experiment Log](experiment-log.md), which owns `experiment-log/`.
 
@@ -14,15 +14,11 @@ Capabilities decide what files and schemas they store in Agentic State. Built-in
 
 The org repo is a separate Git repo. Project and work-branch scopes are stored in the project repo, but on orphan state branches that are separate from normal code branches.
 
-## Project Identity
+## Workspace Naming
 
-Agentic Team derives `<project-id>` from the project Git `origin` repo name by default. Common remote forms such as `git@github.com:org/repo.git`, `https://github.com/org/repo`, and `ssh://git@github.com/org/repo.git` resolve to `repo`.
+The AT workspace path is the local namespace for a project. When you launch from a normal project checkout and do not set `AR_WORKSPACE_ROOT`, Agentic Team chooses a sibling AT workspace directory from the checkout directory name, such as `treeattention-at` for a checkout named `treeattention`.
 
-Agentic Team does not infer project identity from the directory name and does not require a `.agentic/project.yaml` file in the project repo. Use `agentic-team --project-id ID`, `AR_PROJECT_ID`, or config when:
-
-- the project has no remote
-- two unrelated repos share the same repo name
-- multiple differently named checkouts of the same repo should share one state namespace
+To choose a different namespace, pass or configure the AT workspace root directly. Once an AT workspace exists, launch by naming it, for example `agentic-team ~/treeattention-at research-main`.
 
 ## AT Workspace Layout
 

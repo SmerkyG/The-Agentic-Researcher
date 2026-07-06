@@ -120,7 +120,6 @@ def base_env(tmp_path: Path, org_remote: Path | None = None) -> dict[str, str]:
             "AR_MAIN_AGENT": "research-coordinator",
             "AR_WORK_BRANCH": "kernel-search",
             "AR_USER_ID": "alice",
-            "AR_PROJECT_ID": "sparse-transformer-2026",
             "AR_PROJECT_STATE_BRANCH": "agentic/project-state",
             "AR_CAPABILITIES": "agentic-notes,experiment-log",
             "AR_NOTES_GIT_NAME": "Agentic Test",
@@ -147,15 +146,15 @@ def make_request(tmp_path: Path, data: dict) -> Path:
     return path
 
 
-def state_checkout(env: dict[str, str], project_id: str = "sparse-transformer-2026") -> Path:
-    return workspace_root(env, project_id) / "project-state"
+def state_checkout(env: dict[str, str], workspace_name: str = "project") -> Path:
+    return workspace_root(env, workspace_name) / "project-state"
 
 
-def workspace_root(env: dict[str, str], project_id: str = "sparse-transformer-2026") -> Path:
+def workspace_root(env: dict[str, str], workspace_name: str = "project") -> Path:
     configured = env.get("AR_WORKSPACE_ROOT")
     if configured:
         return Path(configured)
-    return Path(env["AR_STATE_ROOT"]).parent / f"{project_id}-at"
+    return Path(env["AR_STATE_ROOT"]).parent / f"{workspace_name}-at"
 
 
 def work_name(work_branch: str) -> str:
@@ -164,18 +163,36 @@ def work_name(work_branch: str) -> str:
 
 def work_state_checkout(
     env: dict[str, str],
-    project_id: str = "sparse-transformer-2026",
+    workspace_name: str = "project",
     work_branch: str = "kernel-search",
 ) -> Path:
-    return workspace_root(env, project_id) / work_name(work_branch) / "state"
+    return workspace_root(env, workspace_name) / work_name(work_branch) / "state"
 
 
-def work_log(env: dict[str, str], project_id: str = "sparse-transformer-2026", work_branch: str = "kernel-search") -> Path:
-    return work_state_checkout(env, project_id, work_branch) / "experiment-log"
+def work_log(env: dict[str, str], workspace_name: str = "project", work_branch: str = "kernel-search") -> Path:
+    return work_state_checkout(env, workspace_name, work_branch) / "experiment-log"
 
 
-def work_state_dir(env: dict[str, str], project_id: str = "sparse-transformer-2026", work_branch: str = "kernel-search") -> Path:
-    return work_state_checkout(env, project_id, work_branch)
+def work_state_dir(env: dict[str, str], workspace_name: str = "project", work_branch: str = "kernel-search") -> Path:
+    return work_state_checkout(env, workspace_name, work_branch)
+
+
+def at_launch_args(
+    project: Path,
+    env: dict[str, str],
+    work_name_value: str = "kernel-search",
+    source_ref: str = "kernel-search",
+) -> list[str]:
+    return [
+        str(workspace_root(env)),
+        work_name_value,
+        "--from",
+        source_ref,
+        "--project-dir",
+        str(project),
+        "--branch",
+        source_ref,
+    ]
 
 
 def assert_linked_worktree(path: Path) -> None:
@@ -599,7 +616,7 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
             "--sandbox", "none",
             "--cli",
             "codex",
-            str(project),
+            *at_launch_args(project, env),
         ],
         env=env,
     )
@@ -821,12 +838,11 @@ def test_note_updater_updates_project_note_on_agentic_state_branch(tmp_path: Pat
             "target": {
                 "scope": "project",
                 "agent_type": "all-agents",
-                "project_id": "sparse-transformer-2026",
                 "note_name": "evaluation",
             },
             "summary": "Use fixed eval split.",
             "lesson": "Keep the evaluation split unchanged across experiments.",
-            "source": {"user_id": "alice", "project_id": "sparse-transformer-2026"},
+            "source": {"user_id": "alice"},
         },
     )
 
@@ -1163,11 +1179,10 @@ def test_named_work_does_not_suffix_when_requested_branch_exists_remotely(tmp_pa
     assert not (root / "dan-agent2" / "code").exists()
 
 
-def test_project_state_requires_project_id_when_no_remote_exists(tmp_path: Path) -> None:
+def test_project_state_uses_directory_name_when_no_remote_exists(tmp_path: Path) -> None:
     project = tmp_path / "project-without-remote"
     project.mkdir()
     env = base_env(tmp_path)
-    env.pop("AR_PROJECT_ID", None)
 
     result = run(
         [str(AGENTIC_NOTES_INTERNAL), "ensure-project-state", "--project-dir", str(project)],
@@ -1175,15 +1190,14 @@ def test_project_state_requires_project_id_when_no_remote_exists(tmp_path: Path)
         check=False,
     )
 
-    assert result.returncode == 1
-    assert "could not be inferred" in result.stderr
+    assert result.returncode == 0
+    assert (tmp_path / "project-without-remote-at" / "project-state").exists()
 
 
-def test_project_state_infers_project_id_from_git_remote(tmp_path: Path) -> None:
+def test_project_state_uses_checkout_name_even_with_git_remote(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
     env = base_env(tmp_path)
-    env.pop("AR_PROJECT_ID", None)
 
     result = run(
         [str(AGENTIC_NOTES_INTERNAL), "ensure-project-state", "--project-dir", str(project)],
@@ -1205,8 +1219,7 @@ def test_project_state_infers_project_id_from_git_remote(tmp_path: Path) -> None
 def test_launcher_branch_guard_blocks_same_branch_but_not_other_branches(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
-    other_project = clone_project(tmp_path, project_remote, "other-project")
-    git(other_project, "checkout", "-b", "paper-draft")
+    git(project, "branch", "paper-draft", "kernel-search")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
@@ -1215,7 +1228,7 @@ def test_launcher_branch_guard_blocks_same_branch_but_not_other_branches(tmp_pat
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     env["AR_CAPABILITIES"] = "none"
 
-    guard_dir = workspace_root(env, env["AR_PROJECT_ID"]) / ".runtime" / "branch-guards" / "kernel-search"
+    guard_dir = workspace_root(env) / ".runtime" / "branch-guards" / "kernel-search"
     guard_dir.mkdir(parents=True)
     (guard_dir / "session-one.guard").write_text(
         "\n".join(
@@ -1239,7 +1252,7 @@ def test_launcher_branch_guard_blocks_same_branch_but_not_other_branches(tmp_pat
             "none",
             "--cli",
             "codex",
-            str(project),
+            *at_launch_args(project, env),
         ],
         env=env,
         check=False,
@@ -1251,7 +1264,7 @@ def test_launcher_branch_guard_blocks_same_branch_but_not_other_branches(tmp_pat
             "none",
             "--cli",
             "codex",
-            str(other_project),
+            *at_launch_args(project, env, "paper-draft", "paper-draft"),
         ],
         env=env,
     )
@@ -1263,16 +1276,13 @@ def test_launcher_branch_guard_blocks_same_branch_but_not_other_branches(tmp_pat
     assert "Work branch:   paper-draft" in other.stdout
 
 
-def test_project_remote_name_uses_repo_basename() -> None:
-    loader = SourceFileLoader("ar_notes_project_remote_name_test", str(AGENTIC_NOTES_INTERNAL))
+def test_remote_repo_spec_detects_scp_style_remotes() -> None:
+    loader = SourceFileLoader("ar_notes_remote_spec_test", str(AGENTIC_NOTES_INTERNAL))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     assert spec is not None
     at_notes = importlib.util.module_from_spec(spec)
     loader.exec_module(at_notes)
 
-    assert at_notes.project_remote_name("https://github.com/SmerkyG/abctest") == "abctest"
-    assert at_notes.project_remote_name("git@github.com:SmerkyG/abctest.git") == "abctest"
-    assert at_notes.project_remote_name("/tmp/abctest.git") == "abctest"
     assert at_notes.is_remote_repo_spec("dan-git@localhost:org-agentic-state.git")
     assert at_notes.is_remote_repo_spec("git@github.com:SmerkyG/abctest.git")
     assert not at_notes.is_remote_repo_spec("/tmp/abctest.git")
@@ -1331,11 +1341,9 @@ def test_update_note_refresh_parent_locks_org_and_parent_project(tmp_path: Path)
     )
     previous = {
         "AR_STATE_ROOT": os.environ.get("AR_STATE_ROOT"),
-        "AR_PROJECT_ID": os.environ.get("AR_PROJECT_ID"),
         "AR_ORG_NOTES_REPO": os.environ.get("AR_ORG_NOTES_REPO"),
     }
     os.environ["AR_STATE_ROOT"] = str(tmp_path / "state")
-    os.environ["AR_PROJECT_ID"] = "lock-project"
     os.environ["AR_ORG_NOTES_REPO"] = str(tmp_path / "org.git")
     try:
         loader = SourceFileLoader("ar_notes_lock_test", str(AGENTIC_NOTES_INTERNAL))
@@ -1360,7 +1368,7 @@ def test_update_note_refresh_parent_locks_org_and_parent_project(tmp_path: Path)
 
     lock_names = {path.name for path in locks}
     assert "org-agentic-notes.lock" in lock_names
-    assert "project-lock-project.lock" in lock_names
+    assert "project.lock" in lock_names
 
 
 def experiment_request(tmp_path: Path, short_description: str, key_result: str = "passed") -> Path:
@@ -1526,14 +1534,12 @@ def test_push_conflict_retries_with_next_counter_number(tmp_path: Path) -> None:
     project_two = clone_project(tmp_path, project_remote, "project-two")
     env_one = base_env(tmp_path / "one")
     env_two = base_env(tmp_path / "two")
-    env_one["AR_PROJECT_ID"] = "conflict-project"
-    env_two["AR_PROJECT_ID"] = "conflict-project"
     env_one["AR_WORKSPACE_ROOT"] = str(tmp_path / "one" / "conflict-project-at")
     env_two["AR_WORKSPACE_ROOT"] = str(tmp_path / "two" / "conflict-project-at")
 
     run([str(EXPERIMENT_LOG), "summary", "--project-dir", str(project_one), "--work-branch", "kernel-search"], env=env_one, check=False)
     run([str(EXPERIMENT_LOG), "summary", "--project-dir", str(project_two), "--work-branch", "kernel-search"], env=env_two, check=False)
-    state_two = work_state_checkout(env_two, "conflict-project")
+    state_two = work_state_checkout(env_two)
     waiting = tmp_path / "waiting"
     allow = tmp_path / "allow"
     write_pre_push_hook(
@@ -1587,10 +1593,10 @@ def test_same_installation_multiple_actor_worktrees_serialize_project_log_update
     project_one = clone_project(tmp_path, project_remote, "actor-one")
     project_two = clone_project(tmp_path, project_remote, "actor-two")
     env = base_env(tmp_path)
-    env["AR_PROJECT_ID"] = "shared-worktree-project"
+    env["AR_WORKSPACE_ROOT"] = str(tmp_path / "shared-worktree-project-at")
 
     run([str(EXPERIMENT_LOG), "summary", "--project-dir", str(project_one), "--work-branch", "kernel-search"], env=env, check=False)
-    state = work_state_checkout(env, "shared-worktree-project")
+    state = work_state_checkout(env)
     waiting = tmp_path / "same-install-waiting"
     allow = tmp_path / "same-install-allow"
     write_pre_push_hook(
@@ -1644,7 +1650,7 @@ def test_same_installation_multiple_actor_worktrees_serialize_project_log_update
     assert proc_two.returncode == 0, stderr_two
     assert stdout_one.strip().startswith("kernel-search::E0001_")
     assert stdout_two.strip().startswith("kernel-search::E0002_")
-    summary = (work_log(env, "shared-worktree-project") / "SUMMARY.md").read_text()
+    summary = (work_log(env) / "SUMMARY.md").read_text()
     assert len(summary_rows(summary)) == 2
 
 
@@ -1747,7 +1753,7 @@ def test_launcher_uses_unoccupied_agent_branch(tmp_path: Path) -> None:
             "none",
             "--cli",
             "codex",
-            str(project),
+            *at_launch_args(project, env),
         ],
         env=env,
     )
@@ -1846,7 +1852,7 @@ def test_launcher_passive_startup_does_not_push_agentic_state_branches(tmp_path:
             "none",
             "--cli",
             "codex",
-            str(project),
+            *at_launch_args(project, env),
         ],
         env=env,
     )
@@ -1946,9 +1952,10 @@ def test_launcher_refuses_main_branch_without_permission_in_noninteractive_mode(
     )
 
     assert result.returncode == 1
-    assert "not on an unoccupied work branch" in result.stdout
+    assert "must launch from an AT work entry" in result.stdout
     assert "Current branch: main" in result.stdout
-    assert "git switch -c work/alice" in result.stdout
+    assert "agentic-team" in result.stdout
+    assert "--project-dir" in result.stdout
 
 
 def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path) -> None:
@@ -2181,6 +2188,7 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_agent_notes(tmp
     configure_git(paper)
 
     env = base_env(tmp_path, org_remote)
+    env["AR_WORKSPACE_ROOT"] = str(tmp_path / "project-at")
     coordinator_note = tmp_path / "coordinator-note.md"
     coordinator_note.write_text(
         "# Research Coordinator Project Instructions\n\n"

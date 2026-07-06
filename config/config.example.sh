@@ -53,13 +53,9 @@ AR_CAPABILITIES="agentic-notes,experiment-log"
 # Leave empty to use only project-local Agentic Notes state.
 AR_ORG_NOTES_REPO=""
 
-# Selected top-level main agent, user, and optional project id override.
-# By default Agentic Team derives project identity from the git origin remote.
-# Set AR_PROJECT_ID only when there is no remote or when multiple remotes/forks
-# should share one notes and experiment-log state.
+# Selected top-level main agent and user.
 AR_MAIN_AGENT="research-coordinator"
 AR_USER_ID="$USER"
-AR_PROJECT_ID=""
 
 # Durable project state branch and local note refresh behavior.
 AR_PROJECT_STATE_BRANCH="agentic/project-state"

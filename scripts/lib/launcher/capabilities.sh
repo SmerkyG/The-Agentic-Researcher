@@ -382,7 +382,7 @@ render_skill_instruction_parts() {
 
 export_capability_env() {
     if [[ -n "${AR_WORK_BRANCH_ID:-}" ]]; then
-        AR_SESSION_ID="${AR_SESSION_ID:-$AR_PROJECT_ID-$AR_WORK_BRANCH_ID-$$-$(date +%s)}"
+        AR_SESSION_ID="${AR_SESSION_ID:-$AR_WORK_BRANCH_ID-$$-$(date +%s)}"
     fi
 
     export_ar_capability_env

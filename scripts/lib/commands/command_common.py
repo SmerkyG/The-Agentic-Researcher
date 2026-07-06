@@ -32,42 +32,26 @@ def slugify(text: str, *, default: str = "item", max_len: int = 72) -> str:
     return slug[:max_len].strip("-") or default
 
 
-def project_remote_url(project_dir: Path) -> str | None:
-    result = subprocess.run(
-        ["git", "-C", str(project_dir), "remote", "get-url", "origin"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode != 0:
-        return None
-    remote = result.stdout.strip()
-    return remote or None
+def fallback_workspace_name(project_dir: Path) -> str:
+    expanded = project_dir.expanduser()
+    if expanded.name == "code" and expanded.parent.parent.name.endswith("-at"):
+        at_root = expanded.parent.parent
+        project_link = at_root / "project"
+        if project_link.exists() or project_link.is_symlink():
+            try:
+                return slugify(project_link.resolve().name, default="project")
+            except OSError:
+                pass
+        return slugify(at_root.name.removesuffix("-at"), default="project")
+
+    try:
+        return slugify(expanded.resolve().name, default="project")
+    except OSError:
+        return slugify(expanded.name, default="project")
 
 
-def project_remote_name(remote: str) -> str:
-    value = re.sub(r"#.*$", "", remote.strip()).rstrip("/")
-    match = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://(?:[^/]+)/(.*)$", value)
-    if match:
-        value = match.group(1)
-    elif value.startswith("file://"):
-        value = value[7:]
-    else:
-        scp = re.match(r"^(?:[^@/:]+@)?[^/:]+:(.+)$", value)
-        if scp:
-            value = scp.group(1)
-    value = value.rstrip("/").removesuffix(".git")
-    return Path(value).name or "project"
-
-
-def project_id(project_dir: Path) -> str:
-    configured = os.environ.get("AR_PROJECT_ID")
-    if configured:
-        return slugify(configured, default="project")
-    remote = project_remote_url(project_dir)
-    if remote:
-        return slugify(project_remote_name(remote), default="project")
-    return "project"
+def workspace_name(project_dir: Path) -> str:
+    return fallback_workspace_name(project_dir)
 
 
 def workspace_root(project_dir: Path) -> Path:
@@ -83,7 +67,7 @@ def workspace_root(project_dir: Path) -> Path:
     if resolved.name == "code" and resolved.parent.parent.name.endswith("-at"):
         return resolved.parent.parent
 
-    return resolved.parent / f"{project_id(project_dir)}-at"
+    return resolved.parent / f"{workspace_name(project_dir)}-at"
 
 
 def runtime_root(project_dir: Path | None = None) -> Path:

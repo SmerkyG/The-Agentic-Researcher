@@ -37,6 +37,19 @@ def init_work_branch_workspace(path: Path, work_branch: str = "kernel-search") -
     subprocess.run([REAL_GIT, "-C", str(path), "checkout", "-B", work_branch], check=True, capture_output=True, text=True)
 
 
+def at_launch_args(workspace: Path, work_name: str = "kernel-search", source_ref: str = "kernel-search") -> list[str]:
+    return [
+        str(workspace.parent / f"{workspace.name}-at"),
+        work_name,
+        "--from",
+        source_ref,
+        "--project-dir",
+        str(workspace),
+        "--branch",
+        source_ref,
+    ]
+
+
 @pytest.fixture
 def fake_bin(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
@@ -76,7 +89,6 @@ def base_env(fake_bin: Path, tmp_path: Path) -> dict[str, str]:
     env["FAKE_PODMAN_LOG"] = str(tmp_path / "podman.log")
     env["FAKE_DOCKER_LOG"] = str(tmp_path / "docker.log")
     env["HOME"] = str(tmp_path / "home")
-    env["AR_PROJECT_ID"] = "test-project"
     env["AR_WORK_BRANCH"] = "kernel-search"
     env["AR_NOTES_AUTO_REFRESH"] = "false"
     env["AR_CAPABILITIES"] = "none"
@@ -186,7 +198,7 @@ def test_claude_rejects_own_config_as_workspace(base_env: dict[str, str]) -> Non
     init_work_branch_workspace(workspace)
 
     result = run(
-        [str(AGENTIC_TEAM), "--sandbox", "none", "--cli", "claude", str(workspace)],
+        [str(AGENTIC_TEAM), "--sandbox", "none", "--cli", "claude", *at_launch_args(workspace)],
         base_env,
     )
 
@@ -201,7 +213,7 @@ def test_non_claude_cli_does_not_inherit_claude_workspace_guard(base_env: dict[s
     init_work_branch_workspace(workspace)
 
     result = run(
-        [str(AGENTIC_TEAM), "--sandbox", "none", "--cli", "codex", str(workspace)],
+        [str(AGENTIC_TEAM), "--sandbox", "none", "--cli", "codex", *at_launch_args(workspace)],
         base_env,
     )
 
@@ -330,7 +342,7 @@ def test_launcher_auto_builds_missing_podman_image(
     )
 
     result = run(
-        [str(AGENTIC_TEAM), "--sandbox", "podman", "--cli", "pi", str(workspace)],
+        [str(AGENTIC_TEAM), "--sandbox", "podman", "--cli", "pi", *at_launch_args(workspace)],
         base_env,
     )
 
@@ -371,7 +383,7 @@ def test_launcher_native_runs_host_cli__without_container(
             "codex",
             "--model",
             "gpt-test",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         native_env,
     )
@@ -381,7 +393,7 @@ def test_launcher_native_runs_host_cli__without_container(
     assert "Sandboxed:      No (sandbox none; full host filesystem access)" in result.stdout
     assert "Job backend:    none" in result.stdout
     assert "UV Cache:       uv default (native mode)" in result.stdout
-    expected_artifacts = workspace.parent / "test-project-at" / "artifacts" / "project"
+    expected_artifacts = workspace.parent / "ws-none-at" / "artifacts" / "project"
     assert f"Artifacts:      {expected_artifacts}" in result.stdout
     assert expected_artifacts.is_dir()
     cli__log_text = cli__log.read_text()
@@ -449,7 +461,7 @@ def test_launcher_native_codex_yolo_uses_current_codex_flag(
             "--cli",
             "codex",
             "--yolo",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         {**base_env, "FAKE_CODEX_LOG": str(cli__log)},
     )
@@ -460,13 +472,14 @@ def test_launcher_native_codex_yolo_uses_current_codex_flag(
     assert "--full-auto" not in log_text
 
 
-def test_launcher_requires_project_id_for_launch(
-    base_env: dict[str, str], tmp_path: Path
+def test_launcher_uses_checkout_name_without_remote(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
-    workspace = tmp_path / "ws-missing-project-id"
+    workspace = tmp_path / "ws-without-remote"
     init_work_branch_workspace(workspace)
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = {**base_env}
-    env.pop("AR_PROJECT_ID", None)
+    env["AR_CAPABILITIES"] = "agentic-notes"
 
     result = run(
         [
@@ -474,17 +487,33 @@ def test_launcher_requires_project_id_for_launch(
             "--sandbox", "none",
             "--cli",
             "codex",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         env,
     )
 
-    assert result.returncode == 1
-    assert "could not infer a project id" in result.stdout
-    assert "agentic-team --project-id my-project-2026" in result.stdout
+    assert result.returncode == 0
+    assert (workspace.parent / "ws-without-remote-at" / "project-state").exists()
+
+    remote = tmp_path / "different-remote-name.git"
+    subprocess.run([REAL_GIT, "init", "--bare", str(remote)], check=True, capture_output=True, text=True)
+    subprocess.run([REAL_GIT, "-C", str(workspace), "remote", "add", "origin", str(remote)], check=True)
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--sandbox", "none",
+            "--cli",
+            "codex",
+            *at_launch_args(workspace, source_ref="kernel-search"),
+        ],
+        env,
+    )
+
+    assert result.returncode == 0
+    assert (workspace.parent / "ws-without-remote-at" / "project-state").exists()
 
 
-def test_launcher_infers_project_id_from_git_remote(
+def test_launcher_uses_checkout_name_even_with_git_remote(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-remote-project"
@@ -494,7 +523,6 @@ def test_launcher_infers_project_id_from_git_remote(
     subprocess.run([REAL_GIT, "-C", str(workspace), "remote", "add", "origin", str(remote)], check=True)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = {**base_env}
-    env.pop("AR_PROJECT_ID", None)
     env["AR_CAPABILITIES"] = "agentic-notes"
 
     result = run(
@@ -503,7 +531,7 @@ def test_launcher_infers_project_id_from_git_remote(
             "--sandbox", "none",
             "--cli",
             "codex",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         env,
     )
@@ -511,41 +539,12 @@ def test_launcher_infers_project_id_from_git_remote(
     assert result.returncode == 0
     assert (
         workspace.parent
-        / "project-at"
+        / "ws-remote-project-at"
         / "project-state"
         / "agent-notes"
         / "all-agents"
         / "always-injected.md"
     ).exists()
-
-
-def test_launcher_project_id_flag_overrides_missing_env(
-    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
-) -> None:
-    workspace = tmp_path / "ws-project-id-flag"
-    init_work_branch_workspace(workspace)
-    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
-    env = {**base_env}
-    env.pop("AR_PROJECT_ID", None)
-    env["AR_CAPABILITIES"] = "agentic-notes"
-
-    result = run(
-        [
-            str(AGENTIC_TEAM),
-            "--sandbox", "none",
-            "--cli",
-            "codex",
-            "--project-id",
-            "flag-project",
-            str(workspace),
-        ],
-        env,
-    )
-
-    assert result.returncode == 0
-    assert (workspace.parent / "flag-project-at" / "project-state").exists()
-
-
 def test_launcher_preserves_at_workspace_root_from_code_symlink(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
@@ -574,7 +573,7 @@ def test_launcher_preserves_at_workspace_root_from_code_symlink(
     assert result.returncode == 0
     assert (at_root / "project-state").exists()
     assert (at_root / "kernel-search" / "state").exists()
-    assert not (tmp_path / "test-project-at" / "project-state").exists()
+    assert not (tmp_path / "treeattention-at" / "project-state").exists()
 
 
 def test_launcher_resume_followed_by_existing_directory_sets_workspace(
@@ -592,8 +591,8 @@ def test_launcher_resume_followed_by_existing_directory_sets_workspace(
             "--cli",
             "codex",
             "--debug-launch",
+            *at_launch_args(workspace),
             "--resume",
-            str(workspace),
         ],
         base_env,
     )
@@ -620,7 +619,7 @@ def test_launcher_codex_continue_translates_to_resume_last(
             "codex",
             "--debug-launch",
             "--continue",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         base_env,
     )
@@ -659,7 +658,7 @@ def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
         "--sandbox", "none",
         "--cli",
         "codex",
-        str(workspace),
+        *at_launch_args(workspace),
     ]
     env = {**base_env}
     result = run(command, env)
@@ -735,7 +734,7 @@ def test_native_cluster_run_backend_renders_project_skill(
             "codex",
             "--capability",
             "cluster-run",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         base_env,
     )
@@ -788,7 +787,7 @@ def test_remote_run_capability_checks_its_own_sandbox_requirement(
             "none",
             "--capability",
             "remote-run",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         {**base_env},
     )
@@ -813,7 +812,7 @@ def test_native_capability_renders_skill_and_instruction_overlay(
             "codex",
             "--capability",
             "cluster-run",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         {**base_env},
     )
@@ -841,7 +840,7 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
             "claude",
             "--capability",
             "cluster-run",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         base_env,
     )
@@ -884,7 +883,7 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
             "gemini",
             "--capability",
             "cluster-run",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         base_env,
     )
@@ -930,7 +929,7 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
             "opencode",
             "--capability",
             "cluster-run",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         base_env,
     )
@@ -1024,7 +1023,7 @@ def test_launcher_podman_runs_pi_cli_(base_env: dict[str, str], tmp_path: Path) 
     init_work_branch_workspace(workspace)
 
     result = run(
-        [str(AGENTIC_TEAM), "--sandbox", "podman", "--cli", "pi", str(workspace)],
+        [str(AGENTIC_TEAM), "--sandbox", "podman", "--cli", "pi", *at_launch_args(workspace)],
         base_env,
     )
 
@@ -1072,7 +1071,7 @@ def test_pi_translates_resume_to_session_and_warns_on_yolo(
             "--resume",
             "ABC123",
             "--yolo",
-            str(workspace),
+            *at_launch_args(workspace),
         ],
         base_env,
     )

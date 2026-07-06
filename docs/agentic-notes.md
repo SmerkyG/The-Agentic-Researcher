@@ -2,7 +2,7 @@
 
 Agentic Notes is the built-in capability for Git-backed learned knowledge. It owns the `agent-notes/` layout, renders `always-injected.md` content into agent startup instructions, lists on-demand note topics, and provides note read/update commands.
 
-Agentic Notes uses Agentic State for storage. See [agentic-state.md](agentic-state.md) for project identity, org/project/work-branch scopes, orphan state branches, locks, refresh behavior, visible workspace locations, and operational cache locations.
+Agentic Notes uses Agentic State for storage. See [agentic-state.md](agentic-state.md) for workspace naming, org/project/work-branch scopes, orphan state branches, locks, refresh behavior, visible workspace locations, and operational cache locations.
 
 ## Layout
 

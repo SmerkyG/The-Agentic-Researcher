@@ -47,7 +47,7 @@ validate_cli_workspace() {
     cli_call validate_workspace
 }
 
-slugify_project_id() {
+slugify_workspace_name() {
     local text="$1" slug
     slug="$(printf '%s' "$text" \
         | tr '[:upper:]' '[:lower:]' \
@@ -63,6 +63,11 @@ path_looks_like_at_workspace() {
     [[ "$base" == *-at ]] && return 0
     [[ -e "$path/project" || -e "$path/project-state" ]] && return 0
     return 1
+}
+
+workspace_input_is_at_code_path() {
+    local path="${WORKSPACE_INPUT_DIR:-$WORKSPACE_DIR}"
+    [[ "$(basename "$path")" == "code" && "$(basename "$(dirname "$(dirname "$path")")")" == *-at ]]
 }
 
 resolve_launch_positionals() {
@@ -102,54 +107,29 @@ resolve_launch_positionals() {
     fi
 }
 
-project_remote_name() {
-    local value="$1" repo
-    value="${value%%#*}"
-    value="${value%/}"
+fallback_workspace_name_from_path() {
+    local path="$WORKSPACE_DIR" at_root project_link resolved_project base
 
-    if [[ "$value" =~ ^[A-Za-z][A-Za-z0-9+.-]*://[^/]+/(.+)$ ]]; then
-        value="${BASH_REMATCH[1]}"
-    elif [[ "$value" == file://* ]]; then
-        value="${value#file://}"
-    elif [[ "$value" =~ ^([^@/:]+@)?([^/:]+):(.+)$ ]]; then
-        value="${BASH_REMATCH[3]}"
-    fi
-
-    value="${value%/}"
-    value="${value%.git}"
-    repo="${value##*/}"
-    printf '%s\n' "${repo:-project}"
-}
-
-infer_project_id_from_remote() {
-    local remote repo_name
-    remote="$(git -C "$WORKSPACE_DIR" remote get-url origin 2>/dev/null || true)"
-    [[ -n "$remote" ]] || return 1
-    repo_name="$(project_remote_name "$remote")"
-    slugify_project_id "$repo_name"
-}
-
-validate_project_id() {
-    local inferred
-    if [[ -n "${AR_PROJECT_ID:-}" ]]; then
-        AR_PROJECT_ID="$(slugify_project_id "$AR_PROJECT_ID")"
-        export AR_PROJECT_ID
+    if [[ "$(basename "$path")" == "code" && "$(basename "$(dirname "$(dirname "$path")")")" == *-at ]]; then
+        at_root="$(dirname "$(dirname "$path")")"
+        project_link="$at_root/project"
+        if [[ -e "$project_link" || -L "$project_link" ]]; then
+            if resolved_project="$(resolve_realpath "$project_link" 2>/dev/null)"; then
+                slugify_workspace_name "$(basename "$resolved_project")"
+                return
+            fi
+        fi
+        base="$(basename "$at_root")"
+        slugify_workspace_name "${base%-at}"
         return
     fi
 
-    if inferred="$(infer_project_id_from_remote)" && [[ -n "$inferred" ]]; then
-        AR_PROJECT_ID="$inferred"
-        export AR_PROJECT_ID
-        return
-    fi
+    slugify_workspace_name "$(basename "$path")"
+}
 
-    echo "Error: Agentic Team could not infer a project id because this project has no git remote."
-    echo ""
-    echo "Add a git remote or provide an explicit id:"
-    echo "  agentic-team --project-id my-project-2026 $WORKSPACE_DIR"
-    echo ""
-    echo "Use the same id for all worktrees and agents that should share notes and experiment logs."
-    exit 1
+derive_workspace_name() {
+    AR_WORKSPACE_NAME="$(fallback_workspace_name_from_path)"
+    export AR_WORKSPACE_NAME
 }
 
 current_workspace_git_branch() {
@@ -179,13 +159,13 @@ work_branch_from_branch() {
 }
 
 work_branch_id() {
-    slugify_project_id "$1"
+    slugify_workspace_name "$1"
 }
 
 work_name_from_branch() {
     local branch="$1" leaf
     leaf="${branch##*/}"
-    slugify_project_id "${leaf:-$branch}"
+    slugify_workspace_name "${leaf:-$branch}"
 }
 
 agentic_workspace_root() {
@@ -212,7 +192,7 @@ agentic_workspace_root() {
     fi
 
     parent="$(dirname "$WORKSPACE_DIR")"
-    printf '%s/%s-at\n' "$parent" "$AR_PROJECT_ID"
+    printf '%s/%s-at\n' "$parent" "$AR_WORKSPACE_NAME"
 }
 
 set_agentic_workspace_root() {
@@ -277,7 +257,7 @@ valid_git_branch_name() {
 
 branch_guard_dir_for() {
     local branch="$1"
-    printf '%s/branch-guards/%s\n' "$RUNTIME_ROOT" "$(slugify_project_id "$branch")"
+    printf '%s/branch-guards/%s\n' "$RUNTIME_ROOT" "$(slugify_workspace_name "$branch")"
 }
 
 file_mtime_epoch() {
@@ -419,7 +399,7 @@ infer_work_branch_base_ref() {
 
 unused_work_branch_candidate() {
     local base candidate n
-    base="work/$(slugify_project_id "${AR_USER_ID:-${USER:-agent}}")"
+    base="work/$(slugify_workspace_name "${AR_USER_ID:-${USER:-agent}}")"
     candidate="$base"
     n=2
     while git_branch_exists "$candidate" || branch_guard_is_occupied "$candidate"; do
@@ -545,7 +525,7 @@ resolve_named_at_work() {
         fi
         work_name="$(prompt_at_work_name "research-main")"
     fi
-    work_name="$(slugify_project_id "$work_name")"
+    work_name="$(slugify_workspace_name "$work_name")"
     work_dir="$at_root/$work_name"
     code_dir="$work_dir/code"
 
@@ -590,9 +570,6 @@ resolve_named_at_work() {
         --state "$AT_STATE_MODE"
         --capabilities "$AR_CAPABILITIES"
     )
-    if [[ -n "${AR_PROJECT_ID:-}" ]]; then
-        ensure_args+=(--project-id "$AR_PROJECT_ID")
-    fi
     if [[ -n "$AT_NEW_BRANCH_ARG" ]]; then
         ensure_args+=(--branch "$AT_NEW_BRANCH_ARG")
     fi
@@ -782,6 +759,25 @@ prepare_work_branch_interactive() {
     esac
 }
 
+prepare_at_work_entry_interactive() {
+    local branch="$1" owner_branch="$2" occupied="$3" dirty="$4" active_guard="$5"
+    local base_ref candidate target_branch target_path
+
+    base_ref="$(infer_work_branch_base_ref "$owner_branch" "$branch")"
+    candidate="$(unused_work_branch_candidate)"
+
+    echo "Agentic Team should run in an AT work entry."
+    print_branch_decision_context "$branch" "$occupied" "$dirty" "$base_ref" "$active_guard"
+
+    AR_WORKSPACE_ROOT="$(prompt_at_workspace_root "$(agentic_workspace_root)")"
+    export AR_WORKSPACE_ROOT
+    ensure_at_project_symlink "$WORKSPACE_DIR"
+    base_ref="$(prompt_at_source_ref "$base_ref")"
+    target_branch="$(prompt_work_branch_name "$candidate")"
+    target_path="$(code_worktree_path_for_branch "$target_branch")"
+    create_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
+}
+
 resolve_main_agent_metadata() {
     local main_agent="${AR_MAIN_AGENT:-research-coordinator}" kind ownership
 
@@ -818,7 +814,7 @@ resolve_main_agent_metadata() {
 }
 
 ensure_branch_session_id() {
-    AR_SESSION_ID="${AR_SESSION_ID:-$AR_PROJECT_ID-${AR_WORK_BRANCH_ID:-branch}-$$-$(date +%s)}"
+    AR_SESSION_ID="${AR_SESSION_ID:-${AR_WORK_BRANCH_ID:-branch}-$$-$(date +%s)}"
     export AR_SESSION_ID
 }
 
@@ -828,7 +824,6 @@ write_branch_guard_file() {
     now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     mkdir -p "$(dirname "$BRANCH_GUARD_FILE")"
     {
-        printf 'project_id=%s\n' "$AR_PROJECT_ID"
         printf 'branch=%s\n' "$AR_WORK_BRANCH"
         printf 'current_branch=%s\n' "$WORKSPACE_GIT_BRANCH"
         printf 'branch_ownership=%s\n' "$AR_BRANCH_OWNERSHIP"
@@ -882,7 +877,7 @@ cleanup_branch_guard() {
 }
 
 prepare_work_branch() {
-    local branch owner_branch active_guard candidate base_ref target_path occupied dirty
+    local branch owner_branch active_guard candidate base_ref occupied dirty
 
     [[ "$TEST_MODE" == "true" ]] && return 0
 
@@ -915,6 +910,57 @@ prepare_work_branch() {
 
     [[ "$RENDER_ONLY" == "true" ]] && return 0
 
+    active_guard=""
+    if active_guard="$(branch_guard_first_active_file "$AR_WORK_BRANCH")"; then
+        occupied="yes"
+    else
+        occupied="no"
+    fi
+    if workspace_has_uncommitted_changes; then
+        dirty="yes"
+    else
+        dirty="no"
+    fi
+
+    if [[ -z "$WORKTREE_PATH_ARG" ]] && ! workspace_input_is_at_code_path; then
+        candidate="$(unused_work_branch_candidate)"
+        base_ref="$(infer_work_branch_base_ref "$AR_WORK_BRANCH" "$branch")"
+        if ! launch_is_interactive; then
+            echo "Error: Agentic Team must launch from an AT work entry."
+            echo "Current branch: $branch"
+            echo "Another active agent: $occupied"
+            echo "Uncommitted changes: $dirty"
+            if [[ -n "$active_guard" ]]; then
+                echo ""
+                echo "Another active local agent appears to be using branch '$AR_WORK_BRANCH':"
+                branch_guard_summary "$active_guard"
+            fi
+            echo ""
+            echo "Create or launch an AT work entry:"
+            echo "  agentic-team $(agentic_workspace_root) $(work_name_from_branch "$candidate") --from $base_ref --project-dir $WORKSPACE_DIR --branch $candidate"
+            if [[ "$dirty" == "yes" ]]; then
+                echo ""
+                echo "Note: uncommitted changes in the current checkout stay where they are."
+            fi
+            echo ""
+            echo "Or launch an existing code worktree explicitly:"
+            echo "  agentic-team --worktree-path PATH"
+            exit 1
+        fi
+
+        prepare_at_work_entry_interactive "$branch" "$AR_WORK_BRANCH" "$occupied" "$dirty" "$active_guard"
+        branch="$(current_workspace_git_branch)"
+        owner_branch="$(work_branch_from_branch "$branch")"
+        set_work_branch_vars "$owner_branch" "$branch"
+        if branch_guard_is_occupied "$AR_WORK_BRANCH"; then
+            echo "Error: Branch '$AR_WORK_BRANCH' appears to have another active local agent session."
+            branch_guard_summary "$(branch_guard_first_active_file "$AR_WORK_BRANCH")"
+            exit 1
+        fi
+        register_branch_guard
+        return 0
+    fi
+
     case "$AR_BRANCH_OWNERSHIP" in
         readonly|shared)
             return 0
@@ -932,20 +978,8 @@ prepare_work_branch() {
         return 0
     fi
 
-    active_guard=""
-    if active_guard="$(branch_guard_first_active_file "$AR_WORK_BRANCH")"; then
-        occupied="yes"
-    else
-        occupied="no"
-    fi
-    if workspace_has_uncommitted_changes; then
-        dirty="yes"
-    else
-        dirty="no"
-    fi
-
     if ! launch_is_interactive; then
-        echo "Error: Exclusive main agent '$AR_MAIN_AGENT' is not on an unoccupied work branch."
+        echo "Error: Exclusive main agent '$AR_MAIN_AGENT' cannot use this AT work entry as-is."
         echo "Current branch: $branch"
         echo "Another active agent: $occupied"
         echo "Uncommitted changes: $dirty"
@@ -956,23 +990,18 @@ prepare_work_branch() {
         fi
         candidate="$(unused_work_branch_candidate)"
         base_ref="$(infer_work_branch_base_ref "$AR_WORK_BRANCH" "$branch")"
-        target_path="$(default_worktree_path "$candidate")"
         echo ""
         if [[ "$occupied" == "yes" ]]; then
-            echo "Create a new worktree with an unused work branch:"
+            echo "Create a new AT work entry with an unused work branch:"
             echo "  agentic-team $(agentic_workspace_root) $(work_name_from_branch "$candidate") --from $base_ref --project-dir $WORKSPACE_DIR --branch $candidate"
         else
-            echo "Create or switch to an unused work branch first:"
-            echo "  git switch -c $candidate"
-            echo "  agentic-team $WORKSPACE_DIR"
+            echo "Create a new AT work entry for the branch:"
+            echo "  agentic-team $(agentic_workspace_root) $(work_name_from_branch "$candidate") --from $base_ref --project-dir $WORKSPACE_DIR --branch $candidate"
         fi
         if [[ "$dirty" == "yes" && "$occupied" == "yes" ]]; then
             echo ""
             echo "Note: uncommitted changes in the current worktree stay where they are."
         fi
-        echo ""
-        echo "Or choose an explicit branch before launch:"
-        echo "  agentic-team --work-branch $candidate $WORKSPACE_DIR"
         echo ""
         echo "Or continue intentionally with shared-branch work:"
         echo "  agentic-team --allow-shared-branch $WORKSPACE_DIR"

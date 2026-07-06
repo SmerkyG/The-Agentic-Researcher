@@ -69,7 +69,7 @@ main() {
     profile_step "validate_sandbox" validate_sandbox
     profile_step "validate_workspace" validate_workspace
     profile_step "validate_cli_workspace" validate_cli_workspace
-    profile_step "validate_project_id" validate_project_id
+    profile_step "derive_workspace_name" derive_workspace_name
     profile_step "setup_agentic_workspace_root" set_agentic_workspace_root
     profile_step "setup_agentic_runtime_root" set_agentic_runtime_root
     profile_step "setup_agentic_artifacts_dir" set_agentic_artifacts_dir

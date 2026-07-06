@@ -17,7 +17,6 @@ LAUNCHER_ENV_OVERRIDE_VARS=(
     AR_WORK_BRANCH
     AR_BRANCH_OWNERSHIP
     AR_USER_ID
-    AR_PROJECT_ID
     AR_PROJECT_STATE_BRANCH
     AR_NOTES_AUTO_REFRESH
     AR_NOTES_REFRESH_MODE
@@ -87,9 +86,6 @@ apply_env_overrides() {
             AR_CAPABILITIES="$AR_CAPABILITIES_OVERRIDE"
         fi
     fi
-    if [[ -n "${AR_PROJECT_ID_OVERRIDE:-}" ]]; then
-        AR_PROJECT_ID="$AR_PROJECT_ID_OVERRIDE"
-    fi
     if [[ -n "${AR_MAIN_AGENT_OVERRIDE:-}" ]]; then
         AR_MAIN_AGENT="$AR_MAIN_AGENT_OVERRIDE"
     fi
@@ -135,7 +131,6 @@ apply_defaults() {
     AR_WORK_BRANCH="${AR_WORK_BRANCH:-}"
     AR_BRANCH_OWNERSHIP="${AR_BRANCH_OWNERSHIP:-}"
     AR_USER_ID="${AR_USER_ID:-$USER}"
-    AR_PROJECT_ID="${AR_PROJECT_ID:-}"
     AR_PROJECT_STATE_BRANCH="${AR_PROJECT_STATE_BRANCH:-agentic/project-state}"
     AR_NOTES_AUTO_REFRESH="${AR_NOTES_AUTO_REFRESH:-true}"
     AR_NOTES_REFRESH_MODE="${AR_NOTES_REFRESH_MODE:-periodic}"
@@ -249,14 +244,6 @@ parse_arguments() {
                     exit 1
                 fi
                 append_capability_override "$2"
-                shift 2
-                ;;
-            --project-id)
-                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --project-id requires a value"
-                    exit 1
-                fi
-                AR_PROJECT_ID_OVERRIDE="$2"
                 shift 2
                 ;;
             --main-agent)
@@ -419,7 +406,6 @@ Options:
   --refresh-capabilities
                       With --render-only, run capability refresh hooks before rendering
   --capability NAME   Enable a capability from capabilities/ (repeatable)
-  --project-id ID     Override inferred project id for notes and experiment state
   --project-dir DIR   Existing normal project checkout for creating/repairing an AT workspace
   --main-agent NAME   Override top-level main agent for this invocation
   --work-branch NAME  Create/switch to this Git branch before launch

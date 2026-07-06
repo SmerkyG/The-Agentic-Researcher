@@ -36,7 +36,7 @@ Agentic Team is split into a small launcher, a shared Git-backed state substrate
 
 **Launcher.** The `agentic-team` command prepares the selected project worktree, materializes the invocation-specific instruction file (`AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`), renders the selected main agent and subagent definitions, runs enabled capability hooks, sets up PATH/env/binds, and then launches the selected LLM CLI in the selected sandbox. The launcher owns CLI and sandbox integration, instruction materialization, branch-ownership prompts, and capability selection. It does not own the schemas for notes or experiment logs.
 
-**Agentic State.** Agentic State is the shared storage substrate used by capabilities. It resolves project identity, manages visible Git worktrees under `$AR_WORKSPACE_ROOT`, serializes local project/work updates with locks under `$AR_RUNTIME_ROOT`, and performs ordinary Git fetch/merge/commit/push operations. Organization scope lives in the optional org repo. Project scope lives on the project repo's orphan `agentic/project-state` branch. Work-branch scope lives on one orphan `agentic/work-state/<work-branch>` branch per work branch. Agentic State provides the storage mechanics; capabilities decide what files and schemas they store there.
+**Agentic State.** Agentic State is the shared storage substrate used by capabilities. It manages visible Git worktrees under `$AR_WORKSPACE_ROOT`, serializes local project/work updates with locks under `$AR_RUNTIME_ROOT`, and performs ordinary Git fetch/merge/commit/push operations. Organization scope lives in the optional org repo. Project scope lives on the project repo's orphan `agentic/project-state` branch. Work-branch scope lives on one orphan `agentic/work-state/<work-branch>` branch per work branch. Agentic State provides the storage mechanics; capabilities decide what files and schemas they store there.
 
 **Capabilities.** Capabilities are selected packages that can add commands, instruction sections, launcher hooks, and stateful workflows. Built-in capabilities include:
 
@@ -67,46 +67,18 @@ The installer adds the `agentic-team` launcher. The setup wizard creates local c
 
 ## Workflow
 
-### Recommended Layout
-
-Keep your normal checkout on the branch you use as the human integration point, usually `main`. Agentic Team creates sibling AT workspace entries for agent work:
-
-```text
-my-project/                         # normal checkout, usually main
-my-project-at/
-  project -> ../my-project          # pointer back to the normal checkout
-  artifacts/
-    project/                        # shared bulky experiment artifacts
-  project-state/                    # worktree for agentic/project-state
-  research-main/
-    code/                           # Git worktree, e.g. agent/research-main
-    state/                          # worktree for agentic/work-state/agent/research-main
-  kdtree-bounds/
-    code/                           # another top-level agent worktree
-    state/                          # matching work-state worktree
-  .runtime/                         # hidden project-local locks, snapshots, and helpers
-```
-
-The local `project-state/`, `<work-name>/code/`, and `<work-name>/state/` directories are linked Git worktrees of the project repo. The state worktrees use orphan state branches rather than normal code branches. They are intentionally visible so reports, TODOs, figures, notes, and experiment logs are easy to find. The hidden `.runtime/` directory is launcher-managed project machinery.
-
-Bulky reusable experiment outputs go under the AT workspace's `artifacts/project/` directory by default and are exposed to agents as `$AR_ARTIFACTS_DIR`. Use unique run or experiment subdirectories there for new writes. Work-state report figures are different: keep report-ready PNG/PDF files under `<work-name>/state/images/` so `report.md` links remain self-contained and Git-backed.
-
 ### Starting the First Agent
 
-1. **Start from the normal project checkout.** The checkout should usually have an `origin` remote so Agentic Team can derive the project identity from the repo name automatically.
-2. **Stay on the integration branch.** For example:
+1. **Start from the normal project checkout.** Pass the checkout directory you want AT to use as the project source. Agentic Team uses the checkout's current branch or ref as the starting point for the first AT work entry, and uses the checkout directory name for the default sibling AT workspace:
 
    ```bash
-   cd ~/my-project
-   git switch main
-   agentic-team .
+   agentic-team ~/my-project
    ```
 
-3. **Choose a new AT worktree when prompted.** If the checkout is on a protected branch such as `main`, the launcher offers to create a new AT worktree. Choose that option, accept the default AT workspace directory `../my-project-at`, and enter a stable work branch such as `agent/research-main`.
-4. **Let the agent initialize the research workflow.** For a new research effort, ask the default `research-coordinator` main agent to use the `do_research` skill. This starts the setup dialogue about the research goal, evaluation metrics, constraints, and compute budget.
-5. The agent writes work-branch-specific startup guidance as work-branch Agentic Notes on `agentic/work-state/<work-branch>`. Research workflows may also create work-branch files such as `report.md`, `TODO.md`, report-ready figures under `images/`, and an experiment log in the visible `<work-name>/state/` worktree.
-
-If the project has no Git remote, pass `--project-id` or set `AR_PROJECT_ID` so repeated launches use the same notes and experiment state.
+2. **Create or choose the AT workspace when prompted.** Launching from the normal checkout always enters the AT setup flow because AT needs a separate workspace for code worktrees, state worktrees, artifacts, and runtime files. Accept the default sibling directory `../my-project-at` unless you want a different AT workspace root.
+3. **Create a new AT work entry when prompted.** Enter a stable work name such as `research-main`. Agentic Team creates `<work-name>/code` and `<work-name>/state` under the AT workspace, backed by the corresponding code branch and work-state branch.
+4. **Ask the launched agent to initialize the research workflow.** Your selected LLM CLI is now running in the AT worktree. For a new research effort, invoke the `do_research` skill. In Codex, type `$do_research` or select it from `/skills`. This starts the setup dialogue about the research goal, evaluation metrics, constraints, and compute budget.
+5. Research workflows create an ongoing `report.md` report and `TODO.md` checklist for you to examine as the agent progresses, as well as an experiment log all under `~/my-project/<work-name>/state/`.
 
 ### Resuming a Session
 
@@ -116,7 +88,7 @@ Relaunch Agentic Team by naming the AT workspace and work entry:
 agentic-team ~/my-project-at research-main
 ```
 
-The rendered instructions include injected shared notes, active work branch Agentic Notes when present, and capability-owned sections for the selected workflow. Use `do_research` on resume only when you want a structured recap or to create/revise research work-branch guidance.
+The rendered instructions include injected shared notes, active work branch Agentic Notes when present, and capability-owned sections for the selected workflow. Use the `do_research` skill on resume only when you want a structured recap or to create/revise research work-branch guidance.
 
 ### Multiple Agents in One Project
 
@@ -156,7 +128,7 @@ Run `agentic-team --setup` to create a configuration file at `${XDG_CONFIG_HOME:
 - **Main agent** (`AR_MAIN_AGENT`) — top-level agent definition to render into the workspace instruction file. Defaults to `research-coordinator`
 - **Work branch** (`AR_WORK_BRANCH` or `--work-branch`) — Git branch used by the top-level agent. Main-agent frontmatter can set `branch_ownership: exclusive|shared|readonly`; the default is `exclusive`
 - **Git identity** (`AR_GIT_NAME`, `AR_GIT_EMAIL`) — repo-local fallback identity for Agentic Team-created commits when the project checkout does not already have `user.name` / `user.email`
-- **AT workspace root** (`AR_WORKSPACE_ROOT`) — optional override for the visible workspace root that contains linked worktrees for `project-state/` plus `<work-name>/code` and `<work-name>/state`. By default it is a sibling named `<project-id>-at`
+- **AT workspace root** (`AR_WORKSPACE_ROOT`) — optional override for the visible workspace root that contains linked worktrees for `project-state/` plus `<work-name>/code` and `<work-name>/state`. By default it is a sibling named `<checkout-dir-name>-at`
 - **Project runtime root** (`AR_RUNTIME_ROOT`) — optional override for hidden per-project runtime machinery. Defaults to `$AR_WORKSPACE_ROOT/.runtime`
 - **Project artifacts directory** (`AR_ARTIFACTS_DIR`) — optional override for bulky shared project artifacts. Defaults to `$AR_WORKSPACE_ROOT/artifacts/project`
 - **Global state/cache directory** (`AR_STATE_ROOT`) — where shared caches, container `/tmp`, CLI config state, and the optional org repo checkout are stored. Defaults to `~/.cache/agentic-team`. On HPC systems with Apptainer, set this to a path with sufficient space (e.g. on a scratch filesystem) to avoid hitting the default 64 MB overlay limit
@@ -165,7 +137,6 @@ Run `agentic-team --setup` to create a configuration file at `${XDG_CONFIG_HOME:
 - **Extra bind directories** — additional host paths to mount into the sandbox
 - **Auto-build** (`AR_AUTO_BUILD`) — whether missing container images should be built automatically on first launch
 - **Capabilities** (`AR_CAPABILITIES`) — comma-separated capability packages from `capabilities/`
-- **Project identity override** (`AR_PROJECT_ID` or `--project-id`) — optional stable id for projects without a Git remote, forks that should share state, or other custom grouping
 - **Agentic Notes refresh** (`AR_NOTES_REFRESH_MODE`, `AR_NOTES_REFRESH_INTERVAL_SECONDS`) — defaults to periodic background refresh every 120 seconds while at least one agent for the project is running; set mode to `foreground` for synchronous launch refresh or `manual` to disable periodic refresh
 - **Startup profiling** (`AR_PROFILE_STARTUP=true`) — print per-phase launcher setup timings to stderr before the selected CLI starts
 
@@ -175,8 +146,7 @@ You can re-run `--setup` at any time to update your configuration.
 
 ```bash
 # Start from the normal project checkout; create an AT worktree if prompted
-cd ~/my-project
-agentic-team .
+agentic-team ~/my-project
 
 # Resume an existing AT effort
 agentic-team ~/my-project-at/research-main/code
@@ -192,9 +162,6 @@ agentic-team --render-only --cli codex ~/my-project-at research-main
 
 # Auto-approve all tool calls
 agentic-team --yolo ~/my-project-at research-main
-
-# Override the inferred project identity when needed
-agentic-team --project-id my-project-2026 ~/my-project
 
 # Use a different top-level agent for this launch
 agentic-team --main-agent research-paper-author ~/my-project-at paper
@@ -212,11 +179,35 @@ agentic-team ~/my-project-at research-main --from main --project-dir ~/my-projec
 agentic-team --worktree-path ~/my-project-at/research-main/code
 ```
 
+### Required Workspace Layout
+
+Agentic Team uses a fixed AT workspace layout. Keep your normal checkout on the branch you use as the human integration point, usually `main`; Agentic Team creates sibling AT workspace entries for agent work:
+
+```text
+my-project/                         # normal checkout, usually main
+my-project-at/
+  project -> ../my-project          # pointer back to the normal checkout
+  artifacts/
+    project/                        # shared bulky experiment artifacts
+  project-state/                    # worktree for agentic/project-state
+  research-main/
+    code/                           # Git worktree for the derived code branch
+    state/                          # worktree for the matching work-state branch
+  kdtree-bounds/
+    code/                           # another top-level agent worktree
+    state/                          # matching work-state worktree
+  .runtime/                         # hidden project-local locks, snapshots, and helpers
+```
+
+The local `project-state/`, `<work-name>/code/`, and `<work-name>/state/` directories are linked Git worktrees of the project repo. The state worktrees use orphan state branches rather than normal code branches. They are intentionally visible so reports, TODOs, figures, notes, and experiment logs are easy to find. The hidden `.runtime/` directory is launcher-managed project machinery.
+
+Bulky reusable experiment outputs go under the AT workspace's `artifacts/project/` directory by default and are exposed to agents as `$AR_ARTIFACTS_DIR`. Use unique run or experiment subdirectories there for new writes. Work-state report figures are different: keep report-ready PNG/PDF files under `<work-name>/state/images/` so `report.md` links remain self-contained and Git-backed.
+
 ### Project Git and Agentic State
 
-Agentic Team uses your normal project Git repository for code work plus separate Git-backed state branches for agent-facing state. The original project checkout can stay on your normal human branch. AT code and state worktrees live under the visible AT workspace root, usually a sibling directory named `<project-id>-at`.
+Agentic Team uses your normal project Git repository for code work plus separate Git-backed state branches for agent-facing state. The original project checkout can stay on your normal human branch. AT code and state worktrees live under the visible AT workspace root, usually a sibling directory named `<checkout-dir-name>-at`.
 
-If the project Git repo has an `origin` remote, Agentic Team derives the project identity from the remote repo name by default. For example, `https://github.com/example-org/abctest` resolves to project id `abctest`. If the project has no Git remote, or if you need a custom grouping, pass `--project-id` or set `AR_PROJECT_ID`.
+Agentic Team derives the default AT workspace directory from the checkout directory name. For example, launching from `~/src/abctest-dev` defaults to `~/src/abctest-dev-at`, regardless of the Git remote name. To choose a different namespace, launch by naming the desired AT workspace directory, for example `agentic-team ~/shared-work-at research-main --from main --project-dir ~/my-project`.
 
 The main state scopes are:
 
@@ -335,7 +326,7 @@ The framework ships `INSTRUCTIONS.md` as a shared base template, capability-owne
 
 ### Agentic State
 
-Agentic State is implemented as shared command-library code used by capabilities and launcher refresh paths. It owns project identity, state worktree locations, branch naming, local locks, and Git synchronization; capabilities own the files and schemas stored there. See [docs/agentic-state.md](docs/agentic-state.md) for scopes, orphan branches, cache locations, refresh behavior, and materialized instruction files.
+Agentic State is implemented as shared command-library code used by capabilities and launcher refresh paths. It owns state worktree locations, branch naming, local locks, and Git synchronization; capabilities own the files and schemas stored there. See [docs/agentic-state.md](docs/agentic-state.md) for scopes, orphan branches, cache locations, refresh behavior, and materialized instruction files.
 
 ### Capabilities
 

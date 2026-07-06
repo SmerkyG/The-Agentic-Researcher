@@ -55,7 +55,6 @@ Request YAML:
     scope: org | project | work
     agent_type: all-agents | AGENT_TYPE
     note_name: NOTE_TOPIC
-    project_id: PROJECT_ID      # required for project/work when not inferred
     work_branch: WORK_BRANCH    # required for work when not inferred
   content: |
     # Note Title
@@ -149,9 +148,6 @@ def rewrite_note(args: list[str]) -> None:
             agent_type,
             "--refresh-parent",
         ]
-        project_id = field_value(target, "project_id") or field_value(source, "project_id")
-        if project_id:
-            command.extend(["--project-id", project_id])
         work_branch = field_value(target, "work_branch") or field_value(source, "work_branch")
         if work_branch:
             command.extend(["--work-branch", work_branch])
