@@ -1,0 +1,367 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["PyYAML>=6.0"]
+# ///
+"""Manage Agentic Team workspace groups."""
+
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+COMMAND_LIB = REPO_ROOT / "scripts" / "lib" / "commands"
+sys.path.insert(0, str(COMMAND_LIB))
+
+from agentic_state import (  # noqa: E402
+    AgenticStateError,
+    commit_if_changed,
+    configure_git_identity,
+    current_branch,
+    ensure_project_checkout,
+    ensure_work_state,
+    git,
+    git_remote,
+    project_id,
+    slugify,
+    state_root,
+    work_state_branch,
+)
+
+
+def run(command: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(command, cwd=str(cwd) if cwd else None, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if check and result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise AgenticStateError(f"{' '.join(command)} failed: {detail}")
+    return result
+
+
+def local_branch_exists(repo: Path, branch: str) -> bool:
+    return git(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0
+
+
+def refresh_remote_refs(repo: Path) -> None:
+    if git_remote(repo):
+        git(repo, "fetch", "--prune", "origin", check=False)
+
+
+def local_branch_ref_names(repo: Path) -> set[str]:
+    names: set[str] = set()
+    local = git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads", check=False)
+    if local.returncode == 0:
+        names.update(line.strip() for line in local.stdout.splitlines() if line.strip())
+    return names
+
+
+def remote_branch_ref_names(repo: Path) -> set[str]:
+    names: set[str] = set()
+    tracking = git(repo, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin", check=False)
+    if tracking.returncode == 0:
+        for line in tracking.stdout.splitlines():
+            name = line.strip()
+            if not name or name == "origin/HEAD":
+                continue
+            names.add(name.removeprefix("origin/"))
+
+    if git_remote(repo):
+        remote = git(repo, "ls-remote", "--heads", "origin", check=False)
+        if remote.returncode == 0:
+            for line in remote.stdout.splitlines():
+                _sha, _, ref = line.partition("\t")
+                if ref.startswith("refs/heads/"):
+                    names.add(ref.removeprefix("refs/heads/"))
+    return names
+
+
+def branch_namespace_conflict(existing: str, candidate: str) -> bool:
+    return existing == candidate or existing.startswith(f"{candidate}/") or candidate.startswith(f"{existing}/")
+
+
+def assert_new_branch_available(repo: Path, branch: str, *, label: str) -> None:
+    if git(repo, "check-ref-format", "--branch", branch, check=False).returncode != 0:
+        raise AgenticStateError(f"invalid {label} branch name: {branch}")
+
+    for existing in sorted(local_branch_ref_names(repo)):
+        if branch_namespace_conflict(existing, branch):
+            raise AgenticStateError(
+                f"cannot create {label} branch '{branch}' because local branch '{existing}' already exists"
+            )
+
+    for existing in sorted(remote_branch_ref_names(repo)):
+        if branch_namespace_conflict(existing, branch):
+            raise AgenticStateError(
+                f"cannot create {label} branch '{branch}' because remote branch 'origin/{existing}' is visible. "
+                "Delete or refresh that remote ref, or pass an explicit --branch that you want to create."
+            )
+
+
+def default_child_branch(parent: str, child_name: str) -> str:
+    child = slugify(child_name, default="work")
+    if parent.startswith("agent/"):
+        return f"agent/{child}"
+    user = os.environ.get("AR_USER_ID") or os.environ.get("USER") or "user"
+    user_slug = slugify(user, default="user")
+    return f"agent/{user_slug}/{child}"
+
+
+def capability_names(raw: str) -> list[str]:
+    names: list[str] = []
+    for name in raw.replace(",", " ").split():
+        if name and name != "none":
+            names.append(name)
+    return names
+
+
+def capability_root(name: str) -> Path | None:
+    org_root = state_root() / "repos" / "org-agentic-notes" / "capabilities" / name
+    if org_root.is_dir():
+        return org_root
+    builtin = REPO_ROOT / "capabilities" / name
+    if builtin.is_dir():
+        return builtin
+    return None
+
+
+def is_git_worktree(path: Path) -> bool:
+    return run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"], check=False).returncode == 0
+
+
+def validate_project_dir(project_dir: Path) -> Path:
+    project_dir = project_dir.expanduser().resolve()
+    if not is_git_worktree(project_dir):
+        raise AgenticStateError(f"not a Git worktree: {project_dir}")
+    return project_dir
+
+
+def relative_symlink_target(target: Path, link_parent: Path) -> str:
+    return os.path.relpath(target, link_parent)
+
+
+def ensure_project_link(root: Path, project_dir_arg: str | None) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    link = root / "project"
+
+    if link.is_symlink() or link.exists():
+        if not link.exists():
+            if project_dir_arg is None:
+                raise AgenticStateError(f"AT workspace project link is broken: {link}")
+            link.unlink()
+        else:
+            project_dir = validate_project_dir(link.resolve())
+            if project_dir_arg is not None:
+                requested = validate_project_dir(Path(project_dir_arg))
+                if requested != project_dir:
+                    raise AgenticStateError(
+                        f"AT workspace already points at project {project_dir}; "
+                        f"refusing to replace it with {requested}"
+                    )
+            return project_dir
+
+    if project_dir_arg is None:
+        raise AgenticStateError(
+            f"AT workspace has no project link: {link}. Pass --project-dir PATH to create it."
+        )
+
+    project_dir = validate_project_dir(Path(project_dir_arg))
+    os.symlink(relative_symlink_target(project_dir, root), link)
+    return project_dir
+
+
+def resolve_at_work(root: Path, value: str) -> tuple[str, Path, Path] | None:
+    work_dir = root / slugify(value, default="work")
+    code_dir = work_dir / "code"
+    state_dir = work_dir / "state"
+    if code_dir.exists() or code_dir.is_symlink():
+        branch = current_branch(code_dir.resolve())
+        if not branch:
+            raise AgenticStateError(f"AT work has no named Git branch: {code_dir}")
+        return branch, code_dir, state_dir
+    if not state_dir.exists():
+        return None
+    branch = value
+    return branch, code_dir, state_dir
+
+
+def run_capability_create_work_hooks(
+    *,
+    project_dir: Path,
+    workspace_root_dir: Path,
+    work_name_value: str,
+    source_branch: str,
+    new_branch: str,
+    source_state_dir: Path,
+    new_state_dir: Path,
+    new_code_dir: Path,
+    project_state_dir: Path,
+    capabilities: list[str],
+) -> None:
+    for capability in capabilities:
+        root = capability_root(capability)
+        if root is None:
+            continue
+        hook = root / "hooks" / "create-work"
+        if not hook.is_file() or not os.access(hook, os.X_OK):
+            continue
+        env = os.environ.copy()
+        env.update(
+            {
+                "AT_PROJECT_DIR": str(project_dir),
+                "AT_WORKSPACE_ROOT": str(workspace_root_dir),
+                "AT_RUNTIME_ROOT": str(workspace_root_dir / ".runtime"),
+                "AT_CREATE_WORK_NAME": work_name_value,
+                "AT_CREATE_SOURCE_BRANCH": source_branch,
+                "AT_CREATE_NEW_BRANCH": new_branch,
+                "AT_CREATE_SOURCE_STATE_DIR": str(source_state_dir),
+                "AT_CREATE_NEW_STATE_DIR": str(new_state_dir),
+                "AT_CREATE_NEW_CODE_DIR": str(new_code_dir),
+                "AT_CREATE_PROJECT_STATE_DIR": str(project_state_dir),
+            }
+        )
+        result = subprocess.run([str(hook)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise AgenticStateError(f"Capability '{capability}' create-work hook failed: {detail}")
+        if result.stdout:
+            print(result.stdout, end="")
+
+
+def create_code_worktree(project_dir: Path, code_dir: Path, branch: str, base_ref: str) -> None:
+    if code_dir.exists() or code_dir.is_symlink():
+        raise AgenticStateError(f"code path already exists: {code_dir}")
+    code_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    if local_branch_exists(project_dir, branch):
+        if current_branch(project_dir) == branch:
+            os.symlink(project_dir, code_dir)
+            print(f"Using existing checkout via symlink: {code_dir} -> {project_dir}")
+        else:
+            git(project_dir, "worktree", "add", str(code_dir), branch)
+    else:
+        assert_new_branch_available(project_dir, branch, label="code")
+        git(project_dir, "worktree", "add", "-b", branch, str(code_dir), base_ref)
+        git(code_dir, "config", f"branch.{branch}.agentic-base", base_ref, check=False)
+        base_commit = git(code_dir, "rev-parse", f"{base_ref}^{{commit}}", check=False)
+        if base_commit.returncode == 0:
+            git(code_dir, "config", f"branch.{branch}.agentic-base-commit", base_commit.stdout.strip(), check=False)
+
+    if not code_dir.is_symlink():
+        configure_git_identity(code_dir)
+
+
+def ensure_work(args: argparse.Namespace) -> int:
+    root = Path(args.workspace_root).expanduser().resolve()
+    project_dir = ensure_project_link(root, args.project_dir)
+    os.environ["AR_WORKSPACE_ROOT"] = str(root)
+    os.environ["AR_RUNTIME_ROOT"] = str(root / ".runtime")
+
+    pid = project_id(project_dir, args.project_id)
+    child_name = slugify(args.work_name, default="work")
+    work_dir = root / child_name
+    code_dir = work_dir / "code"
+    project_state_dir = ensure_project_checkout(project_dir, pid)
+
+    if code_dir.exists() or code_dir.is_symlink():
+        branch = current_branch(code_dir.resolve())
+        if not branch:
+            raise AgenticStateError(f"existing code path has no named Git branch: {code_dir}")
+        ensure_work_state(project_dir, branch, pid)
+        print(f"Project:        {pid}")
+        print(f"AT workspace:   {root}")
+        print(f"Work name:      {child_name}")
+        print(f"Code worktree:  {code_dir}")
+        print(f"Work branch:    {branch}")
+        return 0
+
+    if not args.source_ref:
+        raise AgenticStateError(f"{code_dir} does not exist; pass --from REF_OR_WORK to create it")
+
+    source_work = resolve_at_work(root, args.source_ref)
+    if source_work is None:
+        source_branch = args.source_ref
+        source_state_dir = None
+        source_is_work = False
+    else:
+        source_branch, _source_code_dir, source_state_dir = source_work
+        source_is_work = True
+
+    refresh_remote_refs(project_dir)
+    new_branch = args.branch or default_child_branch(source_branch, child_name)
+    new_state_branch = work_state_branch(new_branch)
+
+    print(f"Project:        {pid}")
+    print(f"AT workspace:   {root}")
+    print(f"Work name:      {child_name}")
+    print(f"Source:         {args.source_ref}")
+    print(f"Source branch:  {source_branch}")
+    print(f"New branch:     {new_branch}")
+    print(f"Code worktree:  {code_dir}")
+    print(f"Work state:     {work_dir / 'state'}")
+
+    create_code_worktree(project_dir, code_dir, new_branch, source_branch)
+
+    if not local_branch_exists(project_dir, new_state_branch):
+        assert_new_branch_available(project_dir, new_state_branch, label="work-state")
+    new_state_dir = ensure_work_state(project_dir, new_branch, pid, pull_remote=False, use_remote=False)
+    state_mode = args.state
+    inherit_state = state_mode == "auto" and source_is_work
+    if inherit_state:
+        if source_state_dir is None:
+            source_state_dir = ensure_work_state(project_dir, source_branch, pid)
+        elif not source_state_dir.exists():
+            source_state_dir = ensure_work_state(project_dir, source_branch, pid)
+
+        capabilities = capability_names(args.capabilities or os.environ.get("AR_CAPABILITIES", "agentic-notes,experiment-log"))
+        run_capability_create_work_hooks(
+            project_dir=project_dir,
+            workspace_root_dir=root,
+            work_name_value=child_name,
+            source_branch=source_branch,
+            new_branch=new_branch,
+            source_state_dir=source_state_dir,
+            new_state_dir=new_state_dir,
+            new_code_dir=code_dir,
+            project_state_dir=project_state_dir,
+            capabilities=capabilities,
+        )
+
+    commit_if_changed(new_state_dir, f"work-state: initialize {new_branch} work context")
+
+    print("")
+    print("Next:")
+    print(f"  agentic-team {root} {child_name}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    ensure = sub.add_parser("ensure-work", help="Create or verify one named AT work entry.")
+    ensure.add_argument("work_name", help="Short directory name for the effort, e.g. kdtree-bounds.")
+    ensure.add_argument("--workspace-root", required=True, help="AT workspace root.")
+    ensure.add_argument("--from", dest="source_ref", help="Source AT work name or Git ref used when creating work.")
+    ensure.add_argument("--branch", help="New Git branch. Defaults under the source agent branch.")
+    ensure.add_argument("--project-dir", help="Existing normal project checkout used to create/repair the AT project link.")
+    ensure.add_argument("--project-id", help="Project id override.")
+    ensure.add_argument("--state", choices=["auto", "clean"], default="auto")
+    ensure.add_argument("--capabilities", help="Comma/space-separated capability list for create-work hooks.")
+    ensure.set_defaults(func=ensure_work)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except AgenticStateError as exc:
+        print(f"agentic-workspace: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

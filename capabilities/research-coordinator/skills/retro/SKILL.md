@@ -27,11 +27,11 @@ Read the following files (skip any that don't exist):
 8. Run `git diff --stat HEAD~5..HEAD 2>/dev/null || true` -- recent change patterns
 
 For work-branch records, use the experiment-log command and direct reads from
-the work-state checkout:
+the work-state worktree:
 
 ```bash
 experiment-log summary --project-dir "$PROJECT_DIR" --work-branch "$AR_WORK_BRANCH" 2>/dev/null || true
-WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/${AR_WORK_BRANCH:?}"
+WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"
 test -f "$WORK_STATE_DIR/report.md" && sed -n '1,220p' "$WORK_STATE_DIR/report.md"
 test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
 ```

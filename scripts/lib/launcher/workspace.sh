@@ -9,6 +9,8 @@ validate_workspace() {
     # Resolve symlinks in a macOS/Linux portable way.
     local original_workspace resolved_workspace
     original_workspace="$WORKSPACE_DIR"
+    WORKSPACE_INPUT_DIR="$original_workspace"
+    export WORKSPACE_INPUT_DIR
     if ! resolved_workspace="$(resolve_realpath "$WORKSPACE_DIR")"; then
         echo "Error: Cannot resolve path: $original_workspace"
         exit 1
@@ -53,6 +55,51 @@ slugify_project_id() {
     slug="${slug:0:72}"
     slug="${slug%-}"
     printf '%s\n' "${slug:-project}"
+}
+
+path_looks_like_at_workspace() {
+    local path="$1" base
+    base="$(basename "$path")"
+    [[ "$base" == *-at ]] && return 0
+    [[ -e "$path/project" || -e "$path/project-state" ]] && return 0
+    return 1
+}
+
+resolve_launch_positionals() {
+    local count first
+    count="${#POSITIONAL_ARGS[@]}"
+
+    if [[ -n "$WORKTREE_PATH_ARG" ]]; then
+        WORKSPACE_DIR="$WORKTREE_PATH_ARG"
+        if (( count > 0 )); then
+            CLI_ARGS+=("${POSITIONAL_ARGS[@]}")
+        fi
+        return
+    fi
+
+    if (( count == 0 )); then
+        return
+    fi
+
+    first="${POSITIONAL_ARGS[0]}"
+    if (( count >= 2 )) && { path_looks_like_at_workspace "$first" || [[ -n "$AT_PROJECT_DIR_ARG" || -n "$AT_FROM_REF" ]]; }; then
+        AT_WORKSPACE_DIR_ARG="$first"
+        AT_WORK_NAME_ARG="${POSITIONAL_ARGS[1]}"
+        if (( count > 2 )); then
+            CLI_ARGS+=("${POSITIONAL_ARGS[@]:2}")
+        fi
+        return
+    fi
+
+    if (( count == 1 )) && { path_looks_like_at_workspace "$first" || [[ -n "$AT_PROJECT_DIR_ARG" ]]; }; then
+        AT_WORKSPACE_DIR_ARG="$first"
+        return
+    fi
+
+    WORKSPACE_DIR="$first"
+    if (( count > 1 )); then
+        CLI_ARGS+=("${POSITIONAL_ARGS[@]:1}")
+    fi
 }
 
 project_remote_name() {
@@ -135,6 +182,91 @@ work_branch_id() {
     slugify_project_id "$1"
 }
 
+work_name_from_branch() {
+    local branch="$1" leaf
+    leaf="${branch##*/}"
+    slugify_project_id "${leaf:-$branch}"
+}
+
+agentic_workspace_root() {
+    local input_dir="${WORKSPACE_INPUT_DIR:-$WORKSPACE_DIR}" root_dir resolved_input parent
+
+    if [[ -n "${AR_WORKSPACE_ROOT:-}" ]]; then
+        resolve_realpath "$AR_WORKSPACE_ROOT" 2>/dev/null || printf '%s\n' "$AR_WORKSPACE_ROOT"
+        return
+    fi
+
+    if [[ "$(basename "$input_dir")" == "code" && "$(basename "$(dirname "$(dirname "$input_dir")")")" == *-at ]]; then
+        root_dir="$(dirname "$(dirname "$input_dir")")"
+        resolve_realpath "$root_dir" 2>/dev/null || printf '%s\n' "$root_dir"
+        return
+    fi
+
+    if resolved_input="$(resolve_realpath "$input_dir" 2>/dev/null)"; then
+        input_dir="$resolved_input"
+    fi
+
+    if [[ "$(basename "$input_dir")" == "code" && "$(basename "$(dirname "$(dirname "$input_dir")")")" == *-at ]]; then
+        dirname "$(dirname "$input_dir")"
+        return
+    fi
+
+    parent="$(dirname "$WORKSPACE_DIR")"
+    printf '%s/%s-at\n' "$parent" "$AR_PROJECT_ID"
+}
+
+set_agentic_workspace_root() {
+    AR_WORKSPACE_ROOT="$(agentic_workspace_root)"
+    export AR_WORKSPACE_ROOT
+}
+
+agentic_runtime_root() {
+    if [[ -n "${AR_RUNTIME_ROOT:-}" ]]; then
+        resolve_realpath "$AR_RUNTIME_ROOT" 2>/dev/null || printf '%s\n' "$AR_RUNTIME_ROOT"
+        return
+    fi
+    printf '%s/.runtime\n' "$AR_WORKSPACE_ROOT"
+}
+
+set_agentic_runtime_root() {
+    AR_RUNTIME_ROOT="$(agentic_runtime_root)"
+    RUNTIME_ROOT="$AR_RUNTIME_ROOT"
+    export AR_RUNTIME_ROOT RUNTIME_ROOT
+}
+
+agentic_artifacts_dir() {
+    if [[ -n "${AR_ARTIFACTS_DIR:-}" ]]; then
+        resolve_realpath "$AR_ARTIFACTS_DIR" 2>/dev/null || printf '%s\n' "$AR_ARTIFACTS_DIR"
+        return
+    fi
+    printf '%s/artifacts/project\n' "$AR_WORKSPACE_ROOT"
+}
+
+set_agentic_artifacts_dir() {
+    AR_ARTIFACTS_DIR="$(agentic_artifacts_dir)"
+    export AR_ARTIFACTS_DIR
+}
+
+project_state_dir_path() {
+    printf '%s/project-state\n' "$AR_WORKSPACE_ROOT"
+}
+
+work_dir_path_for_branch() {
+    local branch="$1" work_name
+    work_name="$(work_name_from_branch "$branch")"
+    printf '%s/%s\n' "$AR_WORKSPACE_ROOT" "$work_name"
+}
+
+code_worktree_path_for_branch() {
+    local branch="$1"
+    printf '%s/code\n' "$(work_dir_path_for_branch "$branch")"
+}
+
+work_state_dir_path_for_branch() {
+    local branch="$1"
+    printf '%s/state\n' "$(work_dir_path_for_branch "$branch")"
+}
+
 git_branch_exists() {
     git -C "$WORKSPACE_DIR" show-ref --verify --quiet "refs/heads/$1"
 }
@@ -145,7 +277,7 @@ valid_git_branch_name() {
 
 branch_guard_dir_for() {
     local branch="$1"
-    printf '%s/branch-guards/%s/%s\n' "$STATE_ROOT" "$AR_PROJECT_ID" "$(slugify_project_id "$branch")"
+    printf '%s/branch-guards/%s\n' "$RUNTIME_ROOT" "$(slugify_project_id "$branch")"
 }
 
 file_mtime_epoch() {
@@ -298,14 +430,12 @@ unused_work_branch_candidate() {
 }
 
 default_worktree_path() {
-    local branch="$1" parent base slug candidate n
-    parent="$(dirname "$WORKSPACE_DIR")"
-    base="$(basename "$WORKSPACE_DIR")"
-    slug="$(slugify_project_id "$branch")"
-    candidate="$parent/$base-$slug"
+    local branch="$1" candidate n
+    set_agentic_workspace_root
+    candidate="$(code_worktree_path_for_branch "$branch")"
     n=2
     while [[ -e "$candidate" ]]; do
-        candidate="$parent/$base-$slug-$n"
+        candidate="$(work_dir_path_for_branch "$branch")-$n/code"
         n=$((n + 1))
     done
     printf '%s\n' "$candidate"
@@ -313,6 +443,162 @@ default_worktree_path() {
 
 launch_is_interactive() {
     [[ -t 0 && -t 1 ]]
+}
+
+expand_path() {
+    local path="$1"
+    case "$path" in
+        "~")
+            printf '%s\n' "$HOME"
+            ;;
+        "~/"*)
+            printf '%s/%s\n' "$HOME" "${path#~/}"
+            ;;
+        *)
+            printf '%s\n' "$path"
+            ;;
+    esac
+}
+
+default_project_for_at_root() {
+    local at_root="$1" base parent project_name
+    base="$(basename "$at_root")"
+    parent="$(dirname "$at_root")"
+    if [[ "$base" == *-at ]]; then
+        project_name="${base%-at}"
+        printf '%s/%s\n' "$parent" "$project_name"
+    else
+        printf '%s\n' "$parent/project"
+    fi
+}
+
+prompt_at_workspace_root() {
+    local default_root="$1" answer
+    read -r -p "AT workspace directory [$default_root]: " answer
+    printf '%s\n' "${answer:-$default_root}"
+}
+
+prompt_at_work_name() {
+    local default_name="$1" answer
+    read -r -p "AT work name [$default_name]: " answer
+    printf '%s\n' "${answer:-$default_name}"
+}
+
+prompt_at_project_dir() {
+    local default_project="$1" answer
+    read -r -p "Project checkout [$default_project]: " answer
+    printf '%s\n' "${answer:-$default_project}"
+}
+
+prompt_at_source_ref() {
+    local default_ref="$1" answer
+    read -r -p "Create work from branch/ref or AT work [$default_ref]: " answer
+    printf '%s\n' "${answer:-$default_ref}"
+}
+
+relative_path_between() {
+    python3 - "$1" "$2" <<'PY'
+import os
+import sys
+
+target, start = sys.argv[1], sys.argv[2]
+print(os.path.relpath(os.path.realpath(target), os.path.realpath(start)))
+PY
+}
+
+ensure_at_project_symlink() {
+    local project_dir="$1" link target
+    [[ -n "${AR_WORKSPACE_ROOT:-}" ]] || return 0
+    mkdir -p "$AR_WORKSPACE_ROOT"
+    link="$AR_WORKSPACE_ROOT/project"
+    if [[ -e "$link" || -L "$link" ]]; then
+        return 0
+    fi
+    target="$(relative_path_between "$project_dir" "$AR_WORKSPACE_ROOT")"
+    ln -s "$target" "$link"
+}
+
+current_branch_for_dir() {
+    git -C "$1" branch --show-current 2>/dev/null || true
+}
+
+resolve_named_at_work() {
+    local at_root work_name work_dir code_dir project_dir default_project source_ref default_ref
+    local -a ensure_args
+
+    [[ -n "$AT_WORKSPACE_DIR_ARG" ]] || return 0
+
+    at_root="$(expand_path "$AT_WORKSPACE_DIR_ARG")"
+    if ! at_root="$(resolve_realpath "$at_root" 2>/dev/null)"; then
+        mkdir -p "$at_root"
+        at_root="$(resolve_realpath "$at_root")"
+    fi
+    AR_WORKSPACE_ROOT="$at_root"
+    export AR_WORKSPACE_ROOT
+
+    work_name="$AT_WORK_NAME_ARG"
+    if [[ -z "$work_name" ]]; then
+        if ! launch_is_interactive; then
+            echo "Error: AT workspace launch requires a work name."
+            echo "Example: agentic-team $at_root research-main"
+            exit 1
+        fi
+        work_name="$(prompt_at_work_name "research-main")"
+    fi
+    work_name="$(slugify_project_id "$work_name")"
+    work_dir="$at_root/$work_name"
+    code_dir="$work_dir/code"
+
+    if [[ -e "$code_dir" || -L "$code_dir" ]]; then
+        WORKSPACE_DIR="$code_dir"
+        return 0
+    fi
+
+    project_dir="$AT_PROJECT_DIR_ARG"
+    if [[ -z "$project_dir" && ( -e "$at_root/project" || -L "$at_root/project" ) ]]; then
+        project_dir="$at_root/project"
+    fi
+    if [[ -z "$project_dir" ]]; then
+        if ! launch_is_interactive; then
+            echo "Error: $code_dir does not exist and no project checkout is linked."
+            echo "Create it with:"
+            echo "  agentic-team $at_root $work_name --from BRANCH --project-dir PROJECT_DIR"
+            exit 1
+        fi
+        default_project="$(default_project_for_at_root "$at_root")"
+        project_dir="$(prompt_at_project_dir "$default_project")"
+    fi
+
+    source_ref="$AT_FROM_REF"
+    if [[ -z "$source_ref" ]]; then
+        if ! launch_is_interactive; then
+            echo "Error: $code_dir does not exist; pass --from REF_OR_WORK to create it."
+            exit 1
+        fi
+        default_ref="$(current_branch_for_dir "$project_dir")"
+        default_ref="${default_ref:-HEAD}"
+        source_ref="$(prompt_at_source_ref "$default_ref")"
+    fi
+
+    ensure_args=(
+        "$SCRIPT_DIR/scripts/bin/agentic-workspace"
+        ensure-work
+        "$work_name"
+        --workspace-root "$at_root"
+        --from "$source_ref"
+        --project-dir "$project_dir"
+        --state "$AT_STATE_MODE"
+        --capabilities "$AR_CAPABILITIES"
+    )
+    if [[ -n "${AR_PROJECT_ID:-}" ]]; then
+        ensure_args+=(--project-id "$AR_PROJECT_ID")
+    fi
+    if [[ -n "$AT_NEW_BRANCH_ARG" ]]; then
+        ensure_args+=(--branch "$AT_NEW_BRANCH_ARG")
+    fi
+    "${ensure_args[@]}"
+
+    WORKSPACE_DIR="$code_dir"
 }
 
 prompt_menu_choice() {
@@ -346,8 +632,13 @@ set_work_branch_vars() {
     WORKSPACE_GIT_BRANCH="$current_branch"
     AR_WORK_BRANCH="$owner_branch"
     AR_WORK_BRANCH_ID="$(work_branch_id "$owner_branch")"
+    AR_WORK_NAME="$(work_name_from_branch "$owner_branch")"
     AR_WORK_BRANCH_PREFIX="$owner_branch"
-    export WORKSPACE_GIT_BRANCH AR_WORK_BRANCH AR_WORK_BRANCH_ID AR_WORK_BRANCH_PREFIX
+    set_agentic_workspace_root
+    AR_PROJECT_STATE_DIR="$(project_state_dir_path)"
+    AR_WORK_STATE_DIR="$(work_state_dir_path_for_branch "$owner_branch")"
+    export WORKSPACE_GIT_BRANCH AR_WORK_BRANCH AR_WORK_BRANCH_ID AR_WORK_NAME AR_WORK_BRANCH_PREFIX
+    export AR_PROJECT_STATE_DIR AR_WORK_STATE_DIR
 }
 
 switch_to_work_branch() {
@@ -387,8 +678,14 @@ create_worktree() {
         echo "Error: Worktree path already exists: $target_dir"
         return 1
     fi
+    mkdir -p "$(dirname "$target_dir")"
     if git_branch_exists "$target_branch"; then
-        git -C "$WORKSPACE_DIR" worktree add "$target_dir" "$target_branch"
+        if [[ "$(current_workspace_git_branch)" == "$target_branch" ]]; then
+            ln -s "$WORKSPACE_DIR" "$target_dir"
+            echo "Using existing checkout via symlink: $target_dir -> $WORKSPACE_DIR"
+        else
+            git -C "$WORKSPACE_DIR" worktree add "$target_dir" "$target_branch"
+        fi
     else
         git -C "$WORKSPACE_DIR" worktree add -b "$target_branch" "$target_dir" "$base_ref"
         git -C "$target_dir" config "branch.$target_branch.agentic-base" "$base_ref" || true
@@ -433,16 +730,16 @@ prepare_work_branch_interactive() {
         default_choice=1
     elif [[ "$dirty" == "yes" ]]; then
         echo "Choose how to continue:"
-        echo "  1. Create a work branch in this worktree, carrying current changes (recommended)"
-        echo "  2. Create a new clean worktree with a work branch from $base_ref"
+        echo "  1. Create a new clean AT worktree with a work branch from $base_ref (recommended)"
+        echo "  2. Create a work branch in this worktree, carrying current changes"
         echo "  3. Use the current branch anyway"
         echo "  4. Cancel"
         max_choice=4
         default_choice=1
     else
         echo "Choose how to continue:"
-        echo "  1. Create a work branch in this worktree: $candidate (recommended)"
-        echo "  2. Create a new worktree with a work branch from $base_ref"
+        echo "  1. Create a new AT worktree with a work branch from $base_ref (recommended)"
+        echo "  2. Create a work branch in this worktree: $candidate"
         echo "  3. Use the current branch anyway"
         echo "  4. Cancel"
         max_choice=4
@@ -452,13 +749,13 @@ prepare_work_branch_interactive() {
     choice="$(prompt_menu_choice "$max_choice" "$default_choice")"
     case "$choice" in
         1)
+            AR_WORKSPACE_ROOT="$(prompt_at_workspace_root "$(agentic_workspace_root)")"
+            export AR_WORKSPACE_ROOT
+            ensure_at_project_symlink "$WORKSPACE_DIR"
+            base_ref="$(prompt_at_source_ref "$base_ref")"
             target_branch="$(prompt_work_branch_name "$candidate")"
-            if [[ "$occupied" == "yes" ]]; then
-                target_path="$(prompt_worktree_path "$(default_worktree_path "$target_branch")")"
-                create_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
-            else
-                switch_to_work_branch "$target_branch" "HEAD" || exit 1
-            fi
+            target_path="$(code_worktree_path_for_branch "$target_branch")"
+            create_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
             return 0
             ;;
         2)
@@ -467,8 +764,7 @@ prepare_work_branch_interactive() {
                 return 0
             fi
             target_branch="$(prompt_work_branch_name "$candidate")"
-            target_path="$(prompt_worktree_path "$(default_worktree_path "$target_branch")")"
-            create_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
+            switch_to_work_branch "$target_branch" "HEAD" || exit 1
             return 0
             ;;
         3)
@@ -664,8 +960,7 @@ prepare_work_branch() {
         echo ""
         if [[ "$occupied" == "yes" ]]; then
             echo "Create a new worktree with an unused work branch:"
-            echo "  git worktree add -b $candidate $target_path $base_ref"
-            echo "  agentic-team $target_path"
+            echo "  agentic-team $(agentic_workspace_root) $(work_name_from_branch "$candidate") --from $base_ref --project-dir $WORKSPACE_DIR --branch $candidate"
         else
             echo "Create or switch to an unused work branch first:"
             echo "  git switch -c $candidate"

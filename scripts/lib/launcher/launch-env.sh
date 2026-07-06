@@ -42,7 +42,7 @@ sanitize_mount_name() {
 }
 setup_workspace_mount_root() {
     WORKSPACE_MOUNT_PLACEHOLDER_DIR="$WORKSPACE_DIR/.mount"
-    WORKSPACE_MOUNT_STATE_DIR="$STATE_ROOT/workspace-mounts/$(printf '%s' "$WORKSPACE_DIR" | cksum | awk '{print $1}')"
+    WORKSPACE_MOUNT_STATE_DIR="$RUNTIME_ROOT/workspace-mounts/$(printf '%s' "$WORKSPACE_DIR" | cksum | awk '{print $1}')"
 
     mkdir -p "$WORKSPACE_MOUNT_PLACEHOLDER_DIR" "$WORKSPACE_MOUNT_STATE_DIR"
     EXTRA_DIR_ROOT_BIND=(--bind "$WORKSPACE_MOUNT_STATE_DIR:/workspace/.mount")
@@ -141,7 +141,10 @@ print_debug_launch() {
     echo "  Ownership:      ${AR_BRANCH_OWNERSHIP:-exclusive}"
     echo "  Job backend:    ${JOB_BACKEND:-none}"
     echo "  Workspace:      $WORKSPACE_DIR"
+    echo "  AT workspace:   $AR_WORKSPACE_ROOT"
     echo "  State root:     $STATE_ROOT"
+    echo "  Runtime root:   $AR_RUNTIME_ROOT"
+    echo "  Artifacts dir:  $AR_ARTIFACTS_DIR"
     if [[ "$AR_SANDBOX" == "docker" || "$AR_SANDBOX" == "podman" ]]; then
         echo "  Container image: agentic-team:latest"
     elif [[ "$AR_SANDBOX" == "none" ]]; then

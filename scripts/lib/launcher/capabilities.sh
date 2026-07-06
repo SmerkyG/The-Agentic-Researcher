@@ -154,7 +154,7 @@ prepare_capability_sections() {
     capability_enabled agentic-notes || return 0
 
     local temp_root render_args agent_name
-    temp_root="$STATE_ROOT/tmp"
+    temp_root="$RUNTIME_ROOT/tmp"
     mkdir -p "$temp_root"
     CAPABILITY_SECTION_DIR="$(mktemp -d "$temp_root/capability-sections.XXXXXX")" || {
         CAPABILITY_SECTION_DIR=""
@@ -484,9 +484,9 @@ setup_capability_refresh_loops() {
         stale_seconds=$((heartbeat_period * 3))
     fi
 
-    heartbeat_dir="$STATE_ROOT/refresh-heartbeats/$AR_PROJECT_ID"
+    heartbeat_dir="$RUNTIME_ROOT/refresh-heartbeats"
     heartbeat_file="$heartbeat_dir/$$.heartbeat"
-    refresh_log="$STATE_ROOT/logs/agentic-notes-refresh-$AR_PROJECT_ID.log"
+    refresh_log="$RUNTIME_ROOT/logs/agentic-notes-refresh.log"
     launcher_pid="$$"
     mkdir -p "$heartbeat_dir" "$(dirname "$refresh_log")"
     touch "$heartbeat_file"

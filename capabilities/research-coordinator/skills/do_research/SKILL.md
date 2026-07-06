@@ -14,8 +14,7 @@ the current working directory.
 Set:
 - `$MAIN_AGENT` to `${AR_MAIN_AGENT:-research-coordinator}`
 - `$WORK_BRANCH` to `${AR_WORK_BRANCH:-}`
-- `$WORK_STATE_DIR` to
-  `${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/$WORK_BRANCH`
+- `$WORK_STATE_DIR` to `${AR_WORK_STATE_DIR:?}`
 
 If `$WORK_BRANCH` is empty, stop and ask the user to relaunch from a named Git
 branch or pass `--work-branch`.
@@ -195,8 +194,8 @@ Agentic Team launches, resumes, or compaction refreshes can render the committed
 plan into startup instructions for later contexts, but regenerating an
 instruction file does not update this already-running model context.
 
-5. Initialize work-branch `report.md` and `TODO.md` in the work-state checkout.
-   These are normal files in that checkout, not Agentic Notes commands:
+5. Initialize work-branch `report.md` and `TODO.md` in the work-state worktree.
+   These are normal files in that worktree, not Agentic Notes commands:
 
 ```bash
 cat > "$WORK_STATE_DIR/report.md" <<'MARKDOWN'
@@ -224,9 +223,10 @@ helps the derivation. Use Markdown image links for figures, embedding PNGs
 such as `![caption](images/name.png)` rather than PDF-only links. Save
 report-ready PNG/PDF figures under `$WORK_STATE_DIR/images/` and commit
 `images/` with the report even though those files are binary. Keep raw arrays,
-checkpoints, full logs, datasets, and other bulky generated artifacts in
-artifact/cache storage instead. Use `TODO.md` checklist items in `- [ ] item`
-format.
+checkpoints, full logs, datasets, and other bulky generated artifacts under
+`$AR_ARTIFACTS_DIR` instead. Use a unique run or experiment subdirectory for
+new artifact writes so parallel AT work does not overwrite shared project
+artifacts. Use `TODO.md` checklist items in `- [ ] item` format.
 
 6. Proceed with initial setup:
    - Explore the codebase structure and understand the architecture
@@ -235,7 +235,7 @@ format.
    - Install dependencies with `uv sync`
    - Run the baseline evaluation command from the research plan
    - Update work-branch `report.md`, `TODO.md`, and report figures by editing
-     the work-state checkout and committing those files there
+     the work-state worktree and committing those files there
    - If the baseline is a meaningful completed experiment, launch
      `experiment-logger` so the active work-branch summary receives an
      experiment ID; retry once if spawning fails and alert the user if it still

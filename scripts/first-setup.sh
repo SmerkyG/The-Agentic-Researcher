@@ -326,6 +326,9 @@ AR_HTTP_PROXY="$AR_HTTP_PROXY"
 # Base directory for local state, caches, and container temp data
 AR_STATE_ROOT="$AR_STATE_ROOT"
 
+# Optional visible AT workspace root. Blank means sibling <project-id>-at.
+AR_WORKSPACE_ROOT=""
+
 # Extra directories to bind into the sandbox (colon-separated)
 AR_EXTRA_BIND_DIRS="$AR_EXTRA_BIND_DIRS"
 

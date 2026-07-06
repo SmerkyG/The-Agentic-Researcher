@@ -1,7 +1,7 @@
 ## Agentic Notes
 
 Agentic Notes are Markdown files stored in Git-backed organization, project,
-and active-work-branch state checkouts under `agent-notes/all-agents/` and
+and active-work-branch state worktrees under `agent-notes/all-agents/` and
 `agent-notes/<agent_type>/`.
 
 This document may include a generated **Agentic Notes** section below.

@@ -120,8 +120,11 @@ def test_commit_snapshot_uses_temp_index_and_advances_work_branch(tmp_path: Path
 
     snapshot = json.loads(run_agent_command("branch-snapshot", request, env=env).stdout)
 
+    expected_runtime = tmp_path / "project-at" / ".runtime"
+    assert Path(snapshot["snapshot_dir"]).is_relative_to(expected_runtime / "commit-snapshots")
     assert snapshot["name_status"] == ["M\tREADME.md", "A\tsrc/kernel.py"]
     assert Path(snapshot["name_status_path"]).exists()
+    assert not (Path(env["AR_STATE_ROOT"]) / "commit-snapshots").exists()
     assert git(repo, "diff", "--cached", "--name-only") == "staged.txt"
 
     (repo / "README.md").write_text("continued work after snapshot\n", encoding="utf-8")
@@ -343,6 +346,8 @@ def test_branch_commit_cleanup_removes_committed_snapshot_and_worktree(tmp_path:
     )
     snapshot_dir = Path(snapshot["snapshot_dir"])
     worktree = Path(committed["worktree"])
+    assert snapshot_dir.is_relative_to(tmp_path / "project-at" / ".runtime" / "commit-snapshots")
+    assert worktree.is_relative_to(tmp_path / "project-at" / ".runtime" / "commit-worktrees")
     assert snapshot_dir.exists()
     assert worktree.exists()
     assert str(worktree) in git(repo, "worktree", "list", "--porcelain")
@@ -386,8 +391,9 @@ def test_branch_commit_cleanup_removes_committed_snapshot_and_worktree(tmp_path:
 def test_branch_commit_cleanup_skips_live_running_snapshot(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["AR_STATE_ROOT"] = str(tmp_path / "state")
-    snapshot_dir = Path(env["AR_STATE_ROOT"]) / "commit-snapshots" / "running"
-    worktree = Path(env["AR_STATE_ROOT"]) / "commit-worktrees" / "running" / "kernel-search"
+    env["AR_RUNTIME_ROOT"] = str(tmp_path / "project-at" / ".runtime")
+    snapshot_dir = Path(env["AR_RUNTIME_ROOT"]) / "commit-snapshots" / "running"
+    worktree = Path(env["AR_RUNTIME_ROOT"]) / "commit-worktrees" / "running" / "kernel-search"
     snapshot_dir.mkdir(parents=True)
     worktree.mkdir(parents=True)
     timestamp = "2000-01-01T00:00:00+00:00"
@@ -397,6 +403,7 @@ def test_branch_commit_cleanup_skips_live_running_snapshot(tmp_path: Path) -> No
             "snapshot_id": "running",
             "created_at": timestamp,
             "project_dir": str(tmp_path / "project"),
+            "runtime_root": env["AR_RUNTIME_ROOT"],
         },
     )
     write_yaml(

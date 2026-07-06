@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # agentic-team: Launch an AI coding agent for structured research.
-# Usage: agentic-team [OPTIONS] [DIRECTORY] [CLI_OPTIONS...]
+# Usage: agentic-team [OPTIONS] [PROJECT_DIR|AT_DIR WORK_NAME] [CLI_OPTIONS...]
 # Run with --help for details.
 #
 
@@ -65,10 +65,14 @@ main() {
     profile_step "load_config" load_config
     profile_step "apply_env_overrides" apply_env_overrides
     profile_step "apply_defaults" apply_defaults
+    profile_step "resolve_named_at_work" resolve_named_at_work
     profile_step "validate_sandbox" validate_sandbox
     profile_step "validate_workspace" validate_workspace
     profile_step "validate_cli_workspace" validate_cli_workspace
     profile_step "validate_project_id" validate_project_id
+    profile_step "setup_agentic_workspace_root" set_agentic_workspace_root
+    profile_step "setup_agentic_runtime_root" set_agentic_runtime_root
+    profile_step "setup_agentic_artifacts_dir" set_agentic_artifacts_dir
     profile_step "setup_workspace_git_identity" setup_workspace_git_identity
     profile_step "setup_storage" setup_storage
     trap launcher_cleanup EXIT
@@ -147,6 +151,9 @@ main() {
     fi
 
     echo "Workspace:      $WORKSPACE_DIR"
+    echo "AT workspace:   $AR_WORKSPACE_ROOT"
+    echo "Runtime:        $AR_RUNTIME_ROOT"
+    echo "Artifacts:      $AR_ARTIFACTS_DIR"
     if [[ -n "${AR_WORK_BRANCH:-}" ]]; then
         echo "Work branch:   $AR_WORK_BRANCH"
         echo "Current branch: ${WORKSPACE_GIT_BRANCH:-$AR_WORK_BRANCH}"
@@ -161,7 +168,11 @@ main() {
     if [[ "${JOB_BACKEND:-none}" == "remote-run" ]]; then
         echo "Dispatch dir:   $DISPATCH_DIR"
     fi
-    echo "UV Cache:       $UV_CACHE_DIR"
+    if [[ -n "${UV_CACHE_DIR:-}" ]]; then
+        echo "UV Cache:       $UV_CACHE_DIR"
+    else
+        echo "UV Cache:       uv default (native mode)"
+    fi
 
     if [[ "$YOLO_MODE" == "true" ]]; then
         echo "Mode:           YOLO (auto-approve enabled)"

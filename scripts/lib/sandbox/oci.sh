@@ -38,6 +38,9 @@ oci_launch() {
         -v "$UV_PYTHON_INSTALL_DIR:/uv-python"
         -v "$UV_TOOL_DIR:/uv-tools"
         -v "$STATE_ROOT:$STATE_ROOT"
+        -v "$AR_WORKSPACE_ROOT:$AR_WORKSPACE_ROOT"
+        -v "$AR_RUNTIME_ROOT:$AR_RUNTIME_ROOT"
+        -v "$AR_ARTIFACTS_DIR:$AR_ARTIFACTS_DIR"
         -v "$AR_CONFIG_STORE:$AR_SANDBOX_HOME"
         -w /workspace
     )

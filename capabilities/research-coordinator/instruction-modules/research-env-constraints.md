@@ -14,10 +14,11 @@
 - **`.venv`**: managed by uv via symlinks into the cache. Do not manually modify
   it or any uv-managed cache/install directories.
 - **Large files** (checkpoints, logs, datasets, generated data): never store in
-  the main source tree when avoidable. Prefer a dedicated writable data/cache
-  directory provided by the launcher. If none exists, create a clearly named
-  directory such as `/workspace/artifacts/` or `/workspace/logs/` and keep bulky
-  outputs there rather than scattering them across the repo.
+  the code worktree. Use `$AR_ARTIFACTS_DIR` for bulky reusable project
+  artifacts; by default it is `$AR_WORKSPACE_ROOT/artifacts/project`, shared
+  across AT work entries for this project. Use a unique run or experiment
+  subdirectory for new writes and do not overwrite existing artifacts unless
+  that is intentional.
 - **Report figures are state records**: report-ready PNG/PDF figures referenced
   by work-state `report.md` are expected Git records. Save and commit them under
   `$WORK_STATE_DIR/images/` even though they are binary files. This exception is

@@ -5,6 +5,9 @@ LAUNCHER_ENV_OVERRIDE_VARS=(
     AR_CLI
     AR_DEFAULT_MODEL
     AR_STATE_ROOT
+    AR_WORKSPACE_ROOT
+    AR_RUNTIME_ROOT
+    AR_ARTIFACTS_DIR
     AR_EXTRA_BIND_DIRS
     AR_EXTRA_ENV
     AR_DOCKER_GPUS
@@ -120,6 +123,9 @@ apply_defaults() {
     fi
     AR_CLI="${AR_CLI:-claude}"
     AR_STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}"
+    AR_WORKSPACE_ROOT="${AR_WORKSPACE_ROOT:-}"
+    AR_RUNTIME_ROOT="${AR_RUNTIME_ROOT:-}"
+    AR_ARTIFACTS_DIR="${AR_ARTIFACTS_DIR:-}"
     AR_EXTRA_BIND_DIRS="${AR_EXTRA_BIND_DIRS:-}"
     AR_EXTRA_ENV="${AR_EXTRA_ENV:-}"
     AR_DOCKER_GPUS="${AR_DOCKER_GPUS:-auto}"
@@ -148,7 +154,16 @@ MODEL_SPECIFIED=false
 DEBUG_LAUNCH=false
 ALLOW_SHARED_BRANCH=false
 WORKSPACE_DIR=""
+WORKSPACE_INPUT_DIR=""
+WORKTREE_PATH_ARG=""
+AT_WORKSPACE_DIR_ARG=""
+AT_WORK_NAME_ARG=""
+AT_FROM_REF=""
+AT_PROJECT_DIR_ARG=""
+AT_NEW_BRANCH_ARG=""
+AT_STATE_MODE="auto"
 CLI_ARGS=()
+POSITIONAL_ARGS=()
 SELECTED_CAPABILITIES=()
 CAPABILITY_BINDS=()
 CAPABILITY_ENV=()
@@ -260,6 +275,54 @@ parse_arguments() {
                 AR_WORK_BRANCH_OVERRIDE="$2"
                 shift 2
                 ;;
+            --worktree-path)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --worktree-path requires a value"
+                    exit 1
+                fi
+                WORKTREE_PATH_ARG="$2"
+                shift 2
+                ;;
+            --from)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --from requires a value"
+                    exit 1
+                fi
+                AT_FROM_REF="$2"
+                shift 2
+                ;;
+            --project-dir)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --project-dir requires a value"
+                    exit 1
+                fi
+                AT_PROJECT_DIR_ARG="$2"
+                shift 2
+                ;;
+            --branch)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --branch requires a value"
+                    exit 1
+                fi
+                AT_NEW_BRANCH_ARG="$2"
+                shift 2
+                ;;
+            --state)
+                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+                    echo "Error: --state requires a value (auto or clean)"
+                    exit 1
+                fi
+                case "$2" in
+                    auto|clean)
+                        AT_STATE_MODE="$2"
+                        ;;
+                    *)
+                        echo "Error: --state must be auto or clean"
+                        exit 1
+                        ;;
+                esac
+                shift 2
+                ;;
             --agent-branch)
                 echo "Error: --agent-branch has been removed. Use --work-branch with the Git branch name."
                 exit 1
@@ -320,15 +383,13 @@ parse_arguments() {
                 shift
                 ;;
             *)
-                if [[ -z "$WORKSPACE_DIR" ]]; then
-                    WORKSPACE_DIR="$1"
-                else
-                    CLI_ARGS+=("$1")
-                fi
+                POSITIONAL_ARGS+=("$1")
                 shift
                 ;;
         esac
     done
+
+    resolve_launch_positionals
 
     if [[ "$REFRESH_CAPABILITIES" == "true" && "$RENDER_ONLY" != "true" ]]; then
         echo "Error: --refresh-capabilities requires --render-only"
@@ -345,7 +406,8 @@ show_help() {
 agentic-team: Launch an AI coding agent for structured team workflows.
 
 Usage:
-  agentic-team [OPTIONS] [DIRECTORY] [CLI_OPTIONS...]
+  agentic-team [OPTIONS] [PROJECT_DIR] [CLI_OPTIONS...]
+  agentic-team [OPTIONS] AT_DIR WORK_NAME [CLI_OPTIONS...]
 
 Options:
   --setup             Run the interactive setup wizard
@@ -358,8 +420,13 @@ Options:
                       With --render-only, run capability refresh hooks before rendering
   --capability NAME   Enable a capability from capabilities/ (repeatable)
   --project-id ID     Override inferred project id for notes and experiment state
+  --project-dir DIR   Existing normal project checkout for creating/repairing an AT workspace
   --main-agent NAME   Override top-level main agent for this invocation
   --work-branch NAME  Create/switch to this Git branch before launch
+  --worktree-path DIR Launch an explicit Git worktree path instead of AT_DIR WORK_NAME
+  --from REF_OR_WORK  Create missing AT work from a Git ref or existing AT work name
+  --branch NAME       New Git branch when creating missing AT work
+  --state MODE        Context inheritance for created AT work: auto or clean
   --allow-shared-branch
                       Continue on a branch that appears to have another active local writer
   --debug-launch      Print extra launcher details and enable CLI startup logs where supported
@@ -368,7 +435,8 @@ Options:
   --resume [ID]       Resume a session (interactive picker, or specify ID)
   --continue, -c      Continue the most recent conversation
   --model MODEL       Override default model
-  DIRECTORY           Project directory to work in (default: current directory)
+  PROJECT_DIR         Normal project checkout for first-run setup (default: current directory)
+  AT_DIR WORK_NAME    Launch or create the named AT work entry at AT_DIR/WORK_NAME/code
   CLI_OPTIONS         Additional options passed to the selected CLI
 
 Examples:
@@ -388,14 +456,19 @@ Examples:
   agentic-team --cli opencode --debug-launch
   agentic-team                              # Current directory; unoccupied work branches start directly
   agentic-team ~/my-project
+  agentic-team ~/my-project-at research-main
+  agentic-team ~/my-project-at research-main --from main --project-dir ~/my-project
+  agentic-team ~/my-project-at kdtree-bounds --from research-main
+  agentic-team ~/my-project-at kdtree-bounds --from research-main --state clean
+  agentic-team --worktree-path ~/my-project-at/research-main/code
   agentic-team --yolo
   agentic-team --cli gemini
-  agentic-team --cli codex ~/project
+  agentic-team --cli codex --worktree-path ~/my-project-at/research-main/code
   agentic-team --yolo --model opus
   agentic-team --work-branch feature/kernel-search
 
 What's Sandboxed:
-  The agent can write your project directory and AR_STATE_ROOT.
+  The agent can write your project directory, AR_ARTIFACTS_DIR, AR_WORKSPACE_ROOT, AR_RUNTIME_ROOT, and AR_STATE_ROOT.
   The Agentic Team install is mounted read-only at /opt/agentic-team.
   Cannot access the rest of your home directory, except selected auth/config mounts.
   Even with --yolo, the agent stays sandboxed.

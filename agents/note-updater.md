@@ -106,7 +106,7 @@ Scope selection:
 Target mapping:
 
 - `scope: org`: organization notes checkout `agent-notes/<agent_type>/<note_name>.md`
-- `scope: project`: project state checkout `agent-notes/<agent_type>/<note_name>.md` on the configured `agentic/project-state` branch
+- `scope: project`: project state worktree `agent-notes/<agent_type>/<note_name>.md` on the configured `agentic/project-state` branch
 - `scope: work`: active work branch checkout `agent-notes/<agent_type>/<note_name>.md` on `agentic/work-state/<work-branch>`
 - Use `agent_type: all-agents` for lessons that every agent in the scope should receive or see listed.
 - Use a specific `agent_type` such as `gpu-kernel-engineer` for lessons only relevant to that main agent or subagent type.

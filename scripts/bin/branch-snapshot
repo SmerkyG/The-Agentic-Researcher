@@ -22,7 +22,7 @@ Reads YAML from stdin.
 Example:
   branch-snapshot <<'YAML'
   project_dir: .
-  work_branch: work/alice
+  work_branch: work/research-main
   paths:
     - src/kernel.py
     - tests/test_kernel.py

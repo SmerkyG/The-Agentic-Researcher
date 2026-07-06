@@ -2,13 +2,24 @@
 
 setup_storage() {
     STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}"
+    RUNTIME_ROOT="${AR_RUNTIME_ROOT:-${AR_WORKSPACE_ROOT:-}/.runtime}"
+    AR_RUNTIME_ROOT="$RUNTIME_ROOT"
+    export AR_RUNTIME_ROOT RUNTIME_ROOT
 
-    UV_CACHE_DIR="${UV_CACHE_DIR:-$STATE_ROOT/uv/cache}"
-    UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$STATE_ROOT/uv/python}"
-    UV_TOOL_DIR="${UV_TOOL_DIR:-$STATE_ROOT/uv/tools}"
-    export UV_CACHE_DIR UV_PYTHON_INSTALL_DIR UV_TOOL_DIR
+    if [[ -n "${AR_WORKSPACE_ROOT:-}" ]]; then
+        mkdir -p "$AR_WORKSPACE_ROOT"
+    fi
+    if [[ -n "${RUNTIME_ROOT:-}" ]]; then
+        mkdir -p "$RUNTIME_ROOT"
+    fi
+    if [[ -n "${AR_ARTIFACTS_DIR:-}" ]]; then
+        mkdir -p "$AR_ARTIFACTS_DIR"
+    fi
 
     if [[ "$AR_SANDBOX" == "none" ]]; then
+        [[ -n "${UV_CACHE_DIR:-}" ]] && export UV_CACHE_DIR
+        [[ -n "${UV_PYTHON_INSTALL_DIR:-}" ]] && export UV_PYTHON_INSTALL_DIR
+        [[ -n "${UV_TOOL_DIR:-}" ]] && export UV_TOOL_DIR
         mkdir -p "$STATE_ROOT"
         CACHE_BASE="$STATE_ROOT"
         HF_HOME="${HF_HOME:-$CACHE_BASE/hf_home}"
@@ -16,6 +27,11 @@ setup_storage() {
         WANDB_DIR="${WANDB_DIR:-$CACHE_BASE/wandb}"
         return
     fi
+
+    UV_CACHE_DIR="${UV_CACHE_DIR:-$STATE_ROOT/uv/cache}"
+    UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$STATE_ROOT/uv/python}"
+    UV_TOOL_DIR="${UV_TOOL_DIR:-$STATE_ROOT/uv/tools}"
+    export UV_CACHE_DIR UV_PYTHON_INSTALL_DIR UV_TOOL_DIR
 
     # Sandbox-specific config directory (isolated from host)
     AR_CONFIG_STORE="$STATE_ROOT/agentic-team-config"
@@ -244,18 +260,18 @@ render_agentic_state_instruction_part() {
     [[ -n "${AR_WORK_BRANCH:-}" ]] || return 0
 
     printf '## Agentic State\n\n'
-    printf 'Agentic State stores shared agent memory and capability-owned records in Git-backed state checkouts under `$AR_STATE_ROOT`.\n\n'
+    printf 'Agentic State stores shared agent memory and capability-owned records in visible Git-backed state worktrees under `$AR_WORKSPACE_ROOT`.\n\n'
     printf '| Scope | Storage |\n'
     printf '| --- | --- |\n'
     printf '| Organization | Org repo configured by `AR_ORG_NOTES_REPO`, when present |\n'
     printf '| Project | Project repo orphan branch `%s` |\n' "${AR_PROJECT_STATE_BRANCH:-agentic/project-state}"
     printf '| Work branch | Project repo orphan branch `agentic/work-state/%s` |\n\n' "$AR_WORK_BRANCH"
-    printf 'Local state checkouts for this invocation:\n\n'
+    printf 'Local state worktrees for this invocation:\n\n'
     printf '```bash\n'
-    printf 'PROJECT_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/agentic-state"\n'
-    printf 'WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/${AR_WORK_BRANCH:?}"\n'
+    printf 'PROJECT_STATE_DIR="${AR_PROJECT_STATE_DIR:?}"\n'
+    printf 'WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"\n'
     printf '```\n\n'
-    printf 'Capabilities own the files they place in those checkouts. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `report.md` and `TODO.md` at the work-state checkout root.\n'
+    printf 'Capabilities own the files they place in those worktrees. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `report.md` and `TODO.md` at the work-state worktree root.\n'
 }
 
 setup_instruction_target() {

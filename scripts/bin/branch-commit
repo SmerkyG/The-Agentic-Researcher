@@ -21,7 +21,7 @@ Reads YAML from stdin.
 
 Example:
   branch-commit <<'YAML'
-  snapshot_dir: /home/user/.cache/agentic-team/commit-snapshots/123-work-alice
+  snapshot_dir: /home/user/my-project-at/.runtime/commit-snapshots/123-research-main
   background: true
   YAML
 

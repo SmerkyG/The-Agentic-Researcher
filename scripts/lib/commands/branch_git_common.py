@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from command_common import CommandError, bool_from, state_root
+from command_common import CommandError, bool_from, runtime_root
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -203,12 +203,26 @@ def request_commit_message(request: dict[str, Any]) -> str:
     return message
 
 
-def snapshot_root(snapshot_id: str) -> Path:
-    return state_root() / "commit-snapshots" / snapshot_id
+def snapshot_root(snapshot_id: str, project_dir: Path) -> Path:
+    return runtime_root(project_dir) / "commit-snapshots" / snapshot_id
 
 
-def commit_worktree_root() -> Path:
-    return state_root() / "commit-worktrees"
+def commit_worktree_root(project_dir: Path | None = None, snapshot_dir: Path | None = None) -> Path:
+    if project_dir is not None:
+        return runtime_root(project_dir) / "commit-worktrees"
+    if snapshot_dir is not None:
+        return snapshot_dir.parents[1] / "commit-worktrees"
+    return runtime_root() / "commit-worktrees"
+
+
+def commit_worktree_root_for(
+    metadata: dict[str, Any],
+    project_dir: Path | None = None,
+    snapshot_dir: Path | None = None,
+) -> Path:
+    if metadata.get("runtime_root"):
+        return Path(str(metadata["runtime_root"])) / "commit-worktrees"
+    return commit_worktree_root(project_dir=project_dir, snapshot_dir=snapshot_dir)
 
 
 def status_path(snapshot_dir: Path) -> Path:
@@ -238,7 +252,7 @@ def create_snapshot(request: dict[str, Any]) -> dict[str, Any]:
     commit_message = request_commit_message(request)
 
     snapshot_id = f"{int(time.time())}-{os.getpid()}-{slugify(work_branch)}"
-    root = snapshot_root(snapshot_id)
+    root = snapshot_root(snapshot_id, project_dir)
     root.mkdir(parents=True, exist_ok=False)
     patch_path = root / "snapshot.patch"
     name_status_path = root / "name-status.txt"
@@ -268,6 +282,7 @@ def create_snapshot(request: dict[str, Any]) -> dict[str, Any]:
         "snapshot_id": snapshot_id,
         "created_at": now_iso(),
         "project_dir": str(project_dir),
+        "runtime_root": str(runtime_root(project_dir)),
         "branch": branch,
         "work_branch": work_branch,
         "base_commit": base_commit,
@@ -502,7 +517,8 @@ def commit_snapshot_foreground(snapshot_dir: Path) -> dict[str, Any]:
     timeout_raw = metadata.get("check_timeout_seconds")
     check_timeout_seconds = int(timeout_raw) if timeout_raw else None
     commit_message = str(metadata["commit_message"])
-    worktree = state_root() / "commit-worktrees" / str(metadata["snapshot_id"]) / slugify(branch)
+    worktree_root = commit_worktree_root_for(metadata, project_dir=project_dir, snapshot_dir=snapshot_dir)
+    worktree = worktree_root / str(metadata["snapshot_id"]) / slugify(branch)
     check_log = snapshot_dir / "checks.log"
 
     update_status(
@@ -645,10 +661,17 @@ def snapshot_dirs_for_cleanup(request: dict[str, Any]) -> list[Path]:
     explicit = requested_snapshot_dirs(request)
     if explicit is not None:
         return explicit
-    root = state_root() / "commit-snapshots"
+    project_filter = project_filter_path(request)
+    root = runtime_root(project_filter) / "commit-snapshots"
     if not root.exists():
         return []
     return sorted(path for path in root.iterdir() if path.is_dir())
+
+
+def snapshot_allowed_root(metadata: dict[str, Any], project_dir: Path | None) -> Path:
+    if metadata.get("runtime_root"):
+        return Path(str(metadata["runtime_root"])) / "commit-snapshots"
+    return runtime_root(project_dir) / "commit-snapshots"
 
 
 def non_negative_int_request(request: dict[str, Any], key: str, default: int) -> int:
@@ -689,8 +712,8 @@ def load_snapshot_files(snapshot_dir: Path) -> tuple[dict[str, Any], dict[str, A
     return metadata, status
 
 
-def compact_worktree_parents(worktree: Path) -> None:
-    root = commit_worktree_root().resolve()
+def compact_worktree_parents(worktree: Path, root: Path) -> None:
+    root = root.resolve()
     current = worktree.parent
     for _ in range(2):
         try:
@@ -706,15 +729,15 @@ def compact_worktree_parents(worktree: Path) -> None:
         current = current.parent
 
 
-def remove_registered_worktree(project_dir: Path | None, worktree: Path) -> list[str]:
+def remove_registered_worktree(project_dir: Path | None, worktree: Path, worktree_root: Path) -> list[str]:
     warnings: list[str] = []
-    if not path_is_relative_to(worktree, commit_worktree_root()):
+    if not path_is_relative_to(worktree, worktree_root):
         raise CommandError(f"refusing to remove worktree outside commit-worktrees: {worktree}")
     if project_dir is not None and project_dir.exists():
         result = git(project_dir, "worktree", "remove", "--force", str(worktree), check=False)
         if result.returncode == 0:
             git(project_dir, "worktree", "prune", check=False)
-            compact_worktree_parents(worktree)
+            compact_worktree_parents(worktree, worktree_root)
             return warnings
         detail = (result.stderr or result.stdout or "").strip()
         warnings.append(f"git worktree remove failed for {worktree}: {detail}")
@@ -731,7 +754,7 @@ def remove_registered_worktree(project_dir: Path | None, worktree: Path) -> list
         shutil.rmtree(worktree)
     if common_dir is not None and common_dir.exists():
         run(["git", "--git-dir", str(common_dir), "worktree", "prune"], check=False)
-    compact_worktree_parents(worktree)
+    compact_worktree_parents(worktree, worktree_root)
     return warnings
 
 
@@ -754,17 +777,19 @@ def cleanup_commit_artifacts(request: dict[str, Any]) -> dict[str, Any]:
         if not snapshot_dir.exists():
             skipped.append({**base_entry, "reason": "missing"})
             continue
-        if not path_is_relative_to(snapshot_dir, state_root() / "commit-snapshots"):
-            skipped.append({**base_entry, "reason": "outside commit-snapshots"})
-            continue
 
         metadata, status = load_snapshot_files(snapshot_dir)
         snapshot_id = str(metadata.get("snapshot_id") or status.get("snapshot_id") or snapshot_dir.name)
         state = str(status.get("state") or "unknown")
         project_dir = Path(str(metadata["project_dir"])).expanduser().resolve() if metadata.get("project_dir") else None
+        allowed_root = snapshot_allowed_root(metadata, project_dir)
+        if not path_is_relative_to(snapshot_dir, allowed_root):
+            skipped.append({**base_entry, "reason": "outside commit-snapshots"})
+            continue
         timestamp = snapshot_timestamp(snapshot_dir, status, metadata)
         worktree_raw = status.get("worktree")
         worktree = Path(str(worktree_raw)).expanduser().resolve() if worktree_raw else None
+        worktree_root = commit_worktree_root_for(metadata, project_dir=project_dir, snapshot_dir=snapshot_dir)
         entry = {
             **base_entry,
             "snapshot_id": snapshot_id,
@@ -796,13 +821,13 @@ def cleanup_commit_artifacts(request: dict[str, Any]) -> dict[str, Any]:
 
         warnings: list[str] = []
         if worktree is not None:
-            warnings = remove_registered_worktree(project_dir, worktree)
+            warnings = remove_registered_worktree(project_dir, worktree, worktree_root)
         shutil.rmtree(snapshot_dir)
         removed.append({**entry, "warnings": warnings})
 
     return {
         "dry_run": dry_run,
-        "state_root": str(state_root()),
+        "runtime_root": str(runtime_root(project_filter)),
         "older_than_days": older_than_days,
         "selected_states": sorted(states),
         "planned": planned,

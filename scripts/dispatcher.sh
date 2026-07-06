@@ -48,6 +48,9 @@ build_apptainer_args() {
         --bind "$UV_PYTHON_INSTALL_DIR:/uv-python"
         --bind "$UV_TOOL_DIR:/uv-tools"
         --bind "$STATE_ROOT:$STATE_ROOT"
+        --bind "$AR_WORKSPACE_ROOT:$AR_WORKSPACE_ROOT"
+        --bind "$RUNTIME_ROOT:$RUNTIME_ROOT"
+        --bind "$AR_ARTIFACTS_DIR:$AR_ARTIFACTS_DIR"
         --pwd /workspace
         --env UV_CACHE_DIR=/uv-cache
         --env UV_PYTHON_INSTALL_DIR=/uv-python

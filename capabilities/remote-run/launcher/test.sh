@@ -17,6 +17,7 @@ echo "Testing container on head node..."
 apptainer exec --nv --no-mount home --home "$AR_SANDBOX_HOME" \
     --bind "$WORKSPACE_DIR:/workspace" \
     --bind "$SCRIPT_DIR:$AR_INSTALL_CONTAINER_DIR:ro" \
+    --bind "$AR_ARTIFACTS_DIR:$AR_ARTIFACTS_DIR" \
     --bind "$CONTAINER_TMP:/tmp" \
     --pwd /workspace \
     "$CONTAINER_IMAGE" \
@@ -32,9 +33,12 @@ scontrol show hostnames "$REMOTE_RUN_NODELIST" | while read -r node; do
         apptainer exec --nv --no-mount home --home "$AR_SANDBOX_HOME" \
             --bind "$WORKSPACE_DIR:/workspace" \
             --bind "$SCRIPT_DIR:$AR_INSTALL_CONTAINER_DIR:ro" \
-            --bind "$STATE_ROOT:$STATE_ROOT" \
-            --bind "$CONTAINER_TMP:/tmp" \
-            --pwd /workspace \
+    --bind "$STATE_ROOT:$STATE_ROOT" \
+    --bind "$AR_WORKSPACE_ROOT:$AR_WORKSPACE_ROOT" \
+    --bind "$RUNTIME_ROOT:$RUNTIME_ROOT" \
+    --bind "$AR_ARTIFACTS_DIR:$AR_ARTIFACTS_DIR" \
+    --bind "$CONTAINER_TMP:/tmp" \
+    --pwd /workspace \
             "$CONTAINER_IMAGE" \
             bash -c 'echo "OK - $(nvidia-smi -L 2>/dev/null | wc -l) GPUs"' \
         || echo "FAILED (see error above)"

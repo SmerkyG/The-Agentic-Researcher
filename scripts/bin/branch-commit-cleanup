@@ -20,7 +20,7 @@ HELP = """Clean up branch-snapshot and branch-commit local artifacts.
 Reads YAML from stdin.
 
 Default behavior is a dry run. It scans
-${AR_STATE_ROOT:-~/.cache/agentic-team}/commit-snapshots and selects
+${AR_RUNTIME_ROOT:-$AR_WORKSPACE_ROOT/.runtime}/commit-snapshots and selects
 committed, failed, or snapshotted artifacts older than 7 days. Queued and
 running commits are skipped unless explicitly selected, and live worker PIDs are
 always skipped.
@@ -40,7 +40,7 @@ Examples:
 
   branch-commit-cleanup <<'YAML'
   dry_run: false
-  snapshot_dir: /home/user/.cache/agentic-team/commit-snapshots/123-work-alice
+  snapshot_dir: /home/user/my-project-at/.runtime/commit-snapshots/123-research-main
   older_than_days: 0
   YAML
 

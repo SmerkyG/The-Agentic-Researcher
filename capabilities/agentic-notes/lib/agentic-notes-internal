@@ -201,20 +201,23 @@ def refresh_loop(args: argparse.Namespace) -> None:
     interval_seconds = max(1, int(args.interval_seconds))
     stale_seconds = max(interval_seconds * 2, int(args.stale_seconds))
     heartbeat_dir = Path(args.heartbeat_dir).resolve()
-    loop_lock = lock_file_for(f"refresh-loop-{project_id(project_dir)}")
+    loop_lock = lock_file_for(f"refresh-loop-{project_id(project_dir)}", project_dir)
 
     with nonblocking_state_lock(loop_lock) as acquired:
         if not acquired:
             return
         while wait_for_refresh_interval(heartbeat_dir, interval_seconds, stale_seconds):
             try:
-                refresh_locks = [lock_file_for(f"project-{project_id(project_dir)}")]
+                refresh_locks = [lock_file_for(f"project-{project_id(project_dir)}", project_dir)]
                 if os.environ.get("AR_ORG_NOTES_REPO"):
                     refresh_locks.append(lock_file_for("org-agentic-notes"))
                 active_work_branch = os.environ.get("AR_WORK_BRANCH")
                 if active_work_branch:
                     refresh_locks.append(
-                        lock_file_for(f"project-{project_id(project_dir)}-work-{work_branch_id(active_work_branch)}")
+                        lock_file_for(
+                            f"project-{project_id(project_dir)}-work-{work_branch_id(active_work_branch)}",
+                            project_dir,
+                        )
                     )
                 with ExitStack() as stack:
                     for lock_path in sorted(refresh_locks):
@@ -800,11 +803,17 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
 
     def add_project_lock(explicit_project_id: str | None = None) -> None:
         pid = project_id(project_dir, explicit_project_id)
-        paths.append(lock_file_for(f"project-{pid}"))
+        paths.append(lock_file_for(f"project-{pid}", project_dir, explicit_project_id))
 
     def add_work_branch_lock(work_branch_value: str | None = None, explicit_project_id: str | None = None) -> None:
         pid = project_id(project_dir, explicit_project_id)
-        paths.append(lock_file_for(f"project-{pid}-work-{work_branch_id(work_branch_value)}"))
+        paths.append(
+            lock_file_for(
+                f"project-{pid}-work-{work_branch_id(work_branch_value)}",
+                project_dir,
+                explicit_project_id,
+            )
+        )
 
     def add_org_lock() -> None:
         paths.append(lock_file_for("org-agentic-notes"))

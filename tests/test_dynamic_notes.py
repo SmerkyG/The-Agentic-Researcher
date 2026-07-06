@@ -18,6 +18,7 @@ AGENTIC_NOTES_INTERNAL = REPO_ROOT / "capabilities" / "agentic-notes" / "lib" / 
 AGENTIC_NOTES = REPO_ROOT / "capabilities" / "agentic-notes" / "bin" / "agentic-notes"
 EXPERIMENT_LOG = REPO_ROOT / "capabilities" / "experiment-log" / "bin" / "experiment-log"
 AGENTIC_TEAM = REPO_ROOT / "agentic-team"
+AGENTIC_WORKSPACE = REPO_ROOT / "scripts" / "bin" / "agentic-workspace"
 
 
 def test_builtin_subagents_have_one_contract_template() -> None:
@@ -66,6 +67,17 @@ def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
 def configure_git(repo: Path) -> None:
     git(repo, "config", "user.name", "Test User")
     git(repo, "config", "user.email", "test@example.com")
+
+
+def write_pre_push_hook(repo: Path, content: str) -> Path:
+    hook_dir = repo / ".git-hooks"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    git(repo, "config", "extensions.worktreeConfig", "true")
+    git(repo, "config", "--worktree", "core.hooksPath", str(hook_dir))
+    hook = hook_dir / "pre-push"
+    hook.write_text(content, encoding="utf-8")
+    hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
+    return hook
 
 
 def init_bare_remote(tmp_path: Path, name: str, files: dict[str, str]) -> Path:
@@ -136,7 +148,18 @@ def make_request(tmp_path: Path, data: dict) -> Path:
 
 
 def state_checkout(env: dict[str, str], project_id: str = "sparse-transformer-2026") -> Path:
-    return Path(env["AR_STATE_ROOT"]) / "projects" / project_id / "agentic-state"
+    return workspace_root(env, project_id) / "project-state"
+
+
+def workspace_root(env: dict[str, str], project_id: str = "sparse-transformer-2026") -> Path:
+    configured = env.get("AR_WORKSPACE_ROOT")
+    if configured:
+        return Path(configured)
+    return Path(env["AR_STATE_ROOT"]).parent / f"{project_id}-at"
+
+
+def work_name(work_branch: str) -> str:
+    return work_branch.rstrip("/").split("/")[-1]
 
 
 def work_state_checkout(
@@ -144,7 +167,7 @@ def work_state_checkout(
     project_id: str = "sparse-transformer-2026",
     work_branch: str = "kernel-search",
 ) -> Path:
-    return Path(env["AR_STATE_ROOT"]) / "projects" / project_id / "work-state" / work_branch
+    return workspace_root(env, project_id) / work_name(work_branch) / "state"
 
 
 def work_log(env: dict[str, str], project_id: str = "sparse-transformer-2026", work_branch: str = "kernel-search") -> Path:
@@ -153,6 +176,10 @@ def work_log(env: dict[str, str], project_id: str = "sparse-transformer-2026", w
 
 def work_state_dir(env: dict[str, str], project_id: str = "sparse-transformer-2026", work_branch: str = "kernel-search") -> Path:
     return work_state_checkout(env, project_id, work_branch)
+
+
+def assert_linked_worktree(path: Path) -> None:
+    assert (path / ".git").is_file(), f"{path} should be a linked Git worktree"
 
 
 def local_experiment_id(ref: str) -> str:
@@ -190,6 +217,7 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     run([str(AGENTIC_NOTES_INTERNAL), "init-org-notes", "--repo", str(org_remote)], env=env)
     run([str(AGENTIC_NOTES_INTERNAL), "ensure-project-state", "--project-dir", str(project)], env=env)
     state = state_checkout(env)
+    assert_linked_worktree(state)
     (state / "agent-notes" / "all-agents" / "always-injected.md").write_text(
         "# Project Notes\n\nProject body.\n", encoding="utf-8"
     )
@@ -898,7 +926,7 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "## Agentic State" in instruction_text
     assert "agentic/work-state/kernel-search" in instruction_text
-    assert 'WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/${AR_WORK_BRANCH:?}"' in instruction_text
+    assert 'WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"' in instruction_text
     assert 'mkdir -p "$WORK_STATE_DIR/images"' in instruction_text
     assert 'git -C "$WORK_STATE_DIR" add report.md TODO.md images/' in instruction_text
     assert "$WORK_STATE_DIR/images/" in instruction_text
@@ -945,6 +973,196 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     assert "experiment summary does not exist" in missing_summary.stderr
 
 
+def test_named_work_creates_at_layout_and_references_research_context(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path)
+    env["AR_CAPABILITIES"] = "agentic-notes,experiment-log,research-coordinator"
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Parent Plan\n\nExplore existing bounds.\n", encoding="utf-8")
+    run(
+        [
+            str(AGENTIC_NOTES_INTERNAL),
+            "replace-note",
+            "--project-dir",
+            str(project),
+            "--scope",
+            "work",
+            "--work-branch",
+            "kernel-search",
+            "--agent-type",
+            "research-coordinator",
+            "--note-name",
+            "always-injected",
+            "--note-file",
+            str(plan),
+        ],
+        env=env,
+    )
+    parent_state = work_state_dir(env)
+    assert_linked_worktree(parent_state)
+    (parent_state / "report.md").write_text("# Parent Report\n\nUseful result.\n", encoding="utf-8")
+    (parent_state / "TODO.md").write_text("- [ ] Parent todo\n", encoding="utf-8")
+    (parent_state / "images").mkdir(exist_ok=True)
+    (parent_state / "images" / "parent.png").write_bytes(b"png")
+    (parent_state / "context").mkdir(exist_ok=True)
+    write_yaml(
+        parent_state / "context" / "manifest.yaml",
+        {
+            "version": 1,
+            "references": [
+                {
+                    "work_name": "ancestor",
+                    "work_branch": "agent/ancestor",
+                    "state_branch": "agentic/work-state/agent/ancestor",
+                    "state_commit": "abc123",
+                    "files": ["report.md", "images/ancestor.png"],
+                }
+            ],
+        },
+    )
+    git(parent_state, "add", "report.md", "TODO.md", "images/", "context/manifest.yaml")
+    git(parent_state, "commit", "-m", "work-state: add parent research records")
+    git(parent_state, "push")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    root = workspace_root(env)
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--sandbox",
+            "none",
+            "--cli",
+            "codex",
+            str(root),
+            "kdtree-bounds",
+            "--from",
+            "kernel-search",
+            "--project-dir",
+            str(project),
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0
+    code_dir = root / "kdtree-bounds" / "code"
+    state_dir = root / "kdtree-bounds" / "state"
+    assert code_dir.exists()
+    assert state_dir.exists()
+    assert (root / "project").is_symlink()
+    assert_linked_worktree(root / "project-state")
+    assert_linked_worktree(state_dir)
+    assert git(code_dir, "branch", "--show-current").stdout.strip() == "agent/alice/kdtree-bounds"
+    report_text = (state_dir / "report.md").read_text(encoding="utf-8")
+    assert report_text.startswith("# Research Log: kdtree-bounds")
+    assert "Created from `kernel-search` into `agent/alice/kdtree-bounds`" in report_text
+    assert (state_dir / "context" / "parent" / "report.md").read_text(encoding="utf-8").startswith("# Parent Report")
+    assert (state_dir / "context" / "parent" / "TODO.md").exists()
+    assert not (state_dir / "context" / "parent" / "images" / "parent.png").exists()
+    manifest = yaml.safe_load((state_dir / "context" / "manifest.yaml").read_text(encoding="utf-8"))
+    assert manifest["created_from"]["work_branch"] == "kernel-search"
+    assert [entry["work_branch"] for entry in manifest["references"]] == ["agent/ancestor", "kernel-search"]
+    assert manifest["references"][0]["files"] == ["report.md", "images/ancestor.png"]
+    assert manifest["references"][1]["state_branch"] == "agentic/work-state/kernel-search"
+    assert manifest["references"][1]["files"] == ["report.md", "TODO.md", "images/parent.png"]
+    readme_text = (state_dir / "context" / "README.md").read_text(encoding="utf-8")
+    assert "images/parent.png" in readme_text
+    assert (root / "project-state").exists()
+    assert (
+        git(project, "ls-remote", "--exit-code", "--heads", "origin", "agent/alice/kdtree-bounds", check=False).returncode
+        == 2
+    )
+    assert (
+        git(
+            project,
+            "ls-remote",
+            "--exit-code",
+            "--heads",
+            "origin",
+            "agentic/work-state/agent/alice/kdtree-bounds",
+            check=False,
+        ).returncode
+        == 2
+    )
+
+
+def test_named_work_from_agent_branch_uses_sibling_branch_name(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path)
+    env["AR_CAPABILITIES"] = "none"
+    root = workspace_root(env)
+    source_code = root / "dan-agent" / "code"
+    source_code.parent.mkdir(parents=True)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "project").symlink_to(project, target_is_directory=True)
+    git(project, "worktree", "add", "-b", "agent/dan-agent", str(source_code), "kernel-search")
+    configure_git(source_code)
+
+    result = run(
+        [
+            str(AGENTIC_WORKSPACE),
+            "ensure-work",
+            "dan-agent2",
+            "--workspace-root",
+            str(root),
+            "--from",
+            "dan-agent",
+            "--capabilities",
+            "none",
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0
+    code_dir = root / "dan-agent2" / "code"
+    assert git(code_dir, "branch", "--show-current").stdout.strip() == "agent/dan-agent2"
+
+
+def test_named_work_does_not_suffix_when_requested_branch_exists_remotely(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path)
+    env["AR_CAPABILITIES"] = "none"
+    root = workspace_root(env)
+    source_code = root / "dan-agent" / "code"
+    source_code.parent.mkdir(parents=True)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "project").symlink_to(project, target_is_directory=True)
+    git(project, "worktree", "add", "-b", "agent/dan-agent", str(source_code), "kernel-search")
+    configure_git(source_code)
+    git(project, "branch", "agent/dan-agent2", "kernel-search")
+    git(project, "push", "origin", "agent/dan-agent2")
+    git(project, "branch", "-D", "agent/dan-agent2")
+
+    result = run(
+        [
+            str(AGENTIC_WORKSPACE),
+            "ensure-work",
+            "dan-agent2",
+            "--workspace-root",
+            str(root),
+            "--from",
+            "dan-agent",
+            "--capabilities",
+            "none",
+        ],
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "agent/dan-agent2" in result.stderr
+    assert "origin/agent/dan-agent2" in result.stderr
+    assert "dan-agent2-2" not in result.stderr
+    assert not (root / "dan-agent2" / "code").exists()
+
+
 def test_project_state_requires_project_id_when_no_remote_exists(tmp_path: Path) -> None:
     project = tmp_path / "project-without-remote"
     project.mkdir()
@@ -974,12 +1192,10 @@ def test_project_state_infers_project_id_from_git_remote(tmp_path: Path) -> None
     )
 
     assert result.returncode == 0
-    projects = list((Path(env["AR_STATE_ROOT"]) / "projects").iterdir())
-    assert len(projects) == 1
-    assert projects[0].name == "project"
+    assert_linked_worktree(workspace_root(env, "project") / "project-state")
     assert (
-        projects[0]
-        / "agentic-state"
+        workspace_root(env, "project")
+        / "project-state"
         / "agent-notes"
         / "all-agents"
         / "always-injected.md"
@@ -999,7 +1215,7 @@ def test_launcher_branch_guard_blocks_same_branch_but_not_other_branches(tmp_pat
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     env["AR_CAPABILITIES"] = "none"
 
-    guard_dir = Path(env["AR_STATE_ROOT"]) / "branch-guards" / env["AR_PROJECT_ID"] / "kernel-search"
+    guard_dir = workspace_root(env, env["AR_PROJECT_ID"]) / ".runtime" / "branch-guards" / "kernel-search"
     guard_dir.mkdir(parents=True)
     (guard_dir / "session-one.guard").write_text(
         "\n".join(
@@ -1312,20 +1528,20 @@ def test_push_conflict_retries_with_next_counter_number(tmp_path: Path) -> None:
     env_two = base_env(tmp_path / "two")
     env_one["AR_PROJECT_ID"] = "conflict-project"
     env_two["AR_PROJECT_ID"] = "conflict-project"
+    env_one["AR_WORKSPACE_ROOT"] = str(tmp_path / "one" / "conflict-project-at")
+    env_two["AR_WORKSPACE_ROOT"] = str(tmp_path / "two" / "conflict-project-at")
 
     run([str(EXPERIMENT_LOG), "summary", "--project-dir", str(project_one), "--work-branch", "kernel-search"], env=env_one, check=False)
     run([str(EXPERIMENT_LOG), "summary", "--project-dir", str(project_two), "--work-branch", "kernel-search"], env=env_two, check=False)
     state_two = work_state_checkout(env_two, "conflict-project")
     waiting = tmp_path / "waiting"
     allow = tmp_path / "allow"
-    hook = state_two / ".git" / "hooks" / "pre-push"
-    hook.write_text(
+    write_pre_push_hook(
+        state_two,
         "#!/bin/sh\n"
         f"touch '{waiting}'\n"
         f"while [ ! -f '{allow}' ]; do sleep 0.05; done\n",
-        encoding="utf-8",
     )
-    hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
 
     proc_two = subprocess.Popen(
         [
@@ -1377,14 +1593,12 @@ def test_same_installation_multiple_actor_worktrees_serialize_project_log_update
     state = work_state_checkout(env, "shared-worktree-project")
     waiting = tmp_path / "same-install-waiting"
     allow = tmp_path / "same-install-allow"
-    hook = state / ".git" / "hooks" / "pre-push"
-    hook.write_text(
+    write_pre_push_hook(
+        state,
         "#!/bin/sh\n"
         f"touch '{waiting}'\n"
         f"while [ ! -f '{allow}' ]; do sleep 0.05; done\n",
-        encoding="utf-8",
     )
-    hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
 
     proc_one = subprocess.Popen(
         [

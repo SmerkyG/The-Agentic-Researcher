@@ -109,7 +109,7 @@ Do this every session or after context compaction:
    first with `experiment-log summary --project-dir . --work-branch
    "$AR_WORK_BRANCH"`; open individual experiment YAML files only when needed.
 5. Read work-branch `report.md`, `TODO.md`, and report figures from the
-   work-state checkout when needed for narrative analysis, derivations, detailed
+   work-state worktree when needed for narrative analysis, derivations, detailed
    results, open questions, and deferred work. These records live on the work
    state branch, not in the code worktree.
 6. Run `git log --oneline -20` and `git status`.
@@ -132,7 +132,7 @@ Do this every session or after context compaction:
 5. **Analyze** honestly. Write a hypothesis for why it worked or did not.
 6. **Update work-branch records**: keep analysis, follow-ups, and report figures
    in work-branch `report.md`, `TODO.md`, and `images/` by editing those normal
-   files in the work-state checkout, then committing and pushing only those
+   files in the work-state worktree, then committing and pushing only those
    work-state files. Prepare experiment-log request content when the result is
    meaningful.
 7. **Capture reusable lessons**: if debugging, failed runs, corrected
@@ -197,7 +197,7 @@ read its rendered subagent definition and use its `## Subagent Contract`
 section for the exact request shape. The subagent uses the provided helper so
 the work-branch-local counter, per-experiment YAML file, and work-branch `SUMMARY.md` row
 are updated under the work-branch log's local state lock. Do not regenerate
-`SUMMARY.md`, manually edit the state checkout, or manually alter existing
+`SUMMARY.md`, manually edit the state worktree, or manually alter existing
 experiment fields. Experiment IDs are local to the work-branch log; use
 `::`-qualified references like
 `$AR_WORK_BRANCH::E0001_short-description` when referring across work-branch logs.
@@ -209,21 +209,21 @@ Both live at the root of branch `agentic/work-state/$AR_WORK_BRANCH`.
 Use Markdown for work-branch `report.md`, with embedded LaTeX math when needed.
 Do NOT compile it as a paper.
 
-Locate the work-state checkout with:
+Locate the work-state worktree with:
 
 ```bash
-WORK_STATE_DIR="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}/projects/${AR_PROJECT_ID:?}/work-state/${AR_WORK_BRANCH:?}"
+WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"
 ```
 
-Read work-branch records directly from that checkout:
+Read work-branch records directly from that worktree:
 
 ```bash
 test -f "$WORK_STATE_DIR/report.md" && sed -n '1,220p' "$WORK_STATE_DIR/report.md"
 test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
 ```
 
-Update work-branch records by editing files in the work-state checkout, then
-commit and push that checkout. Do not place these files in the code worktree.
+Update work-branch records by editing files in the work-state worktree, then
+commit and push that worktree. Do not place these files in the code worktree.
 
 ```bash
 git -C "$WORK_STATE_DIR" pull --ff-only
@@ -366,7 +366,7 @@ Include in work-branch `report.md`:
 - In the code worktree, do not directly stage, commit, tag, reset, stash, or
   otherwise mutate Git history/index state for normal research workflow. Use
   the branch snapshot/commit helper commands instead. Work-state record updates are ordinary
-  commits in the separate work-state checkout.
+  commits in the separate work-state worktree.
 - For completed experiment change sets, create an explicit-path snapshot with
   `branch-snapshot`, inspect it, then run `branch-commit` to
   run checks, create the commit, and log the experiment result after the commit

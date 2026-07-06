@@ -1,8 +1,8 @@
 """Shared Git-backed Agentic Team state mechanics.
 
-This module owns project/work-branch identity, local state checkout management,
+This module owns project/work-branch identity, local state worktree management,
 locking, and ordinary Git synchronization. Capabilities use it as substrate;
-they own the files and schemas they place in those checkouts.
+they own the files and schemas they place in those state worktrees.
 """
 
 from __future__ import annotations
@@ -64,6 +64,20 @@ def state_root() -> Path:
     return Path(os.environ.get("AR_STATE_ROOT", "~/.cache/agentic-team")).expanduser()
 
 
+def explicit_workspace_root() -> Path | None:
+    value = os.environ.get("AR_WORKSPACE_ROOT")
+    if not value:
+        return None
+    return Path(value).expanduser()
+
+
+def explicit_runtime_root() -> Path | None:
+    value = os.environ.get("AR_RUNTIME_ROOT")
+    if not value:
+        return None
+    return Path(value).expanduser()
+
+
 def state_branch() -> str:
     return os.environ.get("AR_PROJECT_STATE_BRANCH", "agentic/project-state")
 
@@ -96,8 +110,9 @@ def work_branch_id(value: str | None = None) -> str:
     return slugify(work_branch(value), default="branch")
 
 
-def work_branch_path_fragment(value: str) -> Path:
-    return Path(*work_branch(value).split("/"))
+def work_name(value: str | None = None) -> str:
+    branch = work_branch(value)
+    return slugify(Path(branch).name, default=work_branch_id(branch))
 
 
 def safe_load_yaml(path: Path) -> dict[str, Any]:
@@ -200,12 +215,43 @@ def project_id(project_dir: Path, explicit: str | None = None) -> str:
     )
 
 
+def workspace_root(project_dir: Path, explicit_project_id: str | None = None) -> Path:
+    configured = explicit_workspace_root()
+    if configured is not None:
+        return configured
+
+    expanded = project_dir.expanduser()
+    if expanded.name == "code" and expanded.parent.parent.name.endswith("-at"):
+        return expanded.parent.parent.resolve()
+
+    resolved = expanded.resolve()
+    if resolved.name == "code" and resolved.parent.parent.name.endswith("-at"):
+        return resolved.parent.parent
+
+    return resolved.parent / f"{project_id(project_dir, explicit_project_id)}-at"
+
+
+def runtime_root(project_dir: Path | None = None, explicit_project_id: str | None = None) -> Path:
+    configured = explicit_runtime_root()
+    if configured is not None:
+        return configured
+
+    configured_workspace = explicit_workspace_root()
+    if configured_workspace is not None:
+        return configured_workspace / ".runtime"
+
+    if project_dir is not None:
+        return workspace_root(project_dir, explicit_project_id) / ".runtime"
+
+    raise AgenticStateError("runtime root requires AR_RUNTIME_ROOT, AR_WORKSPACE_ROOT, or project_dir")
+
+
 def org_checkout_path() -> Path:
     return state_root() / "repos" / "org-agentic-notes"
 
 
 def project_state_path(project_dir: Path, explicit_project_id: str | None = None) -> Path:
-    return state_root() / "projects" / project_id(project_dir, explicit_project_id) / "agentic-state"
+    return workspace_root(project_dir, explicit_project_id) / "project-state"
 
 
 def work_state_path(
@@ -213,17 +259,16 @@ def work_state_path(
     branch: str,
     explicit_project_id: str | None = None,
 ) -> Path:
-    return (
-        state_root()
-        / "projects"
-        / project_id(project_dir, explicit_project_id)
-        / "work-state"
-        / work_branch_path_fragment(branch)
-    )
+    return workspace_root(project_dir, explicit_project_id) / work_name(branch) / "state"
 
 
-def lock_file_for(name: str) -> Path:
-    return state_root() / "locks" / f"{slugify(name, default='state')}.lock"
+def lock_file_for(
+    name: str,
+    project_dir: Path | None = None,
+    explicit_project_id: str | None = None,
+) -> Path:
+    root = state_root() if name == "org-agentic-notes" else runtime_root(project_dir, explicit_project_id)
+    return root / "locks" / f"{slugify(name, default='state')}.lock"
 
 
 def org_lock_path() -> Path:
@@ -231,7 +276,11 @@ def org_lock_path() -> Path:
 
 
 def project_lock_path(project_dir: Path, explicit_project_id: str | None = None) -> Path:
-    return lock_file_for(f"project-{project_id(project_dir, explicit_project_id)}")
+    return lock_file_for(
+        f"project-{project_id(project_dir, explicit_project_id)}",
+        project_dir,
+        explicit_project_id,
+    )
 
 
 def work_lock_path(
@@ -240,7 +289,11 @@ def work_lock_path(
     explicit_project_id: str | None = None,
 ) -> Path:
     pid = project_id(project_dir, explicit_project_id)
-    return lock_file_for(f"project-{pid}-work-{work_branch_id(work_branch_value)}")
+    return lock_file_for(
+        f"project-{pid}-work-{work_branch_id(work_branch_value)}",
+        project_dir,
+        explicit_project_id,
+    )
 
 
 @contextmanager
@@ -408,6 +461,60 @@ def create_orphan_branch(repo: Path, branch: str) -> None:
             child.unlink()
 
 
+def ensure_existing_state_repo(repo: Path, branch: str) -> Path:
+    configure_git_identity(repo)
+    if local_branch_exists(repo, branch):
+        if current_branch(repo) != branch:
+            git(repo, "checkout", branch)
+    elif git_remote(repo) and remote_branch_exists(repo, branch):
+        git(repo, "fetch", "origin", branch)
+        git(repo, "checkout", "-B", branch, f"origin/{branch}")
+    else:
+        create_orphan_branch(repo, branch)
+    return repo
+
+
+def add_state_worktree(project_dir: Path, dest: Path, branch: str, *, use_remote: bool = True) -> Path:
+    git(project_dir, "worktree", "prune", check=False)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if local_branch_exists(project_dir, branch):
+        git(project_dir, "worktree", "add", str(dest), branch)
+    elif use_remote and git_remote(project_dir) and remote_branch_exists(project_dir, branch):
+        git(project_dir, "fetch", "origin", branch)
+        git(project_dir, "worktree", "add", "--track", "-b", branch, str(dest), f"origin/{branch}")
+    else:
+        git(project_dir, "worktree", "add", "--orphan", "-b", branch, str(dest))
+
+    configure_git_identity(dest)
+    return dest
+
+
+def ensure_state_worktree_or_repo(
+    project_dir: Path,
+    dest: Path,
+    branch: str,
+    label: str,
+    *,
+    use_remote: bool = True,
+) -> Path:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if is_git_repo(dest):
+        return ensure_existing_state_repo(dest, branch)
+
+    if dest.exists() and any(dest.iterdir()):
+        raise AgenticStateError(f"{label} state path exists but is not a Git repo: {dest}")
+
+    if is_git_repo(project_dir):
+        return add_state_worktree(project_dir, dest, branch, use_remote=use_remote)
+
+    # Launcher-managed projects are expected to be Git worktrees. Keep a small
+    # fallback for direct command use with an explicit project id and no project
+    # repo, but normal project/work state now lives in linked worktrees.
+    return ensure_local_git_repo(dest, branch)
+
+
 def ensure_org_worktree(repo: Path) -> None:
     if git(repo, "rev-parse", "--verify", "HEAD", check=False).returncode == 0:
         return
@@ -443,87 +550,23 @@ def ensure_org_checkout(repo_url: str | None = None) -> Path | None:
     return dest
 
 
-def project_origin(project_dir: Path) -> str | None:
-    if not is_git_repo(project_dir):
-        return None
-    remote = git_remote(project_dir)
-    if remote:
-        return remote
-    top = run(["git", "-C", str(project_dir), "rev-parse", "--show-toplevel"]).stdout.strip()
-    return top or None
-
-
 def ensure_project_checkout(project_dir: Path, explicit_project_id: str | None = None) -> Path:
     branch = state_branch()
     dest = project_state_path(project_dir, explicit_project_id)
-    origin = project_origin(project_dir)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    if (dest / ".git").exists():
-        configure_git_identity(dest)
-        if local_branch_exists(dest, branch):
-            if current_branch(dest) != branch:
-                git(dest, "checkout", branch)
-        elif git_remote(dest) and remote_branch_exists(dest, branch):
-            git(dest, "fetch", "origin", branch)
-            git(dest, "checkout", "-B", branch, f"origin/{branch}")
-        else:
-            create_orphan_branch(dest, branch)
-        return dest
-
-    if dest.exists() and any(dest.iterdir()):
-        raise AgenticStateError(f"Project state checkout exists but is not a Git repo: {dest}")
-
-    if origin:
-        run(["git", "clone", origin, str(dest)])
-        configure_git_identity(dest)
-        if remote_branch_exists(dest, branch):
-            git(dest, "fetch", "origin", branch)
-            git(dest, "checkout", "-B", branch, f"origin/{branch}")
-        else:
-            create_orphan_branch(dest, branch)
-    else:
-        ensure_local_git_repo(dest, branch)
-    return dest
+    return ensure_state_worktree_or_repo(project_dir, dest, branch, "Project")
 
 
 def ensure_work_state_checkout(
     project_dir: Path,
     branch_name: str,
     explicit_project_id: str | None = None,
+    *,
+    use_remote: bool = True,
 ) -> Path:
     active_work_branch = work_branch(branch_name)
     branch = work_state_branch(active_work_branch)
     dest = work_state_path(project_dir, active_work_branch, explicit_project_id)
-    origin = project_origin(project_dir)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    if (dest / ".git").exists():
-        configure_git_identity(dest)
-        if local_branch_exists(dest, branch):
-            if current_branch(dest) != branch:
-                git(dest, "checkout", branch)
-        elif git_remote(dest) and remote_branch_exists(dest, branch):
-            git(dest, "fetch", "origin", branch)
-            git(dest, "checkout", "-B", branch, f"origin/{branch}")
-        else:
-            create_orphan_branch(dest, branch)
-        return dest
-
-    if dest.exists() and any(dest.iterdir()):
-        raise AgenticStateError(f"Work state checkout exists but is not a Git repo: {dest}")
-
-    if origin:
-        run(["git", "clone", origin, str(dest)])
-        configure_git_identity(dest)
-        if remote_branch_exists(dest, branch):
-            git(dest, "fetch", "origin", branch)
-            git(dest, "checkout", "-B", branch, f"origin/{branch}")
-        else:
-            create_orphan_branch(dest, branch)
-    else:
-        ensure_local_git_repo(dest, branch)
-    return dest
+    return ensure_state_worktree_or_repo(project_dir, dest, branch, "Work", use_remote=use_remote)
 
 
 def ensure_work_state(
@@ -532,9 +575,10 @@ def ensure_work_state(
     explicit_project_id: str | None = None,
     *,
     pull_remote: bool = True,
+    use_remote: bool = True,
 ) -> Path:
     active_work_branch = work_branch(branch_name)
-    repo = ensure_work_state_checkout(project_dir, active_work_branch, explicit_project_id)
+    repo = ensure_work_state_checkout(project_dir, active_work_branch, explicit_project_id, use_remote=use_remote)
     branch = work_state_branch(active_work_branch)
     if pull_remote and git_remote(repo):
         pull_ff(repo, branch, missing_ok=True)

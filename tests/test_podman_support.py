@@ -353,8 +353,15 @@ def test_launcher_native_runs_host_cli__without_container(
         fake_bin / "codex",
         "#!/bin/sh\n"
         "printf 'cwd:%s\\n' \"$PWD\" >> \"${FAKE_CODEX_LOG:?}\"\n"
-        "printf 'args:%s\\n' \"$*\" >> \"${FAKE_CODEX_LOG:?}\"\n",
+        "printf 'args:%s\\n' \"$*\" >> \"${FAKE_CODEX_LOG:?}\"\n"
+        "printf 'uv_cache:%s\\n' \"${UV_CACHE_DIR-}\" >> \"${FAKE_CODEX_LOG:?}\"\n"
+        "printf 'uv_python:%s\\n' \"${UV_PYTHON_INSTALL_DIR-}\" >> \"${FAKE_CODEX_LOG:?}\"\n"
+        "printf 'uv_tools:%s\\n' \"${UV_TOOL_DIR-}\" >> \"${FAKE_CODEX_LOG:?}\"\n"
+        "printf 'artifacts:%s\\n' \"${AR_ARTIFACTS_DIR-}\" >> \"${FAKE_CODEX_LOG:?}\"\n",
     )
+    native_env = {**base_env, "FAKE_CODEX_LOG": str(cli__log)}
+    for key in ("UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "UV_TOOL_DIR"):
+        native_env.pop(key, None)
 
     result = run(
         [
@@ -366,15 +373,25 @@ def test_launcher_native_runs_host_cli__without_container(
             "gpt-test",
             str(workspace),
         ],
-        {**base_env, "FAKE_CODEX_LOG": str(cli__log)},
+        native_env,
     )
 
     assert result.returncode == 0
     assert "Agentic Team - Codex CLI (No Sandbox)" in result.stdout
     assert "Sandboxed:      No (sandbox none; full host filesystem access)" in result.stdout
     assert "Job backend:    none" in result.stdout
-    assert f"cwd:{workspace}" in cli__log.read_text()
-    assert "args:--model gpt-test" in cli__log.read_text()
+    assert "UV Cache:       uv default (native mode)" in result.stdout
+    expected_artifacts = workspace.parent / "test-project-at" / "artifacts" / "project"
+    assert f"Artifacts:      {expected_artifacts}" in result.stdout
+    assert expected_artifacts.is_dir()
+    cli__log_text = cli__log.read_text()
+    assert f"cwd:{workspace}" in cli__log_text
+    assert "args:--model gpt-test" in cli__log_text
+    assert "uv_cache:\n" in cli__log_text
+    assert "uv_python:\n" in cli__log_text
+    assert "uv_tools:\n" in cli__log_text
+    assert f"artifacts:{expected_artifacts}" in cli__log_text
+    assert not (Path(native_env["HOME"]) / ".cache" / "agentic-team" / "uv").exists()
     research_skill = workspace / ".agents" / "skills" / "do_research" / "SKILL.md"
     assert research_skill.exists()
     assert "name: \"do_research\"" in research_skill.read_text()
@@ -492,13 +509,10 @@ def test_launcher_infers_project_id_from_git_remote(
     )
 
     assert result.returncode == 0
-    projects_root = Path(env["HOME"]) / ".cache" / "agentic-team" / "projects"
-    projects = list(projects_root.iterdir())
-    assert len(projects) == 1
-    assert projects[0].name == "project"
     assert (
-        projects[0]
-        / "agentic-state"
+        workspace.parent
+        / "project-at"
+        / "project-state"
         / "agent-notes"
         / "all-agents"
         / "always-injected.md"
@@ -529,7 +543,38 @@ def test_launcher_project_id_flag_overrides_missing_env(
     )
 
     assert result.returncode == 0
-    assert (Path(env["HOME"]) / ".cache" / "agentic-team" / "projects" / "flag-project" / "agentic-state").exists()
+    assert (workspace.parent / "flag-project-at" / "project-state").exists()
+
+
+def test_launcher_preserves_at_workspace_root_from_code_symlink(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "treeattention"
+    init_work_branch_workspace(workspace)
+    at_root = tmp_path / "custom-at"
+    code_link = at_root / "kernel-search" / "code"
+    code_link.parent.mkdir(parents=True)
+    code_link.symlink_to(workspace, target_is_directory=True)
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = {**base_env}
+    env["AR_CAPABILITIES"] = "agentic-notes"
+
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--sandbox",
+            "none",
+            "--cli",
+            "codex",
+            str(code_link),
+        ],
+        env,
+    )
+
+    assert result.returncode == 0
+    assert (at_root / "project-state").exists()
+    assert (at_root / "kernel-search" / "state").exists()
+    assert not (tmp_path / "test-project-at" / "project-state").exists()
 
 
 def test_launcher_resume_followed_by_existing_directory_sets_workspace(

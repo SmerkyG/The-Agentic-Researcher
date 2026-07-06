@@ -176,17 +176,24 @@ ar_core_env_pairs() {
     printf 'AR_JOB_BACKEND=%s\n' "${JOB_BACKEND:-none}"
     printf 'AR_CLI=%s\n' "$AR_CLI"
     printf 'AR_STATE_ROOT=%s\n' "$STATE_ROOT"
+    printf 'AR_WORKSPACE_ROOT=%s\n' "${AR_WORKSPACE_ROOT:-}"
+    printf 'AR_RUNTIME_ROOT=%s\n' "${AR_RUNTIME_ROOT:-}"
+    printf 'AR_ARTIFACTS_DIR=%s\n' "${AR_ARTIFACTS_DIR:-}"
 }
 
 ar_agent_context_env_pairs() {
+    printf 'AR_PROJECT_DIR=%s\n' "$(workspace_root_runtime_path)"
     printf 'AR_MAIN_AGENT=%s\n' "${AR_MAIN_AGENT:-research-coordinator}"
     printf 'AR_WORK_BRANCH=%s\n' "${AR_WORK_BRANCH:-}"
     printf 'AR_WORK_BRANCH_ID=%s\n' "${AR_WORK_BRANCH_ID:-}"
+    printf 'AR_WORK_NAME=%s\n' "${AR_WORK_NAME:-}"
     printf 'AR_WORK_BRANCH_PREFIX=%s\n' "${AR_WORK_BRANCH_PREFIX:-}"
     printf 'AR_BRANCH_OWNERSHIP=%s\n' "${AR_BRANCH_OWNERSHIP:-exclusive}"
     printf 'AR_SESSION_ID=%s\n' "${AR_SESSION_ID:-}"
     printf 'AR_USER_ID=%s\n' "${AR_USER_ID:-$USER}"
     printf 'AR_PROJECT_ID=%s\n' "${AR_PROJECT_ID:-}"
+    printf 'AR_PROJECT_STATE_DIR=%s\n' "${AR_PROJECT_STATE_DIR:-}"
+    printf 'AR_WORK_STATE_DIR=%s\n' "${AR_WORK_STATE_DIR:-}"
 }
 
 ar_capability_config_env_pairs() {
