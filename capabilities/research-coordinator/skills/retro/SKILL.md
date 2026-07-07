@@ -19,12 +19,13 @@ Read the following files (skip any that don't exist):
 
 1. `$PROJECT_DIR/REVISION.md` -- previous retrospective entries (if any)
 2. The active work branch experiment `SUMMARY.md` if available, plus individual experiment YAML files only when needed
-3. The active work branch `report.md` if available -- work-branch-local narrative analysis and report quality
-4. The active work branch `TODO.md` if available -- work-branch-local open items and deferred work
-5. `$PROJECT_DIR/$INSTRUCTION_FILE` -- the materialized instructions governing this session, including the selected main-agent section
-6. The injected Agentic Notes section in `$INSTRUCTION_FILE`, especially project agent-type notes for the active agent type; read on-demand note files only when they are needed to evaluate a concrete note-related issue
-7. Run `git log --oneline -30` -- see the commit history (style, frequency, quality)
-8. Run `git diff --stat HEAD~5..HEAD 2>/dev/null || true` -- recent change patterns
+3. The active work branch `condensed_report.md` if available -- compact current findings and direction
+4. The active work branch `report.md` and relevant `report_pageN.md` files if available -- work-branch-local narrative analysis and report quality. `report_page1.md` is the oldest archived page, higher page numbers are newer, and `report.md` is newest/current.
+5. The active work branch `TODO.md` if available -- work-branch-local open items and deferred work
+6. `$PROJECT_DIR/$INSTRUCTION_FILE` -- the materialized instructions governing this session, including the selected main-agent section
+7. The injected Agentic Notes section in `$INSTRUCTION_FILE`, especially project agent-type notes for the active agent type; read on-demand note files only when they are needed to evaluate a concrete note-related issue
+8. Run `git log --oneline -30` -- see the commit history (style, frequency, quality)
+9. Run `git diff --stat HEAD~5..HEAD 2>/dev/null || true` -- recent change patterns
 
 For work-branch records, use the experiment-log command and direct reads from
 the work-state worktree:
@@ -32,6 +33,8 @@ the work-state worktree:
 ```bash
 experiment-log summary --project-dir "$PROJECT_DIR" --work-branch "$AR_WORK_BRANCH" 2>/dev/null || true
 WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"
+test -f "$WORK_STATE_DIR/condensed_report.md" && sed -n '1,180p' "$WORK_STATE_DIR/condensed_report.md"
+ls "$WORK_STATE_DIR"/report_page*.md 2>/dev/null || true
 test -f "$WORK_STATE_DIR/report.md" && sed -n '1,220p' "$WORK_STATE_DIR/report.md"
 test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
 ```
@@ -70,6 +73,12 @@ Reflect on these additional dimensions:
 - Were completed meaningful experiments routed through the `experiment-logger` subagent, with one retry and user alert if spawning failed?
 - Were corrections routed through the `experiment-corrector` subagent instead of manually altering old experiment fields?
 - Was `SUMMARY.md` append-maintained rather than regenerated or hand-edited?
+- Is `condensed_report.md` concise, current, and about one page rather than a growing chronology?
+- Are report pages paginated correctly with `report_page1.md` as the oldest page,
+  higher page numbers newer, and `report.md` newest/current? When `report.md`
+  grows beyond 300 lines, the next report write should start from a fresh
+  `report.md` by archiving the old page whole to the next `report_pageN.md`,
+  not by splitting existing sections.
 - Is the report clear, well-structured, and useful as a work-branch-local narrative record?
 - Are report entries detailed enough to understand methods, analysis, and verification?
 - Are analyses insightful or superficial?

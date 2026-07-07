@@ -88,7 +88,10 @@ experiment-log correct --request REQUEST.yaml --project-dir PATH --work-branch W
 experiment-log summary --project-dir PATH --work-branch WORK_BRANCH
 ```
 
-Research workflows often keep `report.md`, `TODO.md`, and report-ready figures
-under `images/` on the same work-branch state branch. Those files are mutable
+Research workflows often keep `condensed_report.md`, paginated report files
+(`report_page1.md` oldest, `report.md` newest/current and rolled over whole
+after it passes 300 lines), `TODO.md`, and report-ready figures under `images/`
+on the same work-branch state branch. Those files are mutable
 synthesis/checklist/report-asset records owned by the research workflow, not by
-the experiment-log capability.
+the experiment-log capability. `condensed_report.md` is deliberately distinct
+from the experiment-log-owned `experiment-log/SUMMARY.md`.

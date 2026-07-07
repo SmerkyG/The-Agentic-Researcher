@@ -33,15 +33,23 @@ The active work branch's durable state lives on the project work state branch
   work branch.
 - `experiment-log/` is the append-only experiment ledger when the experiment-log
   provider creates it.
-- `report.md` is mutable work-branch-local narrative synthesis when this research
-  workflow creates it.
+- `condensed_report.md` is the short rolling condensed report of current
+  findings when this research workflow creates it. Keep it to about one page by
+  rewriting it instead of appending chronology.
+- `report.md` is the newest/current mutable work-branch-local narrative page
+  when this research workflow creates it. Older pages are named
+  `report_pageN.md`, where `report_page1.md` is the first/oldest archived page
+  and higher numbers are newer. Before adding new narrative report content,
+  run `research-coordinator-report-rollover --work-state-dir "$WORK_STATE_DIR"`;
+  when the current `report.md` already exceeds 300 lines, it archives that page
+  whole to the next `report_pageN.md` and starts a fresh `report.md`.
 - `TODO.md` is the mutable work-branch-local checklist when this research workflow
   creates it.
-- `images/` stores report-ready figures referenced by `report.md`.
+- `images/` stores report-ready figures referenced by report pages.
 
 Code branches and experiment subbranches hold code. Do not treat worktree
-`report.md`, worktree `TODO.md`, or worktree report `images/` as canonical
-work-branch records.
+`condensed_report.md`, worktree `report.md`, worktree `report_pageN.md`, worktree
+`TODO.md`, or worktree report `images/` as canonical work-branch records.
 
 ## Detect Resume vs Fresh Start
 
@@ -63,9 +71,12 @@ This work branch is already in progress.
    experiment-log summary --project-dir "$PROJECT_DIR" --work-branch "$WORK_BRANCH" 2>/dev/null || true
    ```
 
-3. Read work-branch `report.md` and `TODO.md` only when needed:
+3. Read work-branch `condensed_report.md`, current `report.md`, and `TODO.md` only when
+   needed. Read older `report_pageN.md` files only when their archived context
+   is relevant:
 
    ```bash
+   test -f "$WORK_STATE_DIR/condensed_report.md" && sed -n '1,180p' "$WORK_STATE_DIR/condensed_report.md"
    test -f "$WORK_STATE_DIR/report.md" && sed -n '1,220p' "$WORK_STATE_DIR/report.md"
    test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
    ```
@@ -74,8 +85,8 @@ This work branch is already in progress.
 5. Summarize the current state to the user:
    - Best result so far and which experiment achieved it
    - What was tried last and whether it worked
-   - What's next from the active work-branch plan, work-branch TODO, work-branch report, or last
-     logged experiment's next steps
+   - What's next from the active work-branch plan, work-branch TODO, current
+     report page, or last logged experiment's next steps
 6. Ask the user if they want to continue the planned direction or pivot.
 7. Continue the autonomous experiment loop. Completing one `TODO.md` item is
    not a stopping condition; after checking off finished items, pick the next
@@ -194,16 +205,31 @@ Agentic Team launches, resumes, or compaction refreshes can render the committed
 plan into startup instructions for later contexts, but regenerating an
 instruction file does not update this already-running model context.
 
-5. Initialize work-branch `report.md` and `TODO.md` in the work-state worktree.
-   These are normal files in that worktree, not Agentic Notes commands:
+5. Initialize work-branch `condensed_report.md`, `report.md`, and `TODO.md` in the
+   work-state worktree. These are normal files in that worktree, not Agentic
+   Notes commands:
 
 ```bash
+cat > "$WORK_STATE_DIR/condensed_report.md" <<'MARKDOWN'
+# Condensed Report
+
+Rewrite this file as the branch evolves. Keep it to about one page with the
+current best findings, important negative results, open risks, and next
+direction.
+MARKDOWN
+
 cat > "$WORK_STATE_DIR/report.md" <<'MARKDOWN'
 # Research Log
 
-Use this Markdown notebook for branch-local narrative analysis, derivations,
-figures, verification notes, and selected result tables. Embed LaTeX math when
-needed, for example `$O(n \log n)$` or display equations.
+Use this newest/current report page for branch-local narrative analysis,
+derivations, figures, verification notes, and selected result tables. Embed
+LaTeX math when needed, for example `$O(n \log n)$` or display equations.
+
+Before adding new narrative content in later sessions, run
+`research-coordinator-report-rollover --work-state-dir "$WORK_STATE_DIR"`.
+If this current page already exceeds 300 lines, the helper archives it whole to
+the next `report_pageN.md` file and starts a fresh `report.md`; do not split old
+report pages by heading or section count.
 MARKDOWN
 
 cat > "$WORK_STATE_DIR/TODO.md" <<'MARKDOWN'
@@ -213,20 +239,28 @@ cat > "$WORK_STATE_DIR/TODO.md" <<'MARKDOWN'
 MARKDOWN
 
 mkdir -p "$WORK_STATE_DIR/images"
-git -C "$WORK_STATE_DIR" add report.md TODO.md images/
+git -C "$WORK_STATE_DIR" add condensed_report.md report.md TODO.md images/
+for page in "$WORK_STATE_DIR"/report_page*.md; do
+  [[ -e "$page" ]] && git -C "$WORK_STATE_DIR" add "$(basename "$page")"
+done
 git -C "$WORK_STATE_DIR" commit -m "work-state: initialize $WORK_BRANCH research records"
 git -C "$WORK_STATE_DIR" push
 ```
 
-Use Markdown headings and tables in `report.md`; embed LaTeX math only when it
-helps the derivation. Use Markdown image links for figures, embedding PNGs
-such as `![caption](images/name.png)` rather than PDF-only links. Save
-report-ready PNG/PDF figures under `$WORK_STATE_DIR/images/` and commit
-`images/` with the report even though those files are binary. Keep raw arrays,
-checkpoints, full logs, datasets, and other bulky generated artifacts under
-`$AR_ARTIFACTS_DIR` instead. Use a unique run or experiment subdirectory for
-new artifact writes so parallel AT work does not overwrite shared project
-artifacts. Use `TODO.md` checklist items in `- [ ] item` format.
+Use Markdown headings and tables in report pages; embed LaTeX math only when it
+helps the derivation. Before each work-state commit, update `condensed_report.md` and
+enforce report pagination: `report_page1.md` is oldest, higher page numbers are
+newer, and `report.md` is newest/current. Before adding new narrative report
+content, run `research-coordinator-report-rollover --work-state-dir "$WORK_STATE_DIR"`;
+it rolls over only when the current `report.md` already exceeds 300 lines, and
+it archives that page whole instead of splitting sections. Use Markdown image
+links for figures, embedding PNGs such as `![caption](images/name.png)` rather
+than PDF-only links. Save report-ready PNG/PDF figures under `$WORK_STATE_DIR/images/`
+and commit `images/` with the report pages even though those files are binary.
+Keep raw arrays, checkpoints, full logs, datasets, and other bulky generated
+artifacts under `$AR_ARTIFACTS_DIR` instead. Use a unique run or experiment
+subdirectory for new writes so parallel AT work does not overwrite shared
+project artifacts. Use `TODO.md` checklist items in `- [ ] item` format.
 
 6. Proceed with initial setup:
    - Explore the codebase structure and understand the architecture
@@ -234,15 +268,16 @@ artifacts. Use `TODO.md` checklist items in `- [ ] item` format.
      `rocm-smi`
    - Install dependencies with `uv sync`
    - Run the baseline evaluation command from the research plan
-   - Update work-branch `report.md`, `TODO.md`, and report figures by editing
-     the work-state worktree and committing those files there
+   - Update work-branch `condensed_report.md`, report pages, `TODO.md`, and report
+     figures by editing the work-state worktree and committing those files
+     there
    - If the baseline is a meaningful completed experiment, launch
-     `experiment-logger` so the active work-branch summary receives an
-     experiment ID; retry once if spawning fails and alert the user if it still
-     cannot be spawned
+     `experiment-logger` so the active work-branch experiment-log `SUMMARY.md`
+     receives an experiment ID; retry once if spawning fails and alert the user
+     if it still cannot be spawned
    - Commit only code/config/script changes that belong in the code branch; do
-     not commit work-branch Agentic Notes, `report.md`, `TODO.md`, or report
-     `images/` to the code branch
+     not commit work-branch Agentic Notes, `condensed_report.md`, report pages,
+     `TODO.md`, or report `images/` to the code branch
    - Begin the autonomous experiment loop and keep repeating it until no useful
      autonomous work remains
 

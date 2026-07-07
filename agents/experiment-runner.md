@@ -37,7 +37,12 @@ Returns: experiment ID or local name, files changed, commands run, result metric
   subagent handoff: try to spawn `experiment-logger`, retry once if spawning
   fails, and alert the parent/user if it still cannot be spawned. Do not
   replace it with a direct `experiment-log` command.
-- Use work-branch `report.md` for narrative analysis, work-branch `TODO.md` for follow-ups, and work-state `images/` for report-ready figures; do not create canonical worktree `report.md`, `TODO.md`, or report `images/` files.
+- Use work-branch `condensed_report.md` for compact current findings, paginated
+  work-branch report files for narrative analysis (`report.md` newest/current,
+  `report_page1.md` oldest archived page), work-branch `TODO.md` for
+  follow-ups, and work-state `images/` for report-ready figures; do not create
+  canonical code-worktree `condensed_report.md`, `report.md`, `report_pageN.md`,
+  `TODO.md`, or report `images/` files.
 - Use local GPUs when they are available and assigned. If an External Job Backend is active, use the backend instructions before dispatching remote jobs.
 
 Return a concise summary with:

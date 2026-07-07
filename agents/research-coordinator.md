@@ -107,10 +107,13 @@ Do this every session or after context compaction:
 4. If the active work branch experiment log is available, read its `SUMMARY.md`
    first with `experiment-log summary --project-dir . --work-branch
    "$AR_WORK_BRANCH"`; open individual experiment YAML files only when needed.
-5. Read work-branch `report.md`, `TODO.md`, and report figures from the
-   work-state worktree when needed for narrative analysis, derivations, detailed
-   results, open questions, and deferred work. These records live on the work
-   state branch, not in the code worktree.
+5. Read work-branch `condensed_report.md`, `report.md`, `TODO.md`, and report figures
+   from the work-state worktree when needed for narrative analysis,
+   derivations, detailed results, open questions, and deferred work. Read older
+   `report_pageN.md` files only when needed; `report_page1.md` is the oldest
+   archived report page, higher page numbers are newer, and `report.md` is
+   always the newest/current page. These records live on the work state branch,
+   not in the code worktree.
 6. Run `git log --oneline -20` and `git status`.
 7. Check local GPUs: run `nvidia-smi`; if no usable NVIDIA GPU is visible, run
    `rocm-smi`.
@@ -123,17 +126,20 @@ Do this every session or after context compaction:
 ### Experiment Loop
 
 1. **Explore** the codebase before any experiment. Document durable
-   understanding in work-branch `report.md` when it will matter later.
-2. **Plan** experiments in injected work-branch Agentic Notes, work-branch `report.md`,
-   or work-branch `TODO.md` before implementing. Start with cheap ideas.
+   understanding in the current work-branch report page when it will matter
+   later.
+2. **Plan** experiments in injected work-branch Agentic Notes, the current
+   work-branch report page, or work-branch `TODO.md` before implementing.
+   Start with cheap ideas.
 3. **Implement** minimal, focused changes. Keep diffs small.
 4. **Evaluate** using the three-tier strategy from the shared commitments.
 5. **Analyze** honestly. Write a hypothesis for why it worked or did not.
-6. **Update work-branch records**: keep analysis, follow-ups, and report figures
-   in work-branch `report.md`, `TODO.md`, and `images/` by editing those normal
-   files in the work-state worktree, then committing and pushing only those
-   work-state files. Prepare experiment-log request content when the result is
-   meaningful.
+6. **Update work-branch records**: keep the short rolling synthesis in
+   work-branch `condensed_report.md`, detailed analysis in paginated work-branch
+   `report.md` / `report_pageN.md`, follow-ups in `TODO.md`, and report figures
+   in `images/` by editing those normal files in the work-state worktree, then
+   committing and pushing only those work-state files. Prepare experiment-log
+   request content when the result is meaningful.
 7. **Capture reusable lessons**: if debugging, failed runs, corrected
    assumptions, missing setup, or user corrections revealed guidance that would
    help future agents, launch `note-updater` before reporting completion. This
@@ -201,12 +207,28 @@ experiment fields. Experiment IDs are local to the work-branch log; use
 `::`-qualified references like
 `$AR_WORK_BRANCH::E0001_short-description` when referring across work-branch logs.
 
-Work-branch `report.md` is the mutable work-branch-local narrative research record. It is
-for derivations, methods, detailed analysis, figures, verification blocks, and
-selected result tables. Work-branch `TODO.md` is the mutable work-branch-local checklist.
-Both live at the root of branch `agentic/work-state/$AR_WORK_BRANCH`.
-Use Markdown for work-branch `report.md`, with embedded LaTeX math when needed.
-Do NOT compile it as a paper.
+Work-branch `condensed_report.md` is a short rolling condensed report of the
+branch's current findings. Keep it to about one page by rewriting it, not by
+appending a long chronology. It should summarize the current best result,
+important negative results, open risks, and next direction.
+
+Work-branch `report.md` and `report_pageN.md` files are the mutable
+work-branch-local narrative research record. They are for derivations, methods,
+detailed analysis, figures, verification blocks, and selected result tables.
+`report.md` is always the newest/current page. Older report pages are named
+`report_page1.md`, `report_page2.md`, etc.; `report_page1.md` is the oldest
+page and higher page numbers are newer. Do not split existing report pages by
+heading or section count. Before adding new narrative report content, run
+`research-coordinator-report-rollover --work-state-dir "$WORK_STATE_DIR"`.
+If the current `report.md` already exceeds 300 lines, this archives it whole to
+the next `report_pageN.md` file and starts a fresh `report.md` with the same
+top-level title. Then write the new content only to the fresh/current
+`report.md`.
+
+Work-branch `TODO.md` is the mutable work-branch-local checklist. These files
+live at the root of branch `agentic/work-state/$AR_WORK_BRANCH`. Use Markdown
+with embedded LaTeX math when needed. Do NOT compile work-branch report pages
+as a paper.
 
 Locate the work-state worktree with:
 
@@ -217,6 +239,7 @@ WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"
 Read work-branch records directly from that worktree:
 
 ```bash
+test -f "$WORK_STATE_DIR/condensed_report.md" && sed -n '1,180p' "$WORK_STATE_DIR/condensed_report.md"
 test -f "$WORK_STATE_DIR/report.md" && sed -n '1,220p' "$WORK_STATE_DIR/report.md"
 test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
 ```
@@ -226,11 +249,15 @@ commit and push that worktree. Do not place these files in the code worktree.
 
 ```bash
 git -C "$WORK_STATE_DIR" pull --ff-only
-# Edit "$WORK_STATE_DIR/report.md", "$WORK_STATE_DIR/TODO.md", and report
-# figures under "$WORK_STATE_DIR/images/".
+research-coordinator-report-rollover --work-state-dir "$WORK_STATE_DIR"
+# Edit "$WORK_STATE_DIR/condensed_report.md", "$WORK_STATE_DIR/report.md",
+# "$WORK_STATE_DIR/TODO.md", and report figures under "$WORK_STATE_DIR/images/".
 mkdir -p "$WORK_STATE_DIR/images"
 git -C "$WORK_STATE_DIR" status --short
-git -C "$WORK_STATE_DIR" add report.md TODO.md images/
+git -C "$WORK_STATE_DIR" add condensed_report.md report.md TODO.md images/
+for page in "$WORK_STATE_DIR"/report_page*.md; do
+  [[ -e "$page" ]] && git -C "$WORK_STATE_DIR" add "$(basename "$page")"
+done
 git -C "$WORK_STATE_DIR" commit -m "work-state: update $AR_WORK_BRANCH research records"
 git -C "$WORK_STATE_DIR" push
 ```
@@ -241,7 +268,8 @@ For experiments that include code changes, prefer the commit handoff path:
 
 1. Create the snapshot yourself with `branch-snapshot` and YAML on stdin.
    Include explicit paths, commit message, and focused checks. Never include
-   work-branch Agentic Notes, work-branch `report.md`, work-branch `TODO.md`,
+   work-branch Agentic Notes, work-branch `condensed_report.md`, work-branch
+   `report.md`, work-branch `report_pageN.md`, work-branch `TODO.md`,
    work-state `images/`, `.`, or glob paths.
 2. If the completed change set is a meaningful experiment result that belongs in
    the active work branch experiment log, read the rendered `experiment-logger`
@@ -291,12 +319,19 @@ For meaningful completed experiments that have no code commit, launch
 
 ### Report Sections
 
-For experiments that need narrative analysis in work-branch `report.md`, use
+For experiments that need narrative analysis in work-branch report pages, use
 Markdown headings, compact Markdown tables, and Markdown image links. Use
 embedded LaTeX for formulas, derivations, and theorem-like statements only
 where Markdown is not expressive enough. Do not use LaTeX `tabular`,
-`\includegraphics`, or PDF-only image references in `report.md`; VS Code and
-most Markdown previews will not render them as tables or images.
+`\includegraphics`, or PDF-only image references in report pages; VS Code and
+most Markdown previews will not render them as tables or images. Before each
+work-state commit, update `condensed_report.md` and enforce report pagination:
+`report_page1.md` is the oldest page, page numbers increase forward in time,
+and `report.md` is the newest page. Enforce pagination with
+`research-coordinator-report-rollover --work-state-dir "$WORK_STATE_DIR"` before
+adding new report content; it rolls over only when the current `report.md`
+already exceeds 300 lines, and it moves the page whole instead of splitting
+sections.
 
 - **Goal**: what problem are we solving
 - **Hypothesis**: why should this work
@@ -344,10 +379,10 @@ For any change involving math, algorithms, or formal reasoning:
 
 1. **Create a verification script**: `scripts/verify_<topic>.py`
 2. **Run it** and record: command, pass/fail, key numeric results
-3. **If incomplete**: label claim as "unverified", add TODO, note in work-branch
-   `report.md`
+3. **If incomplete**: label claim as "unverified", add TODO, note it in the
+   relevant work-branch report page.
 
-Include in work-branch `report.md`:
+Include in the relevant work-branch report page:
 
 ```markdown
 ### Verification: [short label]
@@ -391,15 +426,18 @@ Include in work-branch `report.md`:
 |----------|---------|
 | Agentic experiment log | Work-branch-local experiment ledger and summary table on the work state branch |
 | Work-branch Agentic Notes | Short active guidance rendered into startup instructions |
-| Work-branch `report.md` | Work-branch-local derivations, methods, detailed analysis, verification, selected result tables |
+| Work-branch `condensed_report.md` | Short rolling condensed report of current findings; keep to about one page |
+| Work-branch `report_pageN.md` | Older work-branch report pages; `report_page1.md` is oldest |
+| Work-branch `report.md` | Newest/current work-branch report page for derivations, methods, detailed analysis, verification, selected result tables |
 | Work-branch `TODO.md` | Work-branch-local checklist for open questions, unverified claims, deferred work |
 | `REVISION.md` | Agent improvement notes from `/retro`, append-only |
 | `scripts/verify_*.py` | Verification scripts |
 | `scripts/plot_*.py` | Plotting scripts, one per figure; save report-ready outputs under `$WORK_STATE_DIR/images/` |
-| Work-state `images/` | Generated report figures; include PNG previews referenced from work-state `report.md` |
+| Work-state `images/` | Generated report figures; include PNG previews referenced from work-state report pages |
 
-Keep workspace root clean. Do not create canonical `report.md`, `TODO.md`, or
-report `images/` in the code worktree for work state.
+Keep workspace root clean. Do not create canonical `condensed_report.md`, `report.md`,
+`report_pageN.md`, `TODO.md`, or report `images/` in the code worktree for work
+state.
 
 ## 7. Troubleshooting
 

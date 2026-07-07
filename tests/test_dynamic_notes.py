@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTIC_NOTES_INTERNAL = REPO_ROOT / "capabilities" / "agentic-notes" / "lib" / "agentic-notes-internal"
 AGENTIC_NOTES = REPO_ROOT / "capabilities" / "agentic-notes" / "bin" / "agentic-notes"
 EXPERIMENT_LOG = REPO_ROOT / "capabilities" / "experiment-log" / "bin" / "experiment-log"
+REPORT_ROLLOVER = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-report-rollover"
 AGENTIC_TEAM = REPO_ROOT / "agentic-team"
 AGENTIC_WORKSPACE = REPO_ROOT / "scripts" / "bin" / "agentic-workspace"
 
@@ -62,6 +63,25 @@ def run(
 
 def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return run(["git", *args], cwd=repo, check=check)
+
+
+def test_research_report_rollover_archives_whole_overlong_current_page(tmp_path: Path) -> None:
+    state = tmp_path / "work-state"
+    state.mkdir()
+    (state / "report_page1.md").write_text("# Research Log\n\nOlder page.\n", encoding="utf-8")
+    report_text = "# Research Log: demo\n\n" + "\n".join(f"line {i}" for i in range(301)) + "\n"
+    (state / "report.md").write_text(report_text, encoding="utf-8")
+
+    result = run([str(REPORT_ROLLOVER), "--work-state-dir", str(state), "--max-lines", "300"])
+
+    assert result.returncode == 0
+    assert "archived 303-line report.md to report_page2.md" in result.stdout
+    assert (state / "report_page2.md").read_text(encoding="utf-8") == report_text
+    assert (state / "report.md").read_text(encoding="utf-8") == "# Research Log: demo\n\n"
+
+    second = run([str(REPORT_ROLLOVER), "--work-state-dir", str(state), "--max-lines", "300"])
+    assert "no rollover needed" in second.stdout
+    assert not (state / "report_page3.md").exists()
 
 
 def configure_git(repo: Path) -> None:
@@ -685,7 +705,7 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     post_compact_payload = json.loads(post_compact_result.stdout)
     assert "just experienced context compaction" in post_compact_payload["systemMessage"]
     assert "hookSpecificOutput" not in post_compact_payload
-    assert (hook.parent / ".agentic-team-compaction.pending").exists()
+    assert not (hook.parent / ".agentic-team-compaction.pending").exists()
 
     inject_result = run(
         [
@@ -702,9 +722,7 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
         input='{"hook_event_name":"UserPromptSubmit"}',
     )
     inject_payload = json.loads(inject_result.stdout)
-    assert inject_payload["suppressOutput"] is True
-    assert inject_payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
-    assert "just experienced context compaction" in inject_payload["hookSpecificOutput"]["additionalContext"]
+    assert inject_payload == {}
     assert not (hook.parent / ".agentic-team-compaction.pending").exists()
 
 
@@ -882,6 +900,7 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     env = base_env(tmp_path)
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     plan = tmp_path / "plan.md"
+    condensed_report = tmp_path / "condensed_report.md"
     report = tmp_path / "report.md"
     todo = tmp_path / "TODO.md"
     figure = tmp_path / "baseline.png"
@@ -894,6 +913,10 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     )
     report.write_text(
         "# Research Log\n\nBaseline pending.\n",
+        encoding="utf-8",
+    )
+    condensed_report.write_text(
+        "# Condensed Report\n\nBaseline pending.\n",
         encoding="utf-8",
     )
     todo.write_text("- [ ] Run baseline benchmark\n", encoding="utf-8")
@@ -922,19 +945,22 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
         env=env,
     )
     work_state = work_state_dir(env)
+    (work_state / "condensed_report.md").write_text(condensed_report.read_text(encoding="utf-8"), encoding="utf-8")
     (work_state / "report.md").write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
     (work_state / "TODO.md").write_text(todo.read_text(encoding="utf-8"), encoding="utf-8")
     (work_state / "images").mkdir()
     (work_state / "images" / "baseline.png").write_bytes(figure.read_bytes())
-    git(work_state, "add", "report.md", "TODO.md", "images/")
+    git(work_state, "add", "condensed_report.md", "report.md", "TODO.md", "images/")
     git(work_state, "commit", "-m", "work-state: update research records")
     git(work_state, "push")
 
     stored_plan = work_state / "agent-notes" / "research-coordinator" / "always-injected.md"
     assert stored_plan.read_text(encoding="utf-8") == plan.read_text(encoding="utf-8")
+    assert (work_state / "condensed_report.md").read_text(encoding="utf-8") == condensed_report.read_text(encoding="utf-8")
     assert (work_state / "report.md").read_text(encoding="utf-8") == report.read_text(encoding="utf-8")
     assert (work_state / "TODO.md").read_text(encoding="utf-8") == todo.read_text(encoding="utf-8")
     assert (work_state / "images" / "baseline.png").read_bytes() == figure.read_bytes()
+    assert not (project / "condensed_report.md").exists()
     assert not (project / "report.md").exists()
     assert not (project / "TODO.md").exists()
     assert not (project / "images" / "baseline.png").exists()
@@ -944,7 +970,10 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     assert "agentic/work-state/kernel-search" in instruction_text
     assert 'WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"' in instruction_text
     assert 'mkdir -p "$WORK_STATE_DIR/images"' in instruction_text
-    assert 'git -C "$WORK_STATE_DIR" add report.md TODO.md images/' in instruction_text
+    assert 'git -C "$WORK_STATE_DIR" add condensed_report.md report.md TODO.md images/' in instruction_text
+    assert "report_page1.md` is the oldest" in instruction_text
+    assert "research-coordinator-report-rollover" in instruction_text
+    assert "300 lines" in instruction_text
     assert "$WORK_STATE_DIR/images/" in instruction_text
     assert (
         "do not skip report-ready PNG/PDF figures merely because they are binary files"
@@ -1018,7 +1047,23 @@ def test_named_work_creates_at_layout_and_references_research_context(tmp_path: 
     )
     parent_state = work_state_dir(env)
     assert_linked_worktree(parent_state)
+    parent_all_notes = parent_state / "agent-notes" / "all-agents"
+    parent_research_notes = parent_state / "agent-notes" / "research-coordinator"
+    parent_all_notes.mkdir(parents=True, exist_ok=True)
+    parent_research_notes.mkdir(parents=True, exist_ok=True)
+    (parent_all_notes / "routing-constraints.md").write_text(
+        "# Routing Constraints\n\nTopic hints: routing, constraints\n\nUse the parent routing constraint.\n",
+        encoding="utf-8",
+    )
+    (parent_research_notes / "experiment-scaling.md").write_text(
+        "# Experiment Scaling\n\nTopic hints: scaling, experiments\n\nUse the parent scaling note.\n",
+        encoding="utf-8",
+    )
+    (parent_state / "condensed_report.md").write_text("# Condensed Report\n\nBest parent finding.\n", encoding="utf-8")
+    (parent_state / "report_page1.md").write_text("# Parent Page 1\n\nOld result.\n", encoding="utf-8")
+    (parent_state / "report_old.md").write_text("# Legacy Parent Report\n\nOlder legacy result.\n", encoding="utf-8")
     (parent_state / "report.md").write_text("# Parent Report\n\nUseful result.\n", encoding="utf-8")
+    (parent_state / "TODO_old.md").write_text("- [x] Legacy parent todo\n", encoding="utf-8")
     (parent_state / "TODO.md").write_text("- [ ] Parent todo\n", encoding="utf-8")
     (parent_state / "images").mkdir(exist_ok=True)
     (parent_state / "images" / "parent.png").write_bytes(b"png")
@@ -1038,7 +1083,20 @@ def test_named_work_creates_at_layout_and_references_research_context(tmp_path: 
             ],
         },
     )
-    git(parent_state, "add", "report.md", "TODO.md", "images/", "context/manifest.yaml")
+    git(
+        parent_state,
+        "add",
+        "condensed_report.md",
+        "report_page1.md",
+        "report_old.md",
+        "report.md",
+        "TODO_old.md",
+        "TODO.md",
+        "images/",
+        "context/manifest.yaml",
+        "agent-notes/all-agents/routing-constraints.md",
+        "agent-notes/research-coordinator/experiment-scaling.md",
+    )
     git(parent_state, "commit", "-m", "work-state: add parent research records")
     git(parent_state, "push")
 
@@ -1074,19 +1132,47 @@ def test_named_work_creates_at_layout_and_references_research_context(tmp_path: 
     assert_linked_worktree(root / "project-state")
     assert_linked_worktree(state_dir)
     assert git(code_dir, "branch", "--show-current").stdout.strip() == "agent/alice/kdtree-bounds"
+    assert (
+        state_dir / "agent-notes" / "research-coordinator" / "always-injected.md"
+    ).read_text(encoding="utf-8") == plan.read_text(encoding="utf-8")
+    assert "parent routing constraint" in (
+        state_dir / "agent-notes" / "all-agents" / "routing-constraints.md"
+    ).read_text(encoding="utf-8")
+    assert "parent scaling note" in (
+        state_dir / "agent-notes" / "research-coordinator" / "experiment-scaling.md"
+    ).read_text(encoding="utf-8")
     report_text = (state_dir / "report.md").read_text(encoding="utf-8")
     assert report_text.startswith("# Research Log: kdtree-bounds")
     assert "Created from `kernel-search` into `agent/alice/kdtree-bounds`" in report_text
+    condensed_text = (state_dir / "condensed_report.md").read_text(encoding="utf-8")
+    assert condensed_text.startswith("# Condensed Report: kdtree-bounds")
+    assert "Keep this condensed report to about one page" in condensed_text
+    assert (state_dir / "context" / "parent" / "condensed_report.md").read_text(encoding="utf-8").startswith("# Condensed Report")
     assert (state_dir / "context" / "parent" / "report.md").read_text(encoding="utf-8").startswith("# Parent Report")
     assert (state_dir / "context" / "parent" / "TODO.md").exists()
+    assert not (state_dir / "context" / "parent" / "report_page1.md").exists()
+    assert not (state_dir / "context" / "parent" / "report_old.md").exists()
+    assert not (state_dir / "context" / "parent" / "TODO_old.md").exists()
     assert not (state_dir / "context" / "parent" / "images" / "parent.png").exists()
     manifest = yaml.safe_load((state_dir / "context" / "manifest.yaml").read_text(encoding="utf-8"))
     assert manifest["created_from"]["work_branch"] == "kernel-search"
     assert [entry["work_branch"] for entry in manifest["references"]] == ["agent/ancestor", "kernel-search"]
     assert manifest["references"][0]["files"] == ["report.md", "images/ancestor.png"]
     assert manifest["references"][1]["state_branch"] == "agentic/work-state/kernel-search"
-    assert manifest["references"][1]["files"] == ["report.md", "TODO.md", "images/parent.png"]
+    assert manifest["references"][1]["files"] == [
+        "condensed_report.md",
+        "report_page1.md",
+        "report_old.md",
+        "report.md",
+        "TODO_old.md",
+        "TODO.md",
+        "images/parent.png",
+    ]
     readme_text = (state_dir / "context" / "README.md").read_text(encoding="utf-8")
+    assert "condensed_report.md" in readme_text
+    assert "report_page1.md" in readme_text
+    assert "report_old.md" in readme_text
+    assert "TODO_old.md" in readme_text
     assert "images/parent.png" in readme_text
     assert (root / "project-state").exists()
     assert (

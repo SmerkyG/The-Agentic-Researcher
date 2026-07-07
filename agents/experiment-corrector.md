@@ -38,7 +38,9 @@ YAML
 ## Rules
 
 - Record only explicit corrections to existing experiments.
-- Do not run experiments, change code, edit work-branch `report.md`, update work-branch `TODO.md`, or modify work-state report figures.
+- Do not run experiments, change code, edit work-branch `condensed_report.md`, edit
+  work-branch report pages, update work-branch `TODO.md`, or modify work-state
+  report figures.
 - Do not edit the work state worktree manually. Use the helper so local locks, pull, commit, push, and retry behavior stay consistent.
 - Use the inherited `AR_WORK_BRANCH` unless the parent explicitly gives a different work branch. Experiment IDs are work-branch-local (`E0001_short-description`); use `::`-qualified references (`work_branch::E0001_short-description`) when referring across work-branch logs.
 - Use `experiment-log correct` with YAML on stdin.

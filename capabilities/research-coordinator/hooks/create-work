@@ -9,6 +9,9 @@ new_branch="${AT_CREATE_NEW_BRANCH:?AT_CREATE_NEW_BRANCH is required}"
 
 mkdir -p "$new_state/context/parent" "$new_state/images"
 
+if [[ -f "$parent_state/condensed_report.md" && ! -e "$new_state/context/parent/condensed_report.md" ]]; then
+    cp "$parent_state/condensed_report.md" "$new_state/context/parent/condensed_report.md"
+fi
 if [[ -f "$parent_state/report.md" && ! -e "$new_state/context/parent/report.md" ]]; then
     cp "$parent_state/report.md" "$new_state/context/parent/report.md"
 fi
@@ -52,14 +55,38 @@ def source_work_name(branch: str) -> str:
 def selected_files(repo: Path) -> list[str]:
     if not git(["rev-parse", "--verify", "HEAD"], repo):
         return []
-    output = git(["ls-tree", "-r", "--name-only", "HEAD", "--", "report.md", "TODO.md", "images"], repo)
-    names = [line for line in output.splitlines() if line]
+    output = git(["ls-tree", "-r", "--name-only", "HEAD"], repo)
+    tracked = [line for line in output.splitlines() if line]
+    names = [
+        name
+        for name in tracked
+        if name in {"condensed_report.md", "report.md", "report_old.md", "TODO.md", "TODO_old.md"}
+        or (name.startswith("report_page") and name.endswith(".md"))
+        or name.startswith("images/")
+    ]
     preferred: list[str] = []
-    for name in ("report.md", "TODO.md"):
+    for name in ("condensed_report.md",):
+        if name in names:
+            preferred.append(name)
+    report_pages = sorted(
+        (name for name in names if name.startswith("report_page") and name.endswith(".md")),
+        key=report_page_sort_key,
+    )
+    preferred.extend(report_pages)
+    for name in ("report_old.md", "report.md", "TODO_old.md", "TODO.md"):
         if name in names:
             preferred.append(name)
     preferred.extend(name for name in names if name not in preferred)
     return preferred
+
+
+def report_page_sort_key(name: str) -> tuple[int, str]:
+    stem = Path(name).stem
+    suffix = stem.removeprefix("report_page")
+    try:
+        return (int(suffix), name)
+    except ValueError:
+        return (10**9, name)
 
 
 def read_parent_manifest(path: Path) -> list[dict[str, object]]:
@@ -160,10 +187,11 @@ readme_lines = [
     "",
     "The immediate parent's lightweight records are copied locally when present:",
     "",
+    "- `context/parent/condensed_report.md`",
     "- `context/parent/report.md`",
     "- `context/parent/TODO.md`",
     "",
-    "All inherited report/TODO/image references are flattened in `context/manifest.yaml`.",
+    "All inherited condensed-report/report-page/legacy-report/TODO/image references are flattened in `context/manifest.yaml`.",
     "Read a referenced file with:",
     "",
     "```bash",
@@ -183,17 +211,34 @@ if manifest["references"]:
 
 (context_dir / "README.md").write_text("\n".join(readme_lines) + "\n", encoding="utf-8")
 
+condensed_report = new_state / "condensed_report.md"
+if not condensed_report.exists():
+    condensed_report.write_text(
+        f"# Condensed Report: {work_name}\n\n"
+        f"Created from `{parent_branch}` into `{new_branch}`.\n\n"
+        "Keep this condensed report to about one page. Rewrite it as the work evolves so it "
+        "summarizes the current best findings, important negative results, "
+        "open risks, and next direction without accumulating a long chronology.\n",
+        encoding="utf-8",
+    )
+
 report = new_state / "report.md"
 if not report.exists():
     report.write_text(
         f"# Research Log: {work_name}\n\n"
         f"Created from `{parent_branch}` into `{new_branch}`.\n\n"
         "## Inherited Context\n\n"
-        "Read `context/README.md` first. The immediate parent's `report.md` and "
-        "`TODO.md` are copied under `context/parent/` when present; larger "
-        "artifacts such as images are referenced by commit in `context/manifest.yaml`.\n\n"
+        "Read `context/README.md` first. The immediate parent's `condensed_report.md`, "
+        "`report.md`, and `TODO.md` are copied under `context/parent/` when "
+        "present; larger artifacts such as older report pages and images are "
+        "referenced by commit in `context/manifest.yaml`.\n\n"
         f"Use this report for new analysis, derivations, figures, verification notes, "
-        f"and selected result tables for `{new_branch}`.\n",
+        f"and selected result tables for `{new_branch}`. Before adding new "
+        f"narrative report content, run "
+        f"`research-coordinator-report-rollover --work-state-dir \"$WORK_STATE_DIR\"`. "
+        f"If `report.md` already exceeds 300 lines, the helper archives it whole "
+        f"to the next `report_pageN.md` file, with `report_page1.md` as the "
+        f"oldest page and higher numbers newer.\n",
         encoding="utf-8",
     )
 

@@ -67,6 +67,11 @@ The merged topic list is intentionally compact and does not show which scope
 introduced a topic. If multiple scopes provide `Topic hints:` for the same note
 topic, the most-specific available hint is shown.
 
+When a new AT work entry is forked from an existing AT work entry, Agentic Team
+copies the source work branch's `agent-notes/` files into the new work-state
+branch. Existing non-empty notes in the new work-state branch are not
+overwritten.
+
 The generated instruction file is a materialized view. Do not edit injected note text there directly.
 
 ## Reading Notes

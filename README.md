@@ -78,7 +78,10 @@ The installer adds the `agentic-team` launcher. The setup wizard creates local c
 2. **Create or choose the AT workspace when prompted.** Launching from the normal checkout always enters the AT setup flow because AT needs a separate workspace for code worktrees, state worktrees, artifacts, and runtime files. Accept the default sibling directory `../my-project-at` unless you want a different AT workspace root.
 3. **Create a new AT work entry when prompted.** Enter a stable work name such as `research-main`. Agentic Team creates `<work-name>/code` and `<work-name>/state` under the AT workspace, backed by the corresponding code branch and work-state branch.
 4. **Ask the launched agent to initialize the research workflow.** Your selected LLM CLI is now running in the AT worktree. For a new research effort, invoke the `do_research` skill. In Codex, type `$do_research` or select it from `/skills`. This starts the setup dialogue about the research goal, evaluation metrics, constraints, and compute budget.
-5. Research workflows create an ongoing `report.md` report and `TODO.md` checklist for you to examine as the agent progresses, as well as an experiment log all under `~/my-project/<work-name>/state/`.
+5. Research workflows create a short rolling `condensed_report.md`, a paginated report
+   (`report_page1.md` is oldest; `report.md` is newest/current and rolls over
+   whole after it passes 300 lines), a `TODO.md` checklist, report figures, and
+   an experiment log under the AT workspace's `<work-name>/state/` directory.
 
 ### Resuming a Session
 
@@ -197,7 +200,7 @@ my-project-at/
 
 The local `project-state/`, `<work-name>/code/`, and `<work-name>/state/` directories are linked Git worktrees of the project repo. The state worktrees use orphan state branches rather than normal code branches. They are intentionally visible so reports, TODOs, figures, notes, and experiment logs are easy to find. The hidden `.runtime/` directory is launcher-managed project machinery.
 
-Bulky reusable experiment outputs go under the AT workspace's `artifacts/project/` directory by default and are exposed to agents as `$AR_ARTIFACTS_DIR`. Use unique run or experiment subdirectories there for new writes. Work-state report figures are different: keep report-ready PNG/PDF files under `<work-name>/state/images/` so `report.md` links remain self-contained and Git-backed.
+Bulky reusable experiment outputs go under the AT workspace's `artifacts/project/` directory by default and are exposed to agents as `$AR_ARTIFACTS_DIR`. Use unique run or experiment subdirectories there for new writes. Work-state report figures are different: keep report-ready PNG/PDF files under `<work-name>/state/images/` so report-page links remain self-contained and Git-backed.
 
 ### Project Git and Agentic State
 
@@ -300,7 +303,7 @@ See [docs/agentic-notes.md](docs/agentic-notes.md) for the notes layout and [doc
 | [Codex CLI](https://github.com/openai/codex) | `AGENTS.md` | OpenAI | `--cli codex` |
 | [pi](https://github.com/badlogic/pi-mono) | `AGENTS.md` | Any | `--cli pi` |
 
-At launch, Agentic Team also renders a project-local compaction hook for the selected CLI. After context compaction, the hook runs the configured capabilities, refreshes shared Agentic State under local locks, rematerializes the capability sections in the instruction file rendered for that exact invocation (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`), tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary, asks it to read the refreshed instruction file, and then resumes the task it was already doing. In container mode the Agentic Team install is mounted read-only at `/opt/agentic-team`, while `AR_STATE_ROOT`, `AR_WORKSPACE_ROOT`, `AR_RUNTIME_ROOT`, and `AR_ARTIFACTS_DIR` are mounted read-write so the org checkout, project state branches, project runtime helpers, and shared project artifacts can be updated. Claude uses compact-session hooks, Codex uses `PostCompact` plus a one-shot `UserPromptSubmit` context injection, Gemini uses `PreCompress` plus a one-shot `BeforeModel` refresh, OpenCode uses a compaction plugin, and pi uses a launch-specific extension.
+At launch, Agentic Team also renders a project-local compaction hook for the selected CLI. After context compaction, the hook runs the configured capabilities, refreshes shared Agentic State under local locks, rematerializes the capability sections in the instruction file rendered for that exact invocation (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`), tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary, asks it to read the refreshed instruction file, and then resumes the task it was already doing. In container mode the Agentic Team install is mounted read-only at `/opt/agentic-team`, while `AR_STATE_ROOT`, `AR_WORKSPACE_ROOT`, `AR_RUNTIME_ROOT`, and `AR_ARTIFACTS_DIR` are mounted read-write so the org checkout, project state branches, project runtime helpers, and shared project artifacts can be updated. Claude uses compact-session hooks, Codex uses `PostCompact`, Gemini uses `PreCompress` plus a one-shot `BeforeModel` refresh, OpenCode uses a compaction plugin, and pi uses a launch-specific extension.
 
 ## Architecture
 

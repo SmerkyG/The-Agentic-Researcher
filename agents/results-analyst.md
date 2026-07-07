@@ -26,7 +26,13 @@ Returns: best valid result, regressions or invalid runs, evidence for the hypoth
 ## Responsibilities
 
 - Read the active work branch's Agentic Team experiment `SUMMARY.md` first when available, then open individual experiment YAML files only as needed.
-- Read work-branch `report.md`, work-branch `TODO.md`, report figures, logs, plots, and metric outputs relevant to the assigned experiments. Work-branch `report.md`, `TODO.md`, and report-ready `images/` live in work state, not as canonical code-worktree files.
+- Read work-branch `condensed_report.md` first for the compact current findings, then
+  the current `report.md`, older `report_pageN.md` files, work-branch
+  `TODO.md`, report figures, logs, plots, and metric outputs relevant to the
+  assigned experiments. `report_page1.md` is the oldest archived page, higher
+  page numbers are newer, and `report.md` is newest/current. Work-branch
+  `condensed_report.md`, report pages, `TODO.md`, and report-ready `images/` live in
+  work state, not as canonical code-worktree files.
 - Compare results against the primary metric and baseline in the project instruction file.
 - Separate real signal from debugging-only runs, scale artifacts, and failed or invalid evaluations.
 - Identify missing controls, suspicious measurements, and follow-up experiments.

@@ -271,7 +271,7 @@ render_agentic_state_instruction_part() {
     printf 'PROJECT_STATE_DIR="${AR_PROJECT_STATE_DIR:?}"\n'
     printf 'WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"\n'
     printf '```\n\n'
-    printf 'Capabilities own the files they place in those worktrees. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `report.md` and `TODO.md` at the work-state worktree root.\n'
+    printf 'Capabilities own the files they place in those worktrees. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `condensed_report.md`, paginated report files (`report_page1.md` oldest, `report.md` newest/current), `TODO.md`, and report-ready `images/` at the work-state worktree root.\n'
 }
 
 setup_instruction_target() {

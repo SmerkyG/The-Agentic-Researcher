@@ -143,10 +143,6 @@ def marker_path() -> Path:
     return Path(__file__).with_name(".agentic-team-compaction.pending")
 
 
-def mark_pending(message: str) -> None:
-    marker_path().write_text(json.dumps({"message": message}) + "\n", encoding="utf-8")
-
-
 def inject_pending() -> None:
     read_hook_input()
     marker = marker_path()
@@ -204,7 +200,6 @@ def main() -> None:
     event_name = hook_input.get("hook_event_name") or "SessionStart"
     message = refresh_message(instruction_path, capability_refresh_cli, project_dir, agent_type, cli)
     if mode == "post-compact":
-        mark_pending(message)
         print(json.dumps({
             "systemMessage": message,
         }))

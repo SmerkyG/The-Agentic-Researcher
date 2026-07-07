@@ -132,9 +132,11 @@ agent-notes/
     always-injected.md
   research-coordinator/
     always-injected.md
-report.md                      # research workflow, when created
-TODO.md                         # research workflow, when created
-images/                         # report-ready figures referenced by report.md
+condensed_report.md                     # research workflow condensed report, when created
+report_pageN.md                # archived report pages; page1 is oldest
+report.md                      # newest/current report page; rolls over whole after 300 lines
+TODO.md                        # research workflow checklist, when created
+images/                        # report-ready figures referenced by report pages
 experiment-log/                 # experiment-log capability, when used
 ```
 

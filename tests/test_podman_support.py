@@ -426,14 +426,12 @@ def test_launcher_native_runs_host_cli__without_container(
     assert "run_refresh" in codex_hook_text
     codex_hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
     post_compact_hook = codex_hooks["hooks"]["PostCompact"][0]
-    user_prompt_hook = codex_hooks["hooks"]["UserPromptSubmit"][0]
     post_compact_command = post_compact_hook["hooks"][0]["command"]
-    inject_command = user_prompt_hook["hooks"][0]["command"]
     assert post_compact_hook["matcher"] == "manual|auto"
+    assert codex_hooks["hooks"]["UserPromptSubmit"] == []
     assert not codex_hooks["hooks"]["SessionStart"]
     assert "agentic-team-compaction.py" in post_compact_command
     assert "post-compact" in post_compact_command
-    assert "inject-pending" in inject_command
     assert "capability-refresh" in post_compact_command
     assert str(workspace / "AGENTS.md") in post_compact_command
     assert str(workspace) in post_compact_command
@@ -668,11 +666,11 @@ def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
     assert result_again.returncode == 0
     hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
     assert hooks["hooks"]["Stop"][0]["hooks"][0]["command"] == "printf existing"
-    for event_name in ("PostCompact", "UserPromptSubmit"):
-        event_hooks = hooks["hooks"][event_name]
-        commands = [hook["command"] for group in event_hooks for hook in group["hooks"]]
-        managed_commands = [cmd for cmd in commands if "agentic-team-compaction.py" in cmd]
-        assert len(managed_commands) == 1
+    event_hooks = hooks["hooks"]["PostCompact"]
+    commands = [hook["command"] for group in event_hooks for hook in group["hooks"]]
+    managed_commands = [cmd for cmd in commands if "agentic-team-compaction.py" in cmd]
+    assert len(managed_commands) == 1
+    assert hooks["hooks"]["UserPromptSubmit"] == []
     assert not hooks["hooks"]["SessionStart"]
 
 

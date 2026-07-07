@@ -60,7 +60,7 @@ cli_codex_setup_compaction_hooks() {
     local script_path="$WORKSPACE_DIR/.codex/hooks/agentic-team-compaction.py"
     render_compaction_context_hook_script "$script_path" || return 0
 
-    local script_runtime instruction_runtime capability_refresh_runtime project_runtime agent_type_runtime cli_runtime python_runtime post_compact_command inject_command patch_json
+    local script_runtime instruction_runtime capability_refresh_runtime project_runtime agent_type_runtime cli_runtime python_runtime post_compact_command patch_json
     script_runtime="$(workspace_runtime_path ".codex/hooks/agentic-team-compaction.py")"
     instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
     capability_refresh_runtime="$(ar_core_bin_env_path)/capability-refresh"
@@ -69,7 +69,6 @@ cli_codex_setup_compaction_hooks() {
     cli_runtime="$AR_CLI"
     python_runtime="$(python_runtime_command_string)"
     post_compact_command="$python_runtime $(shell_quote "$script_runtime") post-compact $(shell_quote "$instruction_runtime") $(shell_quote "$capability_refresh_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$cli_runtime")"
-    inject_command="$python_runtime $(shell_quote "$script_runtime") inject-pending $(shell_quote "$instruction_runtime") $(shell_quote "$capability_refresh_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$cli_runtime")"
     patch_json=$(cat <<EOF
 {
   "hooks": {
@@ -86,18 +85,7 @@ cli_codex_setup_compaction_hooks() {
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": $(json_string "$inject_command"),
-            "timeout": 120,
-            "statusMessage": "Agentic Team post-compaction context"
-          }
-        ]
-      }
-    ],
+    "UserPromptSubmit": [],
     "SessionStart": []
   }
 }
