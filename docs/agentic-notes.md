@@ -74,6 +74,20 @@ overwritten.
 
 The generated instruction file is a materialized view. Do not edit injected note text there directly.
 
+## Background Refresh and Steering
+
+While an Agentic Team session is running, the `agentic-notes` refresh loop
+periodically pulls organization, project, and active-work-branch note state in
+the background. The loop compares rendered note-topic fingerprints for the
+active agent type. When a topic changes after the session baseline, it records a
+small runtime steering notice instead of injecting full note content.
+
+CLI-specific steering hooks drain that notice at the next supported model-entry
+boundary. For Codex this is a `PostToolUse` hook; for Gemini this is a
+`BeforeModel` hook. The notice lists changed topics and tells the agent to run
+`agentic-notes read-note` only when a listed topic is relevant to the next
+action. If no notes changed, the hook emits nothing.
+
 ## Reading Notes
 
 Agents should read rendered notes through `agentic-notes read-note`, not by opening raw note storage files:
@@ -92,7 +106,23 @@ that note since the last compaction.
 
 ## Updating Notes
 
-Working agents should update notes by launching the `note-updater` subagent and following its rendered contract. The trigger is broader than mistakes: missing setup requirements, corrected assumptions, undocumented tool or platform behavior, project conventions, and user corrections should become notes when the lesson would help a future agent. Agents should perform this check before final response. This is a required subagent handoff in generated instructions: the parent agent should try to spawn `note-updater`, retry once if spawning fails, and alert the user if it still cannot be spawned rather than silently calling `agentic-notes` directly. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence and omit timestamps, long command output, and rationale unless essential. The updater first runs the normal `agentic-notes update-note` path, then reviews the rendered note chain. If that made the chain worse through duplication, verbosity, or an obvious scope mismatch, it may perform one rare cleanup rewrite of exactly one source note with `agentic-notes rewrite-note`. It never force-pushes.
+Working agents update notes through subagents rather than editing note files
+directly. Research-coordinator result bookkeeping routes through
+`research-finalizer` after the report is updated; standalone lessons route
+through `note-updater` and its rendered contract. The trigger is broader than
+mistakes: missing setup requirements, corrected assumptions, undocumented tool
+or platform behavior, project conventions, and user corrections should become
+notes when the lesson would help a future agent. This is a required subagent
+handoff in generated instructions when a note is warranted: the parent agent
+should try to spawn the relevant subagent, retry once if spawning fails, and
+alert the user if it still cannot be spawned rather than silently calling
+`agentic-notes` directly. Notes should be terse reusable guidance, not incident
+reports: prefer one compact sentence and omit timestamps, long command output,
+and rationale unless essential. The updater first runs the normal
+`agentic-notes update-note` path, then reviews the rendered note chain. If that
+made the chain worse through duplication, verbosity, or an obvious scope
+mismatch, it may perform one rare cleanup rewrite of exactly one source note
+with `agentic-notes rewrite-note`. It never force-pushes.
 
 Agents choose the note scope when they create a note; Agentic Team does not
 automatically promote notes between scopes. Use the narrowest useful scope:

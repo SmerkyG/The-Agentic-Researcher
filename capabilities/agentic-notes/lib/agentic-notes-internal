@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+import hashlib
+import json
 import os
 import re
 import sys
 import textwrap
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -44,6 +47,7 @@ from agentic_state import (  # noqa: E402
     request_from_args,
     run,
     run_parallel_refresh,
+    runtime_root,
     slugify,
     state_branch,
     state_lock,
@@ -141,8 +145,8 @@ def ensure_project_state(
     branch = state_branch()
     if pull_remote and git_remote(repo):
         pull_ff(repo, branch, missing_ok=True)
-    ensure_project_state_files(repo)
-    changed = commit_if_changed(repo, "agentic: initialize project state")
+    changed_paths = ensure_project_state_files(repo)
+    changed = commit_if_changed(repo, "agentic: initialize project state", changed_paths)
     if push_changes and (changed or not remote_branch_exists(repo, branch)):
         push(repo, branch)
     return repo
@@ -160,8 +164,8 @@ def ensure_work_agent_notes_state(
     branch = work_state_branch(active_work_branch)
     if pull_remote and git_remote(repo):
         pull_ff(repo, branch, missing_ok=True)
-    ensure_work_agent_notes_state_files(repo, active_work_branch)
-    changed = commit_if_changed(repo, f"work-state: initialize {active_work_branch}")
+    changed_paths = ensure_work_agent_notes_state_files(repo, active_work_branch)
+    changed = commit_if_changed(repo, f"work-state: initialize {active_work_branch}", changed_paths)
     if push_changes and (changed or not remote_branch_exists(repo, branch)):
         push(repo, branch)
     return repo
@@ -190,6 +194,166 @@ def refresh(args: argparse.Namespace) -> None:
         ensure_work_agent_notes_state(project_dir, active_work_branch, pull_remote=False, push_changes=False)
 
 
+def steering_dir(project_dir: Path) -> Path:
+    return runtime_root(project_dir) / "agentic-notes" / "steering"
+
+
+def steering_snapshot_path(project_dir: Path, agent_type_value: str) -> Path:
+    return steering_dir(project_dir) / f"{slugify(agent_type_value, default='agent')}.snapshot.json"
+
+
+def steering_pending_path(project_dir: Path, agent_type_value: str) -> Path:
+    return steering_dir(project_dir) / f"{slugify(agent_type_value, default='agent')}.pending.json"
+
+
+def note_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def note_scope_directories(project_dir: Path, agent_type_value: str) -> list[tuple[str, Path]]:
+    project_repo = project_state_path(project_dir)
+    work_branch_value = os.environ.get("AR_WORK_BRANCH")
+    work_state_repo = (
+        ensure_work_agent_notes_state(project_dir, work_branch_value, pull_remote=False, push_changes=False)
+        if work_branch_value
+        else None
+    )
+    org_repo = org_checkout_path()
+    directories: list[tuple[str, Path]] = [
+        ("organization/all-agents", agent_notes_dir(org_repo, "org", ALL_AGENTS_TYPE)),
+    ]
+    if agent_type_value != ALL_AGENTS_TYPE:
+        directories.append(
+            (f"organization/{agent_type_value}", agent_notes_dir(org_repo, "org", agent_type_value))
+        )
+    directories.append(("project/all-agents", agent_notes_dir(project_repo, "project", ALL_AGENTS_TYPE)))
+    if agent_type_value != ALL_AGENTS_TYPE:
+        directories.append((f"project/{agent_type_value}", agent_notes_dir(project_repo, "project", agent_type_value)))
+    if work_state_repo is not None:
+        branch_label = f"work:{work_branch(work_branch_value)}"
+        directories.append((f"{branch_label}/all-agents", agent_notes_dir(work_state_repo, "work", ALL_AGENTS_TYPE)))
+        if agent_type_value != ALL_AGENTS_TYPE:
+            directories.append((f"{branch_label}/{agent_type_value}", agent_notes_dir(work_state_repo, "work", agent_type_value)))
+    return directories
+
+
+def note_fingerprint_snapshot(project_dir: Path, agent_type_value: str) -> dict[str, Any]:
+    topics: dict[str, dict[str, Any]] = {}
+    for source, directory in note_scope_directories(project_dir, agent_type_value):
+        if not directory.exists():
+            continue
+        for path in sorted(directory.glob("*.md")):
+            if not note_file_has_body(path):
+                continue
+            topic = normalize_note_name(path.stem)
+            entry = topics.setdefault(topic, {"summary": "", "sources": [], "digests": {}})
+            entry["sources"].append(source)
+            entry["digests"][source] = note_digest(path)
+            if path.name == ALWAYS_INJECTED_NOTE:
+                entry["summary"] = entry["summary"] or "always-injected guidance changed"
+            else:
+                summary = note_topic_summary(path)
+                if summary:
+                    entry["summary"] = summary
+    return {"version": 1, "topics": topics}
+
+
+def load_json_mapping(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_json_mapping(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+    temp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temp.replace(path)
+
+
+def merge_pending_steering(project_dir: Path, agent_type_value: str, topics: dict[str, dict[str, Any]]) -> None:
+    if not topics:
+        return
+    path = steering_pending_path(project_dir, agent_type_value)
+    pending = load_json_mapping(path)
+    existing = pending.get("topics") if isinstance(pending.get("topics"), dict) else {}
+    merged: dict[str, Any] = dict(existing)
+    for topic, entry in topics.items():
+        merged[topic] = {
+            "summary": str(entry.get("summary") or ""),
+            "sources": sorted(str(source) for source in entry.get("sources", [])),
+        }
+    write_json_mapping(
+        path,
+        {
+            "version": 1,
+            "agent_type": agent_type_value,
+            "updated_at": time.time(),
+            "topics": merged,
+        },
+    )
+
+
+def record_note_steering_deltas(project_dir: Path, agent_type_value: str) -> None:
+    current = note_fingerprint_snapshot(project_dir, agent_type_value)
+    snapshot_path = steering_snapshot_path(project_dir, agent_type_value)
+    previous = load_json_mapping(snapshot_path)
+    previous_topics = previous.get("topics") if isinstance(previous.get("topics"), dict) else {}
+    current_topics = current.get("topics") if isinstance(current.get("topics"), dict) else {}
+
+    # First observation establishes the baseline for this running invocation.
+    if not previous:
+        write_json_mapping(snapshot_path, current)
+        return
+
+    changed: dict[str, dict[str, Any]] = {}
+    for topic, entry in current_topics.items():
+        if previous_topics.get(topic) != entry:
+            changed[topic] = entry
+    write_json_mapping(snapshot_path, current)
+    merge_pending_steering(project_dir, agent_type_value, changed)
+
+
+def steering_message(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    active_agent_type = agent_type(args.agent_type)
+    # A hook can run after a background refresh has pulled notes but before the
+    # refresh loop writes the pending steering queue. Reconcile once against the
+    # visible checkouts so already-pulled changes steer the next model turn.
+    record_note_steering_deltas(project_dir, active_agent_type)
+    pending_path = steering_pending_path(project_dir, active_agent_type)
+    pending = load_json_mapping(pending_path)
+    topics = pending.get("topics") if isinstance(pending.get("topics"), dict) else {}
+    if not topics:
+        return
+    try:
+        pending_path.unlink()
+    except FileNotFoundError:
+        pass
+
+    lines = [
+        "Agentic Notes changed in the background since the last steering notice.",
+        "Changed topics:",
+    ]
+    for topic in sorted(topics):
+        entry = topics.get(topic) if isinstance(topics.get(topic), dict) else {}
+        summary = str(entry.get("summary") or "").strip()
+        suffix = f" - {summary}" if summary else ""
+        lines.append(f"- `{topic}`{suffix}")
+    lines.extend(
+        [
+            "",
+            f"Before relying on assumptions related to a listed topic, run `agentic-notes read-note --project-dir . --agent-type {active_agent_type} TOPIC`.",
+            "Do not pause or report solely because notes changed; use the notice as steering for the next relevant action.",
+        ]
+    )
+    print("\n".join(lines))
+
+
 def refresh_loop(args: argparse.Namespace) -> None:
     project_dir = Path(args.project_dir).resolve()
     interval_seconds = max(1, int(args.interval_seconds))
@@ -214,6 +378,7 @@ def refresh_loop(args: argparse.Namespace) -> None:
                     for lock_path in sorted(refresh_locks):
                         stack.enter_context(state_lock(lock_path))
                     refresh(argparse.Namespace(project_dir=str(project_dir)))
+                    record_note_steering_deltas(project_dir, agent_type())
             except AtNotesError as exc:
                 print(f"agentic-notes-internal refresh-loop: {exc}", file=sys.stderr)
 
@@ -398,7 +563,7 @@ def build_notes_section(
                 "`always-injected.md` note content is injected below when available. Do not open source note files named `always-injected.md` directly. On-demand notes are listed with terse `Topic hints` metadata when available. They are read-before-acting guidance: before taking an action whose tool, package, runtime, backend, architecture, project convention, or work item plausibly matches a listed topic or hint, read the rendered note with `agentic-notes read-note --project-dir . --agent-type "
                 f"{agent_type_value} NOTE_TOPIC` if you have not read it since the last compaction. This applies to setup checks and routine workflow actions too, not only implementation work. Avoid re-reading a note already read since the last compaction unless you need to verify changed content. That command dynamically combines all available org/project/work-branch and all-agents/agent-type portions for this project, work branch, and agent type.",
                 "",
-                "Before final response, and after correcting any wrong assumption, failed workflow, missing setup step, undocumented tool behavior, or user correction, ask whether the lesson would help a future agent. If yes, launch the `note-updater` subagent and tell it which note to update or create before reporting completion. This is a required subagent handoff under the standing user request in the subagent catalog: try to spawn `note-updater`, retry once if spawning fails, and alert the user if it still cannot be spawned. Do not replace it with a direct `agentic-notes` command from the parent agent. Do not wait for the user to ask for a note. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence, omit timestamps, long command output, and rationale unless essential. Choose the narrowest useful scope when creating a note: work for the active work branch only, project for future work in this repository, and org only for lessons that apply across projects. Ordinary working agents do not promote, move, or copy existing notes between scopes. On-demand topic lists are merged and do not show which scope introduced a topic; `agentic-notes read-note` output labels each rendered note portion after you read it. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. Use `all-agents` for lessons useful to every agent in the chosen scope and agent-type notes for lessons useful only to one main agent or subagent type. Use `always-injected.md` only for short guidance worth injecting into future contexts. Do not create notes for one-off command output, transient task status, speculation that has not been verified, temporary workarounds, or fix-needed defects. If a command, dependency, service, environment, policy, or other system is confusing or broken and a user, sysadmin, upstream maintainer, or tool owner could fix it, record an actionable fix request in the appropriate local work record (`HELP.md`, issue tracker, or final user report) and alert the user/sysadmin instead of creating a project or work-branch note. Use an org note only when the workaround is durable across projects and no near-term fix can be expected.",
+                "After correcting a wrong assumption, failed workflow, missing setup step, undocumented tool behavior, or user correction, ask whether the lesson would help a future agent. If yes, route the lesson through the configured background finalization or `note-updater` flow; for research-coordinator result bookkeeping, `research-finalizer` owns that note triage after the report is updated. This is a required subagent handoff under the standing user request in the subagent catalog when a note is warranted: try to spawn the relevant subagent, retry once if spawning fails, and alert the user if it still cannot be spawned. Do not replace it with a direct `agentic-notes` command from the parent agent. Read the relevant subagent's `Contract:` path from the generated Available Subagents catalog. On Codex, those contracts live under `.codex/agents/`, not `.agents`. Do not search `.agents` for subagent contracts. Do not wait for the user to ask for a note, but also do not pause routine progress just to perform speculative note checks. Notes should be terse reusable guidance, not incident reports: prefer one compact sentence, omit timestamps, long command output, and rationale unless essential. Choose the narrowest useful scope when creating the note: work for the active work branch only, project for future work in this repository, and org only for lessons that apply across projects. Ordinary working agents do not promote, move, or copy existing notes between scopes. On-demand topic lists are merged and do not show which scope introduced a topic; `agentic-notes read-note` output labels each rendered note portion after you read it. Keep package notes package-specific. Send architecture optimization notes to the architecture note, not to a package note like `triton`. Use `all-agents` for lessons useful to every agent in the chosen scope and agent-type notes for lessons useful only to one main agent or subagent type. Use `always-injected.md` only for short guidance worth injecting into future contexts. Do not create notes for one-off command output, transient task status, speculation that has not been verified, temporary workarounds, or fix-needed defects. If a command, dependency, service, environment, policy, or other system is confusing or broken and a user, sysadmin, upstream maintainer, or tool owner could fix it, record an actionable fix request in the appropriate local work record (`HELP.md`, issue tracker, or final user report) and alert the user/sysadmin instead of creating a project or work-branch note. Use an org note only when the workaround is durable across projects and no near-term fix can be expected.",
                 "",
             ]
         )
@@ -722,6 +887,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--heartbeat-dir", required=True)
     p.set_defaults(func=refresh_loop)
 
+    p = sub.add_parser("steering-message")
+    p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
+    p.add_argument("--agent-type", default=None)
+    p.set_defaults(func=steering_message)
+
     p = sub.add_parser("generate-instructions")
     p.add_argument("--project-dir", required=True)
     p.add_argument("--agent-type", default=None)
@@ -814,6 +984,8 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
         work_branch_value = os.environ.get("AR_WORK_BRANCH")
         if work_branch_value:
             add_work_branch_lock(work_branch_value)
+    elif command == "steering-message":
+        pass
     elif command == "list-notes":
         if getattr(args, "scope", "") == "org":
             add_org_lock()

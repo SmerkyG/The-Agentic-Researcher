@@ -18,17 +18,23 @@ last compaction unless you need to verify changed content.
 Rendered notes dynamically combine all available organization, project, and
 work-branch note portions for `all-agents` plus the current agent type.
 
-Before final response, and after correcting any wrong assumption, failed
-workflow, missing setup step, undocumented tool behavior, or user correction,
-ask whether the lesson would help a future agent. If yes, launch the
-`note-updater` subagent and follow its rendered contract before reporting
-completion. This is a required subagent handoff under the standing user request
-in the subagent catalog: try to spawn `note-updater`, retry once if spawning
-fails, and alert the user if it still cannot be spawned. Do not replace it with
-a direct `agentic-notes` command from the parent agent. Do not wait for the
-user to ask for a note. Prefer a terse project or work-branch note over losing
-reusable knowledge. Notes should be short reusable guidance, not incident
-reports.
+After correcting a wrong assumption, failed workflow, missing setup step,
+undocumented tool behavior, or user correction, ask whether the lesson would
+help a future agent. If yes, route the lesson through the configured background
+finalization or `note-updater` flow; for research-coordinator result
+bookkeeping, `research-finalizer` owns that note triage after the report is
+updated. This is a required subagent handoff under the standing user request in
+the subagent catalog when a note is warranted: try to spawn the relevant
+subagent, retry once if spawning fails, and alert the user if it still cannot
+be spawned. Do not replace it with a direct `agentic-notes` command from the
+parent agent. Read the relevant subagent's `Contract:` path from the generated
+Available Subagents catalog. On Codex, those contracts live under
+`.codex/agents/`, not `.agents`. Do not search `.agents` for subagent
+contracts.
+Do not wait for the user to ask for a note, but also do not pause routine
+progress just to perform speculative note checks. Prefer a terse project or
+work-branch note over losing reusable knowledge. Notes should be
+short reusable guidance, not incident reports.
 Choose the target scope when creating the note. Use the narrowest scope that
 will help future agents: `work` for the active work branch only, `project` for
 future work in this repository, and `org` only for lessons that apply across

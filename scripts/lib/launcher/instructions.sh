@@ -242,7 +242,7 @@ render_subagent_catalog_instruction_part() {
     fi
 
     printf '## Available Subagents\n\n'
-    printf 'Subagents are delegated tools. Standing user request: when these instructions say to launch, use, or route work through a named subagent, treat that as an explicit user request for Codex subagent delegation. You must try to spawn the named subagent and must not replace it with a direct helper command merely because such a command exists. If the subagent spawn fails, try to spawn it one more time. If the second spawn attempt fails or subagent delegation is unavailable or policy-blocked, stop that handoff and alert the user instead of silently falling back to a direct helper. Use this catalog to decide when a subagent exists, but do not infer the full input shape from memory. Before launching a subagent, read its rendered definition file and use that file'\''s `## Subagent Contract` section for the typed request template. Each subagent has exactly one request template; if a workflow needs a different request shape, use a different subagent.\n\n'
+    printf 'Subagents are delegated tools. Standing user request: when these instructions say to launch, use, or route work through a named subagent, treat that as an explicit user request for Codex subagent delegation. You must try to spawn the named subagent and must not replace it with a direct helper command merely because such a command exists. If the subagent spawn fails, try to spawn it one more time. If the second spawn attempt fails or subagent delegation is unavailable or policy-blocked, stop that handoff and alert the user instead of silently falling back to a direct helper. Use this catalog to decide when a subagent exists, but do not infer the full input shape from memory. Before launching a subagent, read the rendered definition file at the `Contract:` path printed on that subagent'\''s catalog line and use that file'\''s `## Subagent Contract` section for the typed request template. On Codex, those contracts are project-scoped custom agents under `.codex/agents/`, not `.agents`. Do not search `.agents` for subagent contracts; `.agents/skills` is a skill discovery directory on some CLIs, not the subagent contract catalog. Each subagent has exactly one request template; if a workflow needs a different request shape, use a different subagent.\n\n'
 
     SUBAGENT_CATALOG_EMITTED=false
     if [[ -n "$agent_root" ]]; then
@@ -280,6 +280,55 @@ setup_instruction_target() {
 
     INSTRUCTION_FILE_REGENERATED=false
     INSTRUCTION_TARGET="$target"
+}
+
+setup_generated_file_excludes() {
+    workspace_is_git_worktree || return 0
+
+    local exclude_path marker_start marker_end temp_path
+    exclude_path="$(git -C "$WORKSPACE_DIR" rev-parse --git-path info/exclude 2>/dev/null)" || return 0
+    [[ "$exclude_path" = /* ]] || exclude_path="$WORKSPACE_DIR/$exclude_path"
+    mkdir -p "$(dirname "$exclude_path")"
+
+    marker_start="# BEGIN agentic-team generated files"
+    marker_end="# END agentic-team generated files"
+    temp_path="${exclude_path}.agentic-team.tmp"
+
+    if [[ -f "$exclude_path" ]]; then
+        awk -v start="$marker_start" -v end="$marker_end" '
+            $0 == start { skip=1; next }
+            $0 == end { skip=0; next }
+            !skip { print }
+        ' "$exclude_path" > "$temp_path"
+    else
+        : > "$temp_path"
+    fi
+
+    cat >> "$temp_path" <<'EOF'
+# BEGIN agentic-team generated files
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/.agents/skills/
+/.claude/skills/
+/.claude/agents/
+/.claude/hooks/
+/.claude/settings.local.json
+/.codex/agents/
+/.codex/hooks/
+/.codex/hooks.json
+/.gemini/skills/
+/.gemini/agents/
+/.gemini/hooks/
+/.gemini/settings.json
+/.opencode/skills/
+/.opencode/agents/
+/.opencode/plugins/
+/.pi/extensions/
+# END agentic-team generated files
+EOF
+
+    mv "$temp_path" "$exclude_path"
 }
 
 render_instruction_document() {

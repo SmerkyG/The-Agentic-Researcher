@@ -36,6 +36,9 @@ Agent-facing Agentic Notes commands:
   read-note      Read a rendered note topic
   update-note    Append or merge one reusable lesson from YAML on stdin
   rewrite-note   Replace one source note after rare cleanup review
+
+Internal hook command:
+  steering-message
 """
 
 UPDATE_HELP = """\
@@ -72,6 +75,10 @@ def field_value(data: dict[str, Any], name: str) -> str | None:
 
 def read_note(args: list[str]) -> None:
     os.execv(str(INTERNAL_COMMAND), [str(INTERNAL_COMMAND), "read-note", *args])
+
+
+def steering_message(args: list[str]) -> None:
+    os.execv(str(INTERNAL_COMMAND), [str(INTERNAL_COMMAND), "steering-message", *args])
 
 
 def update_note(args: list[str]) -> None:
@@ -174,6 +181,8 @@ def dispatch() -> None:
         return
     if command == "read-note":
         read_note(args)
+    elif command == "steering-message":
+        steering_message(args)
     elif command == "update-note":
         update_note(args)
     elif command == "rewrite-note":

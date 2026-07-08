@@ -134,27 +134,48 @@ Do this every session or after context compaction:
 3. **Implement** minimal, focused changes. Keep diffs small.
 4. **Evaluate** using the three-tier strategy from the shared commitments.
 5. **Analyze** honestly. Write a hypothesis for why it worked or did not.
-6. **Update work-branch records**: keep the short rolling synthesis in
+6. **Update work-branch records immediately**: keep the short rolling synthesis in
    work-branch `condensed_report.md`, detailed analysis in paginated work-branch
    `report.md` / `report_pageN.md`, follow-ups in `TODO.md`, and report figures
-   in `images/` by editing those normal files in the work-state worktree, then
-   committing and pushing only those work-state files. Prepare experiment-log
-   request content when the result is meaningful.
-7. **Capture reusable lessons**: if debugging, failed runs, corrected
-   assumptions, missing setup, or user corrections revealed guidance that would
-   help future agents, launch `note-updater` before reporting completion. This
-   is a required subagent handoff under the standing user request in the
-   subagent catalog: try to spawn `note-updater`, retry once if spawning fails,
-   and alert the user if it still cannot be spawned. Do not replace it with a
-   direct `agentic-notes` command from the parent agent. Notes are terse
-   reusable guidance, not incident reports; experiment outcomes still go in the
-   experiment log.
-8. **Hand off completed change sets and finalize logging** using the helper
-   commands and subagents described in the Experiment Logging and Research
-   Record plus Git Discipline sections below. Code snapshots contain
-   code/config/test files only; work-branch records are committed separately to
-   work state.
-9. **Repeat the loop instead of stopping**. Completing a `TODO.md` item,
+   in `images/` by editing those normal files in the work-state worktree. This
+   report update is synchronous: do it before slower bookkeeping so the user can
+   read the result and the top-level agent can use it for the next decision.
+   If the analysis identifies a concrete next experiment, metric, verification,
+   or implementation step that could be done autonomously, record it as a
+   `TODO.md` item and continue with it. Do not avoid the final-response gate by
+   leaving actionable next work only in `condensed_report.md`, report prose, or
+   the user-facing response. If the next direction is a pivot that needs user
+   confirmation, label it as requiring user input instead of presenting it as
+   "the next step."
+7. **Finalize in the background**: after the report/TODO update for a completed
+   meaningful result, read the `research-finalizer` `Contract:` path from the
+   generated Available Subagents catalog, then launch `research-finalizer` with
+   its declared `finalize_current_research_context: true` contract. On Codex,
+   custom subagent contracts are rendered under `.codex/agents/`; do not search
+   `.agents` for them. If the completed result includes code changes, first
+   create the `branch-snapshot` yourself with explicit paths and inspect its
+   `name_status` / `name_status_path`; include the returned `snapshot_dir` or
+   `status_path` in the finalizer request. The parent must capture the snapshot
+   before delegating so later worktree edits cannot leak into the completed
+   result. The finalizer owns experiment logging, note triage/update,
+   work-state commit/push, and background `branch-commit` handoff for an
+   already-captured snapshot when applicable. For Codex typed subagents,
+   include the contract's `context_packet` in the first spawn request and do
+   not request a full-history
+   fork with `agent_type`; Codex may reject that combination. If the spawn tool
+   exposes a non-fork option, set it explicitly (`fork_context: false` or
+   `fork_turns: "none"`, whichever the tool schema provides). On platforms that
+   support inherited context for typed subagents, the packet is just a fallback.
+   Keep the packet compact: completed-result facts, changed paths, checks,
+   metrics, artifact paths, the already-captured snapshot path for code changes,
+   and desired logging intent. After the
+   handoff is accepted, treat it as fire-and-forget background work: keep the
+   subagent id/status path if one is available, but do not poll or wait merely
+   to report its status. Continue the next research step or, if no autonomous
+   work remains, report that finalization is queued with the subagent id/status
+   path. Wait only when the next operation mechanically depends on the
+   finalizer's result.
+8. **Repeat the loop instead of stopping**. Completing a `TODO.md` item,
    experiment, code snapshot, or log update means select the next unchecked
    `TODO.md` item, next experiment, or next analysis step and continue from
    step 1 or 2. Build on success. After 3 failed variations of one idea, move
@@ -168,9 +189,19 @@ Before any final response:
 1. Inspect the active work-branch `TODO.md` if it exists.
 2. If you just added a next TODO item, treat it as immediate remaining work,
    not as a valid stopping point.
-3. If any unchecked TODO item is actionable without user input, start that work
+3. Compare any "next step", "next decision metric", "next direction", or
+   recommendation you plan to mention against `TODO.md`. A concrete autonomous
+   next action must either already be done, be listed as an unchecked TODO that
+   you now start, or be explicitly blocked / user-input-required. Do not mention
+   actionable autonomous next work only as prose.
+4. If a `research-finalizer` handoff is still running, treat it as
+   fire-and-forget background work. Do not wait merely for a cleaner final
+   status. It is acceptable to say finalization is queued/running and include
+   the subagent id or status path, unless the user explicitly asked you to
+   block on finalization.
+5. If any unchecked TODO item is actionable without user input, start that work
    and repeat the Experiment Loop instead of responding.
-4. Return with unchecked TODO items only when each open item is blocked,
+6. Return with unchecked TODO items only when each open item is blocked,
    requires user input, or is explicitly non-actionable context. State that
    reason in the response.
 
@@ -198,8 +229,9 @@ handoffs under the standing user request in the subagent catalog: try to spawn
 the named subagent, retry once if spawning fails, and alert the user if it
 still cannot be spawned. Do not replace these handoffs with direct
 `experiment-log` commands from the parent agent. Before launching either one,
-read its rendered subagent definition and use its `## Subagent Contract`
-section for the exact request shape. The subagent uses the provided helper so
+read the `Contract:` path listed for that subagent in the generated Available
+Subagents catalog and use that file's `## Subagent Contract` section for the
+exact request shape. The subagent uses the provided helper so
 the work-branch-local counter, per-experiment YAML file, and work-branch `SUMMARY.md` row
 are updated under the work-branch log's local state lock. Do not regenerate
 `SUMMARY.md`, manually edit the state worktree, or manually alter existing
@@ -271,6 +303,9 @@ For experiments that include code changes, prefer the commit handoff path:
    work-branch Agentic Notes, work-branch `condensed_report.md`, work-branch
    `report.md`, work-branch `report_pageN.md`, work-branch `TODO.md`,
    work-state `images/`, `.`, or glob paths.
+   This synchronous snapshot is the handoff boundary: capture it before
+   launching `research-finalizer` or continuing with edits for the next
+   experiment.
 2. If the completed change set is a meaningful experiment result that belongs in
    the active work branch experiment log, read the rendered `experiment-logger`
    contract and include its experiment-log payload under
@@ -314,8 +349,16 @@ Run it as a dry run first.
 This keeps the experiment log tied to the final code commit without blocking
 the main agent during checks after the snapshot has been captured.
 
-For meaningful completed experiments that have no code commit, launch
-`experiment-logger` directly after reading its rendered contract.
+For meaningful completed experiments, prefer launching `research-finalizer`
+after the synchronous report update and, for code changes, after the
+branch-snapshot has already been captured. It decides whether to launch
+`experiment-logger`, whether notes are warranted, how to commit/push work-state
+records, and how to start background `branch-commit` for a provided snapshot.
+Launch `experiment-logger` directly only when finalizer delegation is
+unavailable and the experiment log update is mechanically needed before
+continuing. Once the finalizer handoff is accepted, treat it as fire-and-forget
+background work; do not poll it just to turn queued finalization into a
+foreground wait.
 
 ### Report Sections
 
@@ -370,6 +413,12 @@ because the most recent item is complete.
 When you add a next TODO item, begin it in the same turn unless it is blocked or
 requires user input. Do not use TODO additions as a substitute for doing the
 next autonomous step.
+Conversely, do not keep a concrete next experiment, metric, verification, or
+implementation step out of `TODO.md` merely because adding it would require you
+to continue. If it is actionable and autonomous, it belongs in `TODO.md` and the
+Experiment Loop continues. If it is optional, speculative, blocked, or a pivot
+that needs user choice, label that status clearly instead of calling it the next
+step.
 
 Format: `- [ ] item` / `- [x] done`
 

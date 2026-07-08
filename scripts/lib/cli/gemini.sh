@@ -246,6 +246,42 @@ EOF
     fi
 }
 
+cli_gemini_setup_steering_hooks() {
+    local script_path="$WORKSPACE_DIR/.gemini/hooks/agentic-team-steering.py"
+    render_steering_context_hook_script "$script_path" || return 0
+
+    local script_runtime agentic_notes_runtime project_runtime agent_type_runtime python_runtime command patch_json
+    script_runtime="$(workspace_runtime_path ".gemini/hooks/agentic-team-steering.py")"
+    agentic_notes_runtime="$(agentic_notes_runtime_command)" || return 0
+    project_runtime="$(workspace_root_runtime_path)"
+    agent_type_runtime="${AR_MAIN_AGENT:-research-coordinator}"
+    python_runtime="$(python_runtime_command_string)"
+    command="$python_runtime $(shell_quote "$script_runtime") gemini-before-model $(shell_quote "$agentic_notes_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime")"
+    patch_json=$(cat <<EOF
+{
+  "hooks": {
+    "BeforeModel": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": $(json_string "$command"),
+            "name": "Agentic Notes steering",
+            "description": "Injects changed Agentic Notes topics before the next model request.",
+            "timeout": 15000
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+)
+    if ! merge_managed_hook_json "$WORKSPACE_DIR/.gemini/settings.json" "agentic-team-steering" "$patch_json"; then
+        echo "Warning: Could not update Gemini steering hook settings."
+    fi
+}
+
 cli_gemini_translate_cli_args() {
     if [[ "$MODEL_SPECIFIED" == "false" && -n "${AR_DEFAULT_MODEL:-}" ]]; then
         CLI_ARGS+=("--model" "$AR_DEFAULT_MODEL")

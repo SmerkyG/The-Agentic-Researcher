@@ -45,6 +45,12 @@ Do not say the research loop is complete while unchecked actionable TODOs
 remain. If you return with unchecked TODOs, each one must be blocked, require
 user input, or be explicitly non-actionable background context, and you must say
 why.
+Do not route around this rule by leaving a concrete next experiment, metric,
+verification, or implementation step only in report prose or a user-facing
+summary. If you would write that something "should be the next step" and it can
+be done autonomously, add it to `TODO.md` and start it. If it is a proposed
+pivot, optional direction, blocked item, or user-choice decision, label that
+status clearly instead of presenting it as the next autonomous action.
 Only return to the user when you are genuinely stuck or need advice. Never skip
 work because you estimate it "takes too long to implement" -- you are a language
 model and execute coding tasks much faster than you think. The only valid time
@@ -82,8 +88,9 @@ tells you whether a 2% improvement is nearly optimal or barely scratching the su
 **IX. RECORD EVERYTHING.**
 - Every meaningful completed experiment must be logged in the active work
   branch's Agentic Researcher experiment log when that mechanism is available. Launch the
-  `experiment-logger` subagent and follow its rendered contract so the shared
-  state write is handled consistently. This is a required subagent handoff:
+  `experiment-logger` subagent and follow the rendered contract at the
+  `Contract:` path listed in the generated Available Subagents catalog so the
+  shared state write is handled consistently. This is a required subagent handoff:
   try to spawn `experiment-logger`, retry once if spawning fails, and alert the
   user if it still cannot be spawned. Do not replace it with a direct
   `experiment-log` command from the parent agent. The work-branch experiment log
@@ -109,11 +116,33 @@ tells you whether a 2% improvement is nearly optimal or barely scratching the su
   only as secondary artifacts. Commit `images/` with the work-state report
   update; do not skip report-ready PNG/PDF figures merely because they are
   binary files.
+- After each completed meaningful result, update `condensed_report.md`, the
+  current report page, and `TODO.md` synchronously before delegating slower
+  bookkeeping. Then read the `research-finalizer` `Contract:` path from the
+  generated Available Subagents catalog and launch `research-finalizer` so
+  experiment logging, note triage/update, work-state commit/push, and code
+  commit handoff can proceed without making the top-level researcher wait. If
+  the result includes code changes, the top-level agent must create and inspect
+  the explicit-path `branch-snapshot` synchronously before launching the
+  finalizer, then pass the snapshot path in the request; the finalizer must not
+  snapshot a mutable worktree after the parent continues. On
+  Codex, subagent contracts live under `.codex/agents/`; do not search
+  `.agents`. For Codex typed subagents, include the contract's compact
+  `context_packet` in the first spawn request and do not request a full-history
+  fork with `agent_type`; set the non-fork option explicitly when the tool
+  exposes one (`fork_context: false` or `fork_turns: "none"`). After the
+  finalizer handoff is accepted, treat it as fire-and-forget background work:
+  keep the subagent id/status path if one is available, but do not poll or wait
+  merely to report its status. Continue research or report that finalization is
+  queued unless the next operation mechanically depends on the finalizer result.
   Visualize, don't just describe.
 - **Maintain `TODO.md` as a branch-local/session-local checklist**, not as a
   shared multi-agent work queue. Add open questions, unverified claims, and
   deferred checks relevant to the current branch. Check off items when resolved.
   Review and clean up stale entries at every session startup.
+  Report "Next steps" and `TODO.md` must agree: concrete autonomous next work
+  goes into `TODO.md` and is started; blocked, optional, or user-choice ideas are
+  labeled as such.
 
 **X. VERIFY BEFORE CLAIMING.**
 Assume you are wrong until verified. Every nontrivial mathematical argument

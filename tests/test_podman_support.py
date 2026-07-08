@@ -424,15 +424,24 @@ def test_launcher_native_runs_host_cli__without_container(
     assert "You have just experienced context compaction" in codex_hook_text
     assert "since the last compaction" in codex_hook_text
     assert "run_refresh" in codex_hook_text
+    codex_steering_hook = workspace / ".codex" / "hooks" / "agentic-team-steering.py"
+    assert codex_steering_hook.exists()
+    assert "steering-message" in codex_steering_hook.read_text()
     codex_hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
     post_compact_hook = codex_hooks["hooks"]["PostCompact"][0]
     post_compact_command = post_compact_hook["hooks"][0]["command"]
+    post_tool_hook = codex_hooks["hooks"]["PostToolUse"][0]
+    post_tool_command = post_tool_hook["hooks"][0]["command"]
     assert post_compact_hook["matcher"] == "manual|auto"
+    assert post_tool_hook["matcher"] == "*"
     assert codex_hooks["hooks"]["UserPromptSubmit"] == []
     assert not codex_hooks["hooks"]["SessionStart"]
     assert "agentic-team-compaction.py" in post_compact_command
     assert "post-compact" in post_compact_command
     assert "capability-refresh" in post_compact_command
+    assert "agentic-team-steering.py" in post_tool_command
+    assert "codex-post-tool" in post_tool_command
+    assert "agentic-notes" in post_tool_command
     assert str(workspace / "AGENTS.md") in post_compact_command
     assert str(workspace) in post_compact_command
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
@@ -670,6 +679,10 @@ def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
     commands = [hook["command"] for group in event_hooks for hook in group["hooks"]]
     managed_commands = [cmd for cmd in commands if "agentic-team-compaction.py" in cmd]
     assert len(managed_commands) == 1
+    steering_hooks = hooks["hooks"]["PostToolUse"]
+    steering_commands = [hook["command"] for group in steering_hooks for hook in group["hooks"]]
+    managed_steering_commands = [cmd for cmd in steering_commands if "agentic-team-steering.py" in cmd]
+    assert len(managed_steering_commands) == 1
     assert hooks["hooks"]["UserPromptSubmit"] == []
     assert not hooks["hooks"]["SessionStart"]
 
@@ -918,11 +931,20 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     assert "You have just experienced context compaction" in gemini_hook_text
     assert "since the last compaction" in gemini_hook_text
     assert "run_refresh" in gemini_hook_text
+    gemini_steering_hook = workspace / ".gemini" / "hooks" / "agentic-team-steering.py"
+    assert gemini_steering_hook.exists()
+    assert "steering-message" in gemini_steering_hook.read_text()
     gemini_settings = json.loads((workspace / ".gemini" / "settings.json").read_text())
     precompress_command = gemini_settings["hooks"]["PreCompress"][0]["hooks"][0]["command"]
-    before_model_command = gemini_settings["hooks"]["BeforeModel"][0]["hooks"][0]["command"]
+    before_model_commands = [
+        hook["command"]
+        for group in gemini_settings["hooks"]["BeforeModel"]
+        for hook in group["hooks"]
+    ]
+    before_model_command = before_model_commands[0]
     assert "agentic-team-compaction.py' mark" in precompress_command
     assert "agentic-team-compaction.py' inject" in before_model_command
+    assert any("agentic-team-steering.py" in command and "gemini-before-model" in command for command in before_model_commands)
     assert "capability-refresh" in precompress_command
     assert "capability-refresh" in before_model_command
     assert str(workspace / "GEMINI.md") in precompress_command

@@ -253,6 +253,21 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
 
     run([str(AGENTIC_NOTES_INTERNAL), "init-org-notes", "--repo", str(org_remote)], env=env)
     run([str(AGENTIC_NOTES_INTERNAL), "ensure-project-state", "--project-dir", str(project)], env=env)
+    run(
+        [
+            str(AGENTIC_NOTES_INTERNAL),
+            "list-notes",
+            "--scope",
+            "work",
+            "--project-dir",
+            str(project),
+            "--agent-type",
+            "all-agents",
+            "--work-branch",
+            "kernel-search",
+        ],
+        env=env,
+    )
     state = state_checkout(env)
     assert_linked_worktree(state)
     (state / "agent-notes" / "all-agents" / "always-injected.md").write_text(
@@ -480,17 +495,6 @@ def test_refresh_loop_pulls_org_notes_while_heartbeat_is_active(tmp_path: Path) 
     run([str(AGENTIC_NOTES_INTERNAL), "init-org-notes", "--repo", str(org_remote)], env=env)
     run([str(AGENTIC_NOTES_INTERNAL), "ensure-project-state", "--project-dir", str(project)], env=env)
 
-    org_update = tmp_path / "org-update"
-    run(["git", "clone", str(org_remote), str(org_update)])
-    configure_git(org_update)
-    (org_update / "agent-notes" / "all-agents" / "always-injected.md").write_text(
-        "# Org Notes\n\nPulled by refresh loop.\n",
-        encoding="utf-8",
-    )
-    git(org_update, "add", "agent-notes/all-agents/always-injected.md")
-    git(org_update, "commit", "-m", "update org notes")
-    git(org_update, "push")
-
     heartbeat_dir = tmp_path / "heartbeats"
     heartbeat_dir.mkdir()
     heartbeat = heartbeat_dir / "agent.heartbeat"
@@ -515,6 +519,28 @@ def test_refresh_loop_pulls_org_notes_while_heartbeat_is_active(tmp_path: Path) 
         stderr=subprocess.PIPE,
     )
     try:
+        snapshot = workspace_root(env) / ".runtime" / "agentic-notes" / "steering" / "research-coordinator.snapshot.json"
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            heartbeat.touch()
+            if snapshot.exists():
+                break
+            time.sleep(0.25)
+        else:
+            stdout, stderr = proc.communicate(timeout=1)
+            raise AssertionError(f"refresh loop did not establish steering baseline\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}")
+
+        org_update = tmp_path / "org-update"
+        run(["git", "clone", str(org_remote), str(org_update)])
+        configure_git(org_update)
+        (org_update / "agent-notes" / "all-agents" / "always-injected.md").write_text(
+            "# Org Notes\n\nPulled by refresh loop.\n",
+            encoding="utf-8",
+        )
+        git(org_update, "add", "agent-notes/all-agents/always-injected.md")
+        git(org_update, "commit", "-m", "update org notes")
+        git(org_update, "push")
+
         note_path = org_checkout(env) / "agent-notes" / "all-agents" / "always-injected.md"
         deadline = time.time() + 8
         while time.time() < deadline:
@@ -525,6 +551,32 @@ def test_refresh_loop_pulls_org_notes_while_heartbeat_is_active(tmp_path: Path) 
         else:
             stdout, stderr = proc.communicate(timeout=1)
             raise AssertionError(f"refresh loop did not pull org update\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}")
+        steering = run(
+            [
+                str(AGENTIC_NOTES_INTERNAL),
+                "steering-message",
+                "--project-dir",
+                str(project),
+                "--agent-type",
+                "research-coordinator",
+            ],
+            env=env,
+        )
+        assert "Agentic Notes changed" in steering.stdout
+        assert "`always-injected`" in steering.stdout
+        assert "read-note" in steering.stdout
+        drained = run(
+            [
+                str(AGENTIC_NOTES_INTERNAL),
+                "steering-message",
+                "--project-dir",
+                str(project),
+                "--agent-type",
+                "research-coordinator",
+            ],
+            env=env,
+        )
+        assert drained.stdout == ""
     finally:
         heartbeat.unlink(missing_ok=True)
         try:
@@ -724,6 +776,43 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     inject_payload = json.loads(inject_result.stdout)
     assert inject_payload == {}
     assert not (hook.parent / ".agentic-team-compaction.pending").exists()
+
+    stale_marker = hook.parent / ".agentic-team-compaction.pending"
+    stale_marker.write_text(
+        json.dumps({"message": "stale compaction text"}) + "\n",
+        encoding="utf-8",
+    )
+    stale_inject_result = run(
+        [
+            sys.executable,
+            str(hook),
+            "inject-pending",
+            str(project / "AGENTS.md"),
+            str(REPO_ROOT / "scripts" / "bin" / "capability-refresh"),
+            str(project),
+            "research-coordinator",
+            "codex",
+        ],
+        env=env,
+        input='{"hook_event_name":"UserPromptSubmit"}',
+    )
+    assert json.loads(stale_inject_result.stdout) == {}
+    assert not stale_marker.exists()
+
+    legacy_user_prompt_result = run(
+        [
+            sys.executable,
+            str(hook),
+            str(project / "AGENTS.md"),
+            str(REPO_ROOT / "scripts" / "bin" / "capability-refresh"),
+            str(project),
+            "research-coordinator",
+            "codex",
+        ],
+        env=env,
+        input='{"hook_event_name":"UserPromptSubmit"}',
+    )
+    assert json.loads(legacy_user_prompt_result.stdout) == {}
 
 
 def test_note_updater_creates_new_org_note_and_commits(tmp_path: Path) -> None:
@@ -1016,6 +1105,38 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     )
     assert missing_summary.returncode == 1
     assert "experiment summary does not exist" in missing_summary.stderr
+
+
+def test_agentic_notes_state_ensure_does_not_commit_dirty_work_records(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path)
+
+    run([str(AGENTIC_NOTES_INTERNAL), "ensure-project-state", "--project-dir", str(project)], env=env)
+    run(
+        [
+            str(AGENTIC_NOTES_INTERNAL),
+            "list-notes",
+            "--scope",
+            "work",
+            "--project-dir",
+            str(project),
+            "--agent-type",
+            "all-agents",
+            "--work-branch",
+            "kernel-search",
+        ],
+        env=env,
+    )
+    state = work_state_dir(env)
+    assert state.exists()
+    base_head = git(state, "rev-parse", "HEAD").stdout.strip()
+    (state / "report.md").write_text("# Research Log\n\nUncommitted result.\n", encoding="utf-8")
+
+    run([str(AGENTIC_NOTES_INTERNAL), "refresh", "--project-dir", str(project)], env=env)
+
+    assert git(state, "rev-parse", "HEAD").stdout.strip() == base_head
+    assert git(state, "status", "--short").stdout == "?? report.md\n"
 
 
 def test_named_work_creates_at_layout_and_references_research_context(tmp_path: Path) -> None:
@@ -1899,6 +2020,13 @@ def test_launcher_render_only_rewrites_managed_instruction_and_normalizes_whites
     assert "<!-- AGENTIC-TEAM-SUBAGENTS-START" not in text
     assert text.count("<!--") == 0
     assert (project / ".codex" / "agents" / "experiment-logger.toml").exists()
+    status = git(project, "status", "--short", "--untracked-files=all", "AGENTS.md", ".codex", ".agents")
+    assert status.stdout == ""
+    exclude_text = (project / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert "# BEGIN agentic-team generated files" in exclude_text
+    assert "/AGENTS.md" in exclude_text
+    assert "/.codex/agents/" in exclude_text
+    assert "/.agents/skills/" in exclude_text
 
 
 def test_launcher_passive_startup_does_not_push_agentic_state_branches(tmp_path: Path) -> None:
@@ -2087,6 +2215,8 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert "## Available Subagents" in instruction_text
     assert "Standing user request" in instruction_text
     assert "If the subagent spawn fails, try to spawn it one more time" in instruction_text
+    assert "On Codex, those contracts are project-scoped custom agents under `.codex/agents/`" in instruction_text
+    assert "Do not search `.agents` for subagent contracts" in instruction_text
     assert "- `experiment-logger`:" in instruction_text
     assert "- `experiment-corrector`:" in instruction_text
     assert "- `branch-committer`:" not in instruction_text

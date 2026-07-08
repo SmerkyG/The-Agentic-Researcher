@@ -93,7 +93,10 @@ This work branch is already in progress.
    unchecked item, experiment, or analysis step and keep going unless user input
    is required.
    If you add a next TODO item, begin it immediately unless it is blocked or
-   requires user input.
+   requires user input. Do not avoid this by leaving a concrete autonomous next
+   step only in report prose, `condensed_report.md`, or the final response; if
+   it is specific enough to call the next experiment, metric, verification, or
+   implementation step, it belongs in `TODO.md` and the loop continues.
 
 ## FRESH START
 
@@ -183,10 +186,11 @@ Wait for the user to respond before continuing.
 3. Ask if they want to modify anything.
 4. Save the approved plan to `$WORK_STATE_DIR/agent-notes/$MAIN_AGENT/always-injected.md`
    and commit it on the work-state branch. This setup step initializes the
-   work-branch plan directly; normal learned note updates still go through the
-   `note-updater` subagent. For normal learned note updates, try to spawn
-   `note-updater`, retry once if spawning fails, and alert the user if it still
-   cannot be spawned instead of silently calling `agentic-notes` directly.
+   work-branch plan directly; normal learned note updates go through
+   `research-finalizer` after completed research results or through
+   `note-updater` for standalone lessons. Retry the relevant subagent once if
+   spawning fails, and alert the user if it still cannot be spawned instead of
+   silently calling `agentic-notes` directly.
 
 ```bash
 mkdir -p "$WORK_STATE_DIR/agent-notes/$MAIN_AGENT"
@@ -269,12 +273,26 @@ project artifacts. Use `TODO.md` checklist items in `- [ ] item` format.
    - Install dependencies with `uv sync`
    - Run the baseline evaluation command from the research plan
    - Update work-branch `condensed_report.md`, report pages, `TODO.md`, and report
-     figures by editing the work-state worktree and committing those files
-     there
-   - If the baseline is a meaningful completed experiment, launch
-     `experiment-logger` so the active work-branch experiment-log `SUMMARY.md`
-     receives an experiment ID; retry once if spawning fails and alert the user
-     if it still cannot be spawned
+     figures synchronously in the work-state worktree before any slower
+     bookkeeping delegation
+   - If the baseline is a meaningful completed experiment, read the
+     `research-finalizer` `Contract:` path from the generated Available
+     Subagents catalog and launch `research-finalizer` with
+     `finalize_current_research_context: true` so experiment logging, note
+     triage/update, work-state commit/push, and code commit handoff for an
+     already-captured snapshot can proceed without blocking the next research
+     decision. On Codex,
+     subagent contracts live under `.codex/agents/`; do not search `.agents`.
+     For Codex typed subagents, include the contract's compact
+     `context_packet` in the first spawn request and do not request a
+     full-history fork with `agent_type`; set the non-fork option explicitly
+     when the tool exposes one (`fork_context: false` or `fork_turns: "none"`).
+     If the baseline produced code changes to commit, create and inspect the
+     explicit-path `branch-snapshot` synchronously before launching the
+     finalizer and pass the snapshot path in the request.
+     Once the handoff is accepted, treat it as fire-and-forget background work:
+     keep the subagent id/status path if one is available, but do not poll or
+     wait merely to report finalizer status.
    - Commit only code/config/script changes that belong in the code branch; do
      not commit work-branch Agentic Notes, `condensed_report.md`, report pages,
      `TODO.md`, or report `images/` to the code branch
@@ -285,4 +303,6 @@ Before any final response after using this skill, inspect the active work-branch
 `TODO.md`. If unchecked actionable items remain, continue the experiment loop
 instead of reporting completion. Return with unchecked TODOs only when they are
 blocked, require user input, or are explicitly non-actionable context, and state
-that reason.
+that reason. Also check any next direction you intend to mention: a concrete
+autonomous next action must be represented in `TODO.md` and started, or clearly
+labeled as blocked / requiring user choice.

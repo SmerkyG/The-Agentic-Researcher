@@ -366,7 +366,9 @@ def configure_git_identity(repo: Path) -> None:
 
 def commit_if_changed(repo: Path, message: str, paths: list[Path] | None = None) -> bool:
     configure_git_identity(repo)
-    if paths:
+    if paths is not None:
+        if not paths:
+            return False
         for path in paths:
             git(repo, "add", str(path.relative_to(repo)))
     else:

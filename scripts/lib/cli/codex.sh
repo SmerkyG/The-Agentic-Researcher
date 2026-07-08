@@ -96,6 +96,42 @@ EOF
     fi
 }
 
+cli_codex_setup_steering_hooks() {
+    local script_path="$WORKSPACE_DIR/.codex/hooks/agentic-team-steering.py"
+    render_steering_context_hook_script "$script_path" || return 0
+
+    local script_runtime agentic_notes_runtime project_runtime agent_type_runtime python_runtime command patch_json
+    script_runtime="$(workspace_runtime_path ".codex/hooks/agentic-team-steering.py")"
+    agentic_notes_runtime="$(agentic_notes_runtime_command)" || return 0
+    project_runtime="$(workspace_root_runtime_path)"
+    agent_type_runtime="${AR_MAIN_AGENT:-research-coordinator}"
+    python_runtime="$(python_runtime_command_string)"
+    command="$python_runtime $(shell_quote "$script_runtime") codex-post-tool $(shell_quote "$agentic_notes_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime")"
+    patch_json=$(cat <<EOF
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": $(json_string "$command"),
+            "timeout": 15,
+            "statusMessage": "Agentic Notes steering"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+)
+    if ! merge_managed_hook_json "$WORKSPACE_DIR/.codex/hooks.json" "agentic-team-steering" "$patch_json"; then
+        echo "Warning: Could not update Codex steering hook settings."
+    fi
+}
+
 cli_codex_translate_cli_args() {
     local translated=()
     local i arg next

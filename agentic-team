@@ -99,6 +99,7 @@ main() {
     profile_step "setup_instruction_target" setup_instruction_target
     if [[ "$RENDER_ONLY" != "true" ]]; then
         profile_step "setup_compaction_hooks" setup_compaction_hooks
+        profile_step "setup_steering_hooks" setup_steering_hooks
         profile_step "translate_cli_args" translate_cli_args
         profile_step "setup_auth_binds" setup_auth_binds
         profile_step "setup_research_binds" setup_research_binds
@@ -114,6 +115,7 @@ main() {
     if [[ -n "${INSTRUCTION_TARGET:-}" ]]; then
         profile_step "normalize_instruction_file" normalize_markdown_file "$WORKSPACE_DIR/$INSTRUCTION_TARGET"
     fi
+    profile_step "setup_generated_file_excludes" setup_generated_file_excludes
     if [[ "$RENDER_ONLY" == "true" ]]; then
         profile_elapsed "startup setup total" "$startup_start_us"
         echo "Rendered instruction file: $WORKSPACE_DIR/$INSTRUCTION_TARGET"
