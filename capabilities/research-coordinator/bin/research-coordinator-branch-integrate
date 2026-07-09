@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Run deterministic branch integration Git plumbing in one command."""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path,
+    check: bool = True,
+    shell: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        command if not shell else " ".join(command),
+        cwd=cwd,
+        shell=shell,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"{' '.join(command)} failed: {detail}")
+    return result
+
+
+def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return run(["git", *args], cwd=repo, check=check)
+
+
+def git_text(repo: Path, *args: str) -> str:
+    return git(repo, *args).stdout.strip()
+
+
+def has_remote(repo: Path, remote: str) -> bool:
+    return git(repo, "remote", "get-url", remote, check=False).returncode == 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Integrate a source branch into a target branch.")
+    parser.add_argument("--worktree-path", required=True, help="Integration worktree path.")
+    parser.add_argument("--source-branch", required=True, help="Source branch or ref to integrate.")
+    parser.add_argument("--target-branch", required=True, help="Target branch checked out in the worktree.")
+    parser.add_argument("--strategy", required=True, choices=["merge", "cherry-pick"])
+    parser.add_argument("--remote", default="origin")
+    parser.add_argument("--commit", action="append", dest="commits", help="Commit to cherry-pick. May be repeated.")
+    parser.add_argument("--check", action="append", dest="checks", default=[], help="Shell check command. May be repeated.")
+    parser.add_argument("--push", action="store_true", help="Push target branch after checks pass.")
+    args = parser.parse_args()
+
+    repo = Path(args.worktree_path).expanduser().resolve()
+    if not (repo / ".git").exists():
+        print(f"research-coordinator-branch-integrate: {repo} is not a Git checkout", file=sys.stderr)
+        return 2
+
+    try:
+        if has_remote(repo, args.remote):
+            git(repo, "fetch", "--prune", args.remote)
+        current = git_text(repo, "branch", "--show-current")
+        if current != args.target_branch:
+            git(repo, "switch", args.target_branch)
+
+        applied: list[str] = []
+        if args.strategy == "merge":
+            git(repo, "merge", args.source_branch)
+            applied.append(args.source_branch)
+        else:
+            if not args.commits:
+                raise RuntimeError("--commit is required for cherry-pick strategy")
+            for commit in args.commits:
+                git(repo, "cherry-pick", commit)
+                applied.append(commit)
+
+        for check in args.checks:
+            run([check], cwd=repo, shell=True)
+
+        if args.push:
+            git(repo, "push", args.remote, args.target_branch)
+
+        head = git_text(repo, "rev-parse", "HEAD")
+        print(
+            "research-coordinator-branch-integrate: "
+            f"{args.strategy} integrated {', '.join(applied)} into {args.target_branch} at {head}"
+        )
+        return 0
+    except RuntimeError as exc:
+        print(f"research-coordinator-branch-integrate: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

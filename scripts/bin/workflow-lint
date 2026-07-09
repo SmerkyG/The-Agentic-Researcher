@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Entry point for the Agentic Team workflow linter."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+
+COMMAND_LIB = Path(__file__).resolve().parents[1] / "lib" / "commands"
+sys.path.insert(0, str(COMMAND_LIB))
+
+from workflow_lint import main  # noqa: E402
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Commit and optionally push research-coordinator work-state records."""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+DEFAULT_PATHS = [
+    "condensed_report.md",
+    "report.md",
+    "TODO.md",
+    "images",
+    "report_page*.md",
+]
+
+
+def run_git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
+    return result
+
+
+def git_text(repo: Path, *args: str) -> str:
+    return run_git(repo, *args).stdout.strip()
+
+
+def has_origin(repo: Path) -> bool:
+    return run_git(repo, "remote", "get-url", "origin", check=False).returncode == 0
+
+
+def expand_pathspecs(repo: Path, pathspecs: list[str]) -> list[str]:
+    tracked = git_text(repo, "ls-files").splitlines()
+    expanded: list[str] = []
+    for pathspec in pathspecs:
+        if any(character in pathspec for character in "*?["):
+            existing = [path.relative_to(repo).as_posix() for path in repo.glob(pathspec)]
+            deleted_or_tracked = [path for path in tracked if fnmatch.fnmatch(path, pathspec)]
+            expanded.extend(sorted({*existing, *deleted_or_tracked}))
+        else:
+            path = repo / pathspec
+            if path.exists() or pathspec in tracked or any(item.startswith(f"{pathspec.rstrip('/')}/") for item in tracked):
+                expanded.append(pathspec)
+    return list(dict.fromkeys(expanded))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Commit and optionally push work-state research records.")
+    parser.add_argument(
+        "--work-state-dir",
+        default=os.environ.get("AR_WORK_STATE_DIR"),
+        help="Work-state directory. Defaults to AR_WORK_STATE_DIR.",
+    )
+    parser.add_argument(
+        "--message",
+        default="work-state: update research records",
+        help="Commit message.",
+    )
+    parser.add_argument(
+        "--path",
+        action="append",
+        dest="paths",
+        help="Pathspec to stage. May be repeated. Defaults to report/TODO/images paths.",
+    )
+    parser.add_argument("--no-pull", action="store_true", help="Skip git pull --ff-only before committing.")
+    parser.add_argument("--no-push", action="store_true", help="Skip git push after committing.")
+    args = parser.parse_args()
+
+    if not args.work_state_dir:
+        print("research-coordinator-work-state-commit: --work-state-dir or AR_WORK_STATE_DIR is required", file=sys.stderr)
+        return 2
+
+    repo = Path(args.work_state_dir).expanduser().resolve()
+    if not (repo / ".git").exists():
+        print(f"research-coordinator-work-state-commit: {repo} is not a Git checkout", file=sys.stderr)
+        return 2
+
+    try:
+        branch = git_text(repo, "branch", "--show-current")
+        if not branch:
+            raise RuntimeError(f"{repo} is not on a branch")
+
+        if not args.no_pull and has_origin(repo):
+            run_git(repo, "pull", "--ff-only")
+
+        paths = expand_pathspecs(repo, args.paths or DEFAULT_PATHS)
+        if not paths:
+            print("research-coordinator-work-state-commit: no matching work-state paths to stage")
+            return 0
+        run_git(repo, "add", "-A", "--", *paths)
+
+        status = git_text(repo, "status", "--porcelain")
+        if not status:
+            print("research-coordinator-work-state-commit: no work-state changes to commit")
+            return 0
+
+        run_git(repo, "commit", "-m", args.message)
+        commit = git_text(repo, "rev-parse", "HEAD")
+        if not args.no_push and has_origin(repo):
+            run_git(repo, "push", "-u", "origin", branch)
+            print(f"research-coordinator-work-state-commit: committed and pushed {commit}")
+        else:
+            print(f"research-coordinator-work-state-commit: committed {commit}")
+        return 0
+    except RuntimeError as exc:
+        print(f"research-coordinator-work-state-commit: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
