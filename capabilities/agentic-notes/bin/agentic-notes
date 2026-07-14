@@ -96,7 +96,6 @@ def update_note(args: list[str]) -> None:
         "-",
         "--project-dir",
         project_dir_from(request),
-        "--refresh-parent",
     ]
     result = run_command(
         command,
@@ -153,7 +152,6 @@ def rewrite_note(args: list[str]) -> None:
             project_dir_from(request),
             "--agent-type",
             agent_type,
-            "--refresh-parent",
         ]
         work_branch = field_value(target, "work_branch") or field_value(source, "work_branch")
         if work_branch:

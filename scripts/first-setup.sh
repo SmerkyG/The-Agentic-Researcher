@@ -279,7 +279,7 @@ echo ""
 echo "─── Main Agent ───"
 echo "  Top-level agent definition to render into the workspace instruction file."
 echo "  Keep the default unless your Agentic Team install or org repo provides another"
-echo "  agents/*.md definition with kind: main."
+echo "  capability agents/*.md definition with kind: main."
 echo ""
 AR_MAIN_AGENT_DEFAULT="research-coordinator"
 read -rp "Main agent [$AR_MAIN_AGENT_DEFAULT]: " AR_MAIN_AGENT
@@ -331,6 +331,13 @@ AR_WORKSPACE_ROOT=""
 
 # Extra directories to bind into the sandbox (colon-separated)
 AR_EXTRA_BIND_DIRS="$AR_EXTRA_BIND_DIRS"
+
+# Additional writable storage exposed through environment variables.
+# Entries override built-in mappings with the same variable name.
+# AR_STORAGE_DIRS=(
+#     "TRITON_CACHE_DIR=/scratch/local/\$USER/triton"
+#     "MY_MODEL_CACHE=/shared/cache/models"
+# )
 
 # Agentic Notes and main-agent configuration.
 AR_ORG_NOTES_REPO="$AR_ORG_NOTES_REPO"

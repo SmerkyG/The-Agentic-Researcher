@@ -31,6 +31,7 @@ capability_root() {
     local root
 
     for root in \
+        "$WORKSPACE_DIR/.agentic-team/capabilities/$capability_name" \
         "$STATE_ROOT/repos/org-agentic-notes/capabilities/$capability_name" \
         "$SCRIPT_DIR/capabilities/$capability_name"
     do
@@ -39,6 +40,57 @@ capability_root() {
         return 0
     done
 
+    return 1
+}
+
+available_capability_names() {
+    local capabilities_dir capability_dir
+
+    for capabilities_dir in \
+        "$WORKSPACE_DIR/.agentic-team/capabilities" \
+        "$STATE_ROOT/repos/org-agentic-notes/capabilities" \
+        "$SCRIPT_DIR/capabilities"
+    do
+        [[ -d "$capabilities_dir" ]] || continue
+        for capability_dir in "$capabilities_dir"/*; do
+            [[ -d "$capability_dir" ]] || continue
+            basename "$capability_dir"
+        done
+    done | sort -u
+}
+
+capability_required_names() {
+    local capability_dir="$1"
+    local manifest="$capability_dir/capability.toml"
+
+    [[ -f "$manifest" ]] || return 0
+    awk '
+        /^[[:space:]]*requires[[:space:]]*=/ {
+            value=$0
+            sub(/^[^=]*=/, "", value)
+            gsub(/[\[\],]/, " ", value)
+            gsub(/["\047]/, "", value)
+            count=split(value, names, /[[:space:]]+/)
+            for (i=1; i<=count; i++) {
+                if (names[i] != "") print names[i]
+            }
+        }
+    ' "$manifest"
+}
+
+capability_name_for_source() {
+    local source_path="$1"
+    local capability_name root
+
+    for capability_name in $(available_capability_names); do
+        root="$(capability_root "$capability_name")" || continue
+        case "$source_path" in
+            "$root"/agents/*|"$root"/skills/*)
+                printf '%s\n' "$capability_name"
+                return 0
+                ;;
+        esac
+    done
     return 1
 }
 
@@ -74,6 +126,8 @@ capability_runtime_root() {
 
     if [[ "$host_root" == "$SCRIPT_DIR/capabilities/$capability_name" ]]; then
         printf '%s/capabilities/%s\n' "$(ar_install_env_path)" "$capability_name"
+    elif [[ "$host_root" == "$WORKSPACE_DIR/.agentic-team/capabilities/$capability_name" ]]; then
+        workspace_runtime_path ".agentic-team/capabilities/$capability_name"
     else
         printf '%s\n' "$host_root"
     fi
@@ -89,6 +143,44 @@ capability_bin_runtime_paths() {
             [[ -d "$root/bin" ]] && printf '%s\n' "$bin_dir"
         fi
     done
+}
+
+capability_package_host_paths() {
+    local capability_name root
+
+    for capability_name in $(enabled_capability_names); do
+        root="$(capability_root "$capability_name")" || continue
+        [[ -d "$root/package" ]] && printf '%s\n' "$root/package"
+    done
+}
+
+capability_package_runtime_paths() {
+    local capability_name root runtime_root
+
+    for capability_name in $(enabled_capability_names); do
+        root="$(capability_root "$capability_name")" || continue
+        [[ -d "$root/package" ]] || continue
+        runtime_root="$(capability_runtime_root "$capability_name" "$root")"
+        printf '%s/package\n' "$runtime_root"
+    done
+}
+
+join_colon_paths() {
+    local path joined=""
+
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        joined="${joined:+$joined:}$path"
+    done
+    printf '%s\n' "$joined"
+}
+
+capability_workflow_host_path() {
+    capability_package_host_paths | join_colon_paths
+}
+
+capability_workflow_runtime_path() {
+    capability_package_runtime_paths | join_colon_paths
 }
 
 capability_hook_call() {
@@ -129,7 +221,98 @@ capability_render_command() {
         "$@"
 }
 
+CAPABILITY_RENDER_DIR=""
+CAPABILITY_RENDER_INSTRUCTION_PATH=""
+CAPABILITY_RENDER_SOURCE_PATHS=()
+CAPABILITY_RENDER_SOURCE_OUTPUTS=()
 CAPABILITY_SECTION_DIR=""
+
+cached_capability_source_path() {
+    local source_path="$1"
+    local index
+
+    for ((index=0; index<${#CAPABILITY_RENDER_SOURCE_PATHS[@]}; index++)); do
+        if [[ "${CAPABILITY_RENDER_SOURCE_PATHS[$index]}" == "$source_path" ]]; then
+            printf '%s\n' "${CAPABILITY_RENDER_SOURCE_OUTPUTS[$index]}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+render_source_with_capability() {
+    local renderer="$1"
+    local source_path="$2"
+    local rendered_path
+
+    if rendered_path="$(cached_capability_source_path "$source_path")"; then
+        cat "$rendered_path"
+        return 0
+    fi
+    echo "Error: Capability render bundle omitted $renderer source: $source_path" >&2
+    return 1
+}
+
+prepare_capability_render_bundle() {
+    local temp_root capability_name capability_dir source_path renderer source_kind
+    local output_relative output_path agent_name index=0
+    local -a render_args
+
+    temp_root="$RUNTIME_ROOT/tmp"
+    mkdir -p "$temp_root"
+    CAPABILITY_RENDER_DIR="$(mktemp -d "$temp_root/capability-render.XXXXXX")" || return 1
+    CAPABILITY_RENDER_INSTRUCTION_PATH="$CAPABILITY_RENDER_DIR/instructions.md"
+    CAPABILITY_RENDER_SOURCE_PATHS=()
+    CAPABILITY_RENDER_SOURCE_OUTPUTS=()
+    CAPABILITY_SECTION_DIR="$CAPABILITY_RENDER_DIR/agent-sections"
+
+    render_args=(bundle --output-dir "$CAPABILITY_RENDER_DIR")
+    for capability_name in $(enabled_capability_names); do
+        capability_dir="$(capability_root "$capability_name")" || continue
+        for source_path in "$capability_dir"/agents/*.md "$capability_dir"/skills/*/SKILL.md; do
+            [[ -f "$source_path" ]] || continue
+            renderer="$(frontmatter_value "$source_path" "renderer")"
+            [[ -n "$renderer" ]] || continue
+            source_kind="agent"
+            [[ "$(basename "$source_path")" == "SKILL.md" ]] && source_kind="skill"
+            output_relative="sources/$index.md"
+            output_path="$CAPABILITY_RENDER_DIR/$output_relative"
+            CAPABILITY_RENDER_SOURCE_PATHS+=("$source_path")
+            CAPABILITY_RENDER_SOURCE_OUTPUTS+=("$output_path")
+            render_args+=(--source "$renderer" "$source_kind" "$source_path" "$output_relative")
+            index=$((index + 1))
+        done
+    done
+
+    ACTIVE_PROJECT_AGENT_NAMES=()
+    for capability_name in $(enabled_capability_names); do
+        capability_dir="$(capability_root "$capability_name")" || continue
+        collect_active_project_agent_names "$capability_dir/agents"
+    done
+    if capability_enabled agentic-notes; then
+        for agent_name in "${ACTIVE_PROJECT_AGENT_NAMES[@]}"; do
+            render_args+=(
+                --agent-section agentic-notes "$agent_name" "agent-sections/$agent_name.md"
+            )
+        done
+    fi
+
+    if ! capability_render_command "${render_args[@]}"; then
+        cleanup_capability_render_bundle
+        return 1
+    fi
+}
+
+cleanup_capability_render_bundle() {
+    if [[ -n "$CAPABILITY_RENDER_DIR" ]]; then
+        rm -rf "$CAPABILITY_RENDER_DIR"
+    fi
+    CAPABILITY_RENDER_DIR=""
+    CAPABILITY_RENDER_INSTRUCTION_PATH=""
+    CAPABILITY_RENDER_SOURCE_PATHS=()
+    CAPABILITY_RENDER_SOURCE_OUTPUTS=()
+    CAPABILITY_SECTION_DIR=""
+}
 
 render_agentic_notes_for_agent_type() {
     local render_agent_type="$1"
@@ -141,41 +324,7 @@ render_agentic_notes_for_agent_type() {
         rendered_path="$CAPABILITY_SECTION_DIR/$render_agent_type.md"
         if [[ -f "$rendered_path" ]]; then
             cat "$rendered_path"
-            return 0
         fi
-    fi
-    capability_render_command agent-section \
-        --capability agentic-notes \
-        --agent-type "$render_agent_type" 2>/dev/null || true
-}
-
-prepare_capability_sections() {
-    [[ ${#ACTIVE_PROJECT_AGENT_NAMES[@]} -gt 0 ]] || return 0
-    capability_enabled agentic-notes || return 0
-
-    local temp_root render_args agent_name
-    temp_root="$RUNTIME_ROOT/tmp"
-    mkdir -p "$temp_root"
-    CAPABILITY_SECTION_DIR="$(mktemp -d "$temp_root/capability-sections.XXXXXX")" || {
-        CAPABILITY_SECTION_DIR=""
-        return 0
-    }
-
-    render_args=(agent-sections --capability agentic-notes --output-dir "$CAPABILITY_SECTION_DIR")
-    for agent_name in "${ACTIVE_PROJECT_AGENT_NAMES[@]}"; do
-        render_args+=(--agent-type "$agent_name")
-    done
-
-    if ! capability_render_command "${render_args[@]}" >/dev/null 2>/dev/null; then
-        rm -rf "$CAPABILITY_SECTION_DIR"
-        CAPABILITY_SECTION_DIR=""
-    fi
-}
-
-cleanup_capability_sections() {
-    if [[ -n "$CAPABILITY_SECTION_DIR" ]]; then
-        rm -rf "$CAPABILITY_SECTION_DIR"
-        CAPABILITY_SECTION_DIR=""
     fi
 }
 
@@ -188,31 +337,37 @@ render_markdown_agent_file() {
     local target_path="$2"
     local agent_name="$3"
     local temp_path="${target_path}.tmp"
+    local body_path="${target_path}.body.tmp"
+
+    if ! render_expanded_agent_body "$source_path" > "$body_path"; then
+        rm -f "$body_path"
+        return 1
+    fi
 
     awk -v agent_name="$agent_name" '
         BEGIN { inserted=0; in_frontmatter=0 }
         NR == 1 && $0 == "---" { in_frontmatter=1; print; next }
-        in_frontmatter && $0 ~ /^[[:space:]]*(kind|codex_reasoning_effort|model_reasoning_effort):[[:space:]]*/ { next }
+        in_frontmatter && $0 ~ /^[[:space:]]*(kind|codex_reasoning_effort|model_reasoning_effort|renderer|workflow_interface|workflow_module|workflow_entry|workflow_receiver):[[:space:]]*/ { next }
         in_frontmatter && $0 == "---" {
             print
             print ""
             print "<!-- Generated by agentic-team. Edit the source agent definition to change this agent. -->"
             inserted=1
-            in_frontmatter=0
-            next
+            exit
         }
-        { print }
         END {
             if (inserted == 0) {
                 print "<!-- Generated by agentic-team. Edit the source agent definition to change this agent. -->"
             }
         }
-    ' "$source_path" | expand_instruction_modules_from_stdin > "$temp_path"
+    ' "$source_path" > "$temp_path"
+    cat "$body_path" >> "$temp_path"
     {
         printf '\n'
         render_agentic_notes_for_agent_type "$agent_name"
     } >> "$temp_path"
 
+    rm -f "$body_path"
     mv "$temp_path" "$target_path"
 }
 
@@ -229,16 +384,12 @@ add_active_project_agent_name() {
 
 collect_active_project_agent_names() {
     local source_dir="$1"
-    local override_dir="$2"
     local source_path agent_name kind
 
     [[ -d "$source_dir" ]] || return 0
     for source_path in "$source_dir"/*.md; do
         [[ -f "$source_path" ]] || continue
         agent_name="$(agent_name_for_source "$source_path")"
-        if [[ -n "$override_dir" ]] && agent_name_exists_in_source_dir "$agent_name" "$override_dir"; then
-            continue
-        fi
         [[ -n "$agent_name" ]] || continue
         valid_agent_name "$agent_name" || continue
         kind="$(agent_kind_for_source "$source_path")"
@@ -289,7 +440,6 @@ render_agent_source_dir() {
     local source_dir="$2"
     local source_label="$3"
     local kind_filter="$4"
-    local override_dir="${5:-}"
     local managed_marker="Generated by agentic-team"
     local source_path agent_name kind description codex_reasoning_effort target_path
 
@@ -298,9 +448,6 @@ render_agent_source_dir() {
     for source_path in "$source_dir"/*.md; do
         [[ -f "$source_path" ]] || continue
         agent_name="$(agent_name_for_source "$source_path")"
-        if [[ -n "$override_dir" ]] && agent_name_exists_in_source_dir "$agent_name" "$override_dir"; then
-            continue
-        fi
         kind="$(agent_kind_for_source "$source_path")"
         if [[ "$kind" != "$kind_filter" ]]; then
             continue
@@ -330,34 +477,26 @@ render_agent_source_dir() {
 }
 
 setup_project_agents() {
-    local agent_root org_agent_dir=""
+    local agent_root capability_name capability_dir
     local render_status=0
     agent_root="$(project_agent_root_for_cli)"
     [[ -n "$agent_root" ]] || return 0
 
     mkdir -p "$agent_root"
 
-    if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
-        org_agent_dir="$STATE_ROOT/repos/org-agentic-notes/agents"
-    fi
-
     ACTIVE_PROJECT_AGENT_NAMES=()
-    collect_active_project_agent_names "$SCRIPT_DIR/agents" "$org_agent_dir"
-    collect_active_project_agent_names "$org_agent_dir" ""
+    for capability_name in $(enabled_capability_names); do
+        capability_dir="$(capability_root "$capability_name")" || continue
+        collect_active_project_agent_names "$capability_dir/agents"
+    done
     cleanup_inactive_managed_agents "$agent_root" "Generated by agentic-team"
-    prepare_capability_sections
-
-    if ! render_agent_source_dir "$agent_root" "$SCRIPT_DIR/agents" "built-in" "subagent" "$org_agent_dir"; then
-        render_status=1
-    fi
-
-    if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
-        if ! render_agent_source_dir "$agent_root" "$org_agent_dir" "org" "subagent"; then
+    for capability_name in $(enabled_capability_names); do
+        capability_dir="$(capability_root "$capability_name")" || continue
+        if ! render_agent_source_dir "$agent_root" "$capability_dir/agents" "$capability_name" "subagent"; then
             render_status=1
         fi
-    fi
+    done
 
-    cleanup_capability_sections
     return "$render_status"
 }
 
@@ -442,6 +581,7 @@ cleanup_capabilities() {
 launcher_cleanup() {
     local status=$?
     trap - EXIT
+    cleanup_capability_render_bundle || true
     if [[ "$CAPABILITY_CLEANUP_ENABLED" == "true" ]]; then
         run_capability_launcher_hooks cleanup || true
     fi
@@ -511,5 +651,9 @@ setup_capability_refresh_loops() {
 render_capability_instruction_parts() {
     export_ar_capability_env
 
-    capability_render_command instruction
+    if [[ -z "$CAPABILITY_RENDER_INSTRUCTION_PATH" || ! -f "$CAPABILITY_RENDER_INSTRUCTION_PATH" ]]; then
+        echo "Error: Capability render bundle did not produce instructions.md" >&2
+        return 1
+    fi
+    cat "$CAPABILITY_RENDER_INSTRUCTION_PATH"
 }

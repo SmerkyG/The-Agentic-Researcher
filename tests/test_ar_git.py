@@ -8,7 +8,7 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-BIN_DIR = REPO_ROOT / "scripts" / "bin"
+BIN_DIR = REPO_ROOT / "capabilities" / "branch" / "bin"
 
 
 def run(
@@ -112,8 +112,14 @@ def test_commit_snapshot_uses_temp_index_and_advances_work_branch(tmp_path: Path
             "experiment_log": {
                 "title": "Snapshot experiment",
                 "short_description": "snapshot experiment",
+                "code": {"branch": None, "commit": None},
+                "description": "Test branch snapshot experiment logging.",
+                "command": "test -f src/kernel.py",
                 "status": "completed",
+                "success": True,
                 "key_result": "helper produced commit",
+                "metrics": [],
+                "artifacts": [],
             },
         },
     }
@@ -157,8 +163,14 @@ def test_commit_snapshot_uses_temp_index_and_advances_work_branch(tmp_path: Path
     logged_request = yaml.safe_load(experiment_log_call.read_text(encoding="utf-8"))
     assert logged_request["code"]["branch"] == "kernel-search"
     assert logged_request["code"]["commit"] == committed["commit"]
-    assert logged_request["project_dir"] == str(repo)
+    assert "project_dir" not in logged_request
     assert logged_request["work_branch"] == "kernel-search"
+    assert committed["experiment_log_command"] == [
+        "experiment-log",
+        "append",
+        "--project-dir",
+        str(repo),
+    ]
 
     status = json.loads(
         run_agent_command("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
@@ -196,8 +208,13 @@ def test_commit_snapshot_reports_experiment_log_failure_after_commit(tmp_path: P
             "experiment_log": {
                 "title": "Snapshot experiment",
                 "short_description": "snapshot experiment",
+                "description": "Test failed experiment logging after commit.",
+                "command": "true",
                 "status": "completed",
+                "success": False,
                 "key_result": "helper produced commit",
+                "metrics": [],
+                "artifacts": [],
             },
         },
     }

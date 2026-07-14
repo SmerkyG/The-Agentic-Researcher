@@ -29,8 +29,39 @@ sandbox_apptainer_image_exists() {
     [[ -f "$SCRIPT_DIR/container/agentic_team.sif" ]]
 }
 
+sandbox_apptainer_setup_storage() {
+    APPTAINER_CACHEDIR="${APPTAINER_CACHEDIR:-$STATE_ROOT/apptainer_cache}"
+    CONTAINER_TMP="${APPTAINER_TMPDIR:-$APPTAINER_CACHEDIR/container-tmp}"
+    export APPTAINER_CACHEDIR
+    mkdir -p -m 700 "$APPTAINER_CACHEDIR" "$CONTAINER_TMP"
+}
+
 sandbox_apptainer_build_image() {
-    "$SCRIPT_DIR/container/build.sh" --runtime apptainer
+    sandbox_apptainer_validate_host
+
+    local state_root="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}"
+    APPTAINER_CACHEDIR="${APPTAINER_CACHEDIR:-$state_root/apptainer_cache}"
+    APPTAINER_TMPDIR="${APPTAINER_TMPDIR:-$state_root/apptainer_tmp}"
+    export APPTAINER_CACHEDIR APPTAINER_TMPDIR
+    mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
+
+    echo "Building Apptainer container..."
+    echo "This may take 5-10 minutes on first build."
+    echo ""
+
+    apptainer build \
+        --force \
+        "$SCRIPT_DIR/container/agentic_team.sif" \
+        "$SCRIPT_DIR/container/agentic_team.def"
+
+    echo ""
+    echo "Container built successfully: $SCRIPT_DIR/container/agentic_team.sif"
+    echo "Generating integrity checksum..."
+    (
+        cd "$SCRIPT_DIR/container"
+        sha256sum agentic_team.sif > agentic_team.sif.sha256
+    )
+    echo "Checksum saved to: $SCRIPT_DIR/container/agentic_team.sif.sha256"
 }
 
 sandbox_apptainer_validate() {
@@ -68,9 +99,6 @@ sandbox_apptainer_launch() {
         "${SSH_BIND[@]}"
         --bind "$WORKSPACE_DIR:/workspace"
         --bind "$SCRIPT_DIR:$AR_INSTALL_CONTAINER_DIR:ro"
-        --bind "$UV_CACHE_DIR:/uv-cache"
-        --bind "$UV_PYTHON_INSTALL_DIR:/uv-python"
-        --bind "$UV_TOOL_DIR:/uv-tools"
         --bind "$CONTAINER_TMP:/tmp"
         --bind "$STATE_ROOT:$STATE_ROOT"
         --bind "$AR_WORKSPACE_ROOT:$AR_WORKSPACE_ROOT"
@@ -82,6 +110,7 @@ sandbox_apptainer_launch() {
         "${CAPABILITY_BINDS[@]}"
         --pwd /workspace
     )
+    append_storage_bind_args BIND_ARGS --bind
 
     cli_call add_apptainer_binds
 

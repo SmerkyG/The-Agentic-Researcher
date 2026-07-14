@@ -1,61 +1,4 @@
 # Sourced by agentic-team. Instruction, module, skill, and managed agent rendering.
-
-setup_storage() {
-    STATE_ROOT="${AR_STATE_ROOT:-$HOME/.cache/agentic-team}"
-    RUNTIME_ROOT="${AR_RUNTIME_ROOT:-${AR_WORKSPACE_ROOT:-}/.runtime}"
-    AR_RUNTIME_ROOT="$RUNTIME_ROOT"
-    export AR_RUNTIME_ROOT RUNTIME_ROOT
-
-    if [[ -n "${AR_WORKSPACE_ROOT:-}" ]]; then
-        mkdir -p "$AR_WORKSPACE_ROOT"
-    fi
-    if [[ -n "${RUNTIME_ROOT:-}" ]]; then
-        mkdir -p "$RUNTIME_ROOT"
-    fi
-    if [[ -n "${AR_ARTIFACTS_DIR:-}" ]]; then
-        mkdir -p "$AR_ARTIFACTS_DIR"
-    fi
-
-    if [[ "$AR_SANDBOX" == "none" ]]; then
-        [[ -n "${UV_CACHE_DIR:-}" ]] && export UV_CACHE_DIR
-        [[ -n "${UV_PYTHON_INSTALL_DIR:-}" ]] && export UV_PYTHON_INSTALL_DIR
-        [[ -n "${UV_TOOL_DIR:-}" ]] && export UV_TOOL_DIR
-        mkdir -p "$STATE_ROOT"
-        CACHE_BASE="$STATE_ROOT"
-        HF_HOME="${HF_HOME:-$CACHE_BASE/hf_home}"
-        TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$CACHE_BASE/triton_cache}"
-        WANDB_DIR="${WANDB_DIR:-$CACHE_BASE/wandb}"
-        return
-    fi
-
-    UV_CACHE_DIR="${UV_CACHE_DIR:-$STATE_ROOT/uv/cache}"
-    UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$STATE_ROOT/uv/python}"
-    UV_TOOL_DIR="${UV_TOOL_DIR:-$STATE_ROOT/uv/tools}"
-    export UV_CACHE_DIR UV_PYTHON_INSTALL_DIR UV_TOOL_DIR
-
-    # Sandbox-specific config directory (isolated from host)
-    AR_CONFIG_STORE="$STATE_ROOT/agentic-team-config"
-
-    mkdir -p "$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" "$UV_TOOL_DIR" \
-             "$AR_CONFIG_STORE"
-
-    # Apptainer cache
-    if [[ "$AR_SANDBOX" == "apptainer" ]]; then
-        export APPTAINER_CACHEDIR="$STATE_ROOT/apptainer_cache"
-        mkdir -p -m 700 "$APPTAINER_CACHEDIR"
-
-        CONTAINER_TMP="$STATE_ROOT/apptainer_cache/container-tmp"
-        mkdir -p -m 700 "$CONTAINER_TMP"
-    fi
-
-    CACHE_BASE="$STATE_ROOT"
-    HF_HOME="$CACHE_BASE/hf_home"
-    TRITON_CACHE_DIR="$CACHE_BASE/triton_cache"
-    WANDB_DIR="$CACHE_BASE/wandb"
-    mkdir -p "$HF_HOME" "$TRITON_CACHE_DIR" "$WANDB_DIR"
-
-    cli_call_all setup_storage
-}
 render_instruction_module_block() {
     local capability_name="$1"
     local module_name="$2"
@@ -74,6 +17,39 @@ render_instruction_module_block() {
 
     cat "$module_path"
     printf '\n'
+}
+
+render_agent_source_body() {
+    local source_path="$1"
+    local renderer source_kind
+
+    renderer="$(frontmatter_value "$source_path" "renderer")"
+    if [[ -n "$renderer" ]]; then
+        if ! capability_enabled "$renderer"; then
+            echo "Error: Source renderer capability is not enabled: $renderer" >&2
+            return 1
+        fi
+        source_kind="agent"
+        [[ "$(basename "$source_path")" == "SKILL.md" ]] && source_kind="skill"
+        render_source_with_capability "$renderer" "$source_path" "$source_kind"
+    else
+        strip_frontmatter "$source_path"
+    fi
+}
+
+render_expanded_agent_body() {
+    local source_path="$1"
+    local temp_root="${RUNTIME_ROOT:-${TMPDIR:-/tmp}}"
+    local body_path
+
+    mkdir -p "$temp_root"
+    body_path="$(mktemp "$temp_root/workflow-body.XXXXXX")"
+    if ! render_agent_source_body "$source_path" > "$body_path"; then
+        rm -f "$body_path"
+        return 1
+    fi
+    expand_instruction_modules_from_stdin < "$body_path"
+    rm -f "$body_path"
 }
 
 expand_instruction_modules_from_stdin() {
@@ -120,29 +96,15 @@ agent_kind_for_source() {
     printf '%s\n' "$kind"
 }
 
-agent_name_exists_in_source_dir() {
-    local agent_name="$1"
-    local source_dir="$2"
-    local source_path candidate_name
-
-    [[ -d "$source_dir" ]] || return 1
-    for source_path in "$source_dir"/*.md; do
-        [[ -f "$source_path" ]] || continue
-        candidate_name="$(agent_name_for_source "$source_path")"
-        [[ "$candidate_name" == "$agent_name" ]] && return 0
-    done
-    return 1
-}
-
 find_agent_source_by_name() {
     local agent_name="$1"
-    local source_dir source_path candidate_name
+    local source_dir source_path candidate_name capability_name capability_dir
     local source_dirs=()
 
-    if [[ -n "${AR_ORG_NOTES_REPO:-}" && -d "$STATE_ROOT/repos/org-agentic-notes/agents" ]]; then
-        source_dirs+=("$STATE_ROOT/repos/org-agentic-notes/agents")
-    fi
-    source_dirs+=("$SCRIPT_DIR/agents")
+    for capability_name in $(available_capability_names); do
+        capability_dir="$(capability_root "$capability_name")" || continue
+        source_dirs+=("$capability_dir/agents")
+    done
 
     for source_dir in "${source_dirs[@]}"; do
         [[ -d "$source_dir" ]] || continue
@@ -171,7 +133,7 @@ render_main_agent_instruction_part() {
         source_path="$MAIN_AGENT_SOURCE_PATH"
     elif ! source_path="$(find_agent_source_by_name "$main_agent")"; then
         echo "Error: Main agent definition not found: $main_agent"
-        echo "Add agents/$main_agent.md with frontmatter 'kind: main' to Agentic Team or the org repo."
+        echo "Add an agents/$main_agent.md definition with 'kind: main' inside a project, org, or built-in capability."
         exit 1
     fi
 
@@ -181,7 +143,7 @@ render_main_agent_instruction_part() {
         exit 1
     fi
 
-    strip_frontmatter "$source_path" | expand_instruction_modules_from_stdin
+    render_expanded_agent_body "$source_path"
 }
 
 workspace_display_path_for_target() {
@@ -204,7 +166,6 @@ SUBAGENT_CATALOG_EMITTED=false
 append_subagent_catalog_source_dir() {
     local agent_root="$1"
     local source_dir="$2"
-    local override_dir="${3:-}"
     local source_path agent_name kind description target_path contract_path
 
     [[ -d "$source_dir" ]] || return 0
@@ -212,9 +173,6 @@ append_subagent_catalog_source_dir() {
     for source_path in "$source_dir"/*.md; do
         [[ -f "$source_path" ]] || continue
         agent_name="$(agent_name_for_source "$source_path")"
-        if [[ -n "$override_dir" ]] && agent_name_exists_in_source_dir "$agent_name" "$override_dir"; then
-            continue
-        fi
         [[ -n "$agent_name" ]] || continue
         valid_agent_name "$agent_name" || continue
         kind="$(agent_kind_for_source "$source_path")"
@@ -234,22 +192,19 @@ append_subagent_catalog_source_dir() {
 }
 
 render_subagent_catalog_instruction_part() {
-    local agent_root org_agent_dir=""
+    local agent_root capability_name capability_dir
 
     agent_root="$(project_agent_root_for_cli)"
-    if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
-        org_agent_dir="$STATE_ROOT/repos/org-agentic-notes/agents"
-    fi
 
     printf '## Available Subagents\n\n'
-    printf 'Subagents are delegated tools. Standing user request: when these instructions say to launch, use, or route work through a named subagent, treat that as an explicit user request for Codex subagent delegation. You must try to spawn the named subagent and must not replace it with a direct helper command merely because such a command exists. If the subagent spawn fails, try to spawn it one more time. If the second spawn attempt fails or subagent delegation is unavailable or policy-blocked, stop that handoff and alert the user instead of silently falling back to a direct helper. Use this catalog to decide when a subagent exists, but do not infer the full input shape from memory. Before launching a subagent, read the rendered definition file at the `Contract:` path printed on that subagent'\''s catalog line and use that file'\''s `## Subagent Contract` section for the typed request template. On Codex, those contracts are project-scoped custom agents under `.codex/agents/`, not `.agents`. Do not search `.agents` for subagent contracts; `.agents/skills` is a skill discovery directory on some CLIs, not the subagent contract catalog. Each subagent has exactly one request template; if a workflow needs a different request shape, use a different subagent.\n\n'
+    printf 'Subagents are delegated tools. Standing user request: when these instructions say to launch, use, or route work through a named subagent, treat that as an explicit user request for Codex subagent delegation. You must try to spawn the named subagent and must not replace it with a direct helper command merely because such a command exists. If the subagent spawn fails, try to spawn it one more time. If the second spawn attempt fails or subagent delegation is unavailable or policy-blocked, stop that handoff and alert the user instead of silently falling back to a direct helper. Use this catalog to decide when a subagent exists, but do not infer the full input shape from memory. Before launching a subagent, read the rendered definition file at the `Contract:` path printed on that subagent'\''s catalog line. Follow its `## Subagent Contract` request template or its embedded `## Imperative Workflow` entry class. On Codex, these definitions are project-scoped custom agents under `.codex/agents/`, not `.agents`. Do not search `.agents` for subagent definitions; `.agents/skills` is a skill discovery directory on some CLIs, not the subagent catalog.\n\n'
 
     SUBAGENT_CATALOG_EMITTED=false
     if [[ -n "$agent_root" ]]; then
-        append_subagent_catalog_source_dir "$agent_root" "$SCRIPT_DIR/agents" "$org_agent_dir"
-        if [[ -n "${AR_ORG_NOTES_REPO:-}" ]]; then
-            append_subagent_catalog_source_dir "$agent_root" "$org_agent_dir" ""
-        fi
+        for capability_name in $(enabled_capability_names); do
+            capability_dir="$(capability_root "$capability_name")" || continue
+            append_subagent_catalog_source_dir "$agent_root" "$capability_dir/agents"
+        done
     fi
     if [[ "$SUBAGENT_CATALOG_EMITTED" != "true" ]]; then
         printf '(none)\n'
@@ -271,7 +226,7 @@ render_agentic_state_instruction_part() {
     printf 'PROJECT_STATE_DIR="${AR_PROJECT_STATE_DIR:?}"\n'
     printf 'WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"\n'
     printf '```\n\n'
-    printf 'Capabilities own the files they place in those worktrees. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `condensed_report.md`, paginated report files (`report_page1.md` oldest, `report.md` newest/current), `TODO.md`, and report-ready `images/` at the work-state worktree root.\n'
+    printf 'Capabilities own the files they place in those worktrees. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `condensed_report.md`, numbered report files (`report_page1.md` oldest and the highest number current), `TODO.md`, and report-ready `images/` at the work-state worktree root.\n'
 }
 
 setup_instruction_target() {
@@ -359,40 +314,38 @@ render_instruction_document() {
 
 normalize_markdown_file() {
     local target_path="$1"
+    local temp_path
     [[ -f "$target_path" ]] || return 0
-    python3 - "$target_path" <<'PY'
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-lines = path.read_text(encoding="utf-8").splitlines()
-out: list[str] = []
-blank_run = 0
-in_fence = False
-
-for line in lines:
-    stripped = line.strip()
-    if stripped.startswith("```"):
-        in_fence = not in_fence
-        out.append(line.rstrip())
-        blank_run = 0
-        continue
-    if in_fence:
-        out.append(line.rstrip())
-        continue
-    if stripped == "":
-        blank_run += 1
-        if blank_run <= 1:
-            out.append("")
-        continue
-    blank_run = 0
-    out.append(line.rstrip())
-
-while out and out[-1] == "":
-    out.pop()
-
-path.write_text("\n".join(out) + "\n", encoding="utf-8")
-PY
+    temp_path="${target_path}.normalize.tmp"
+    awk '
+        {
+            sub(/[[:space:]]+$/, "")
+            stripped=$0
+            sub(/^[[:space:]]+/, "", stripped)
+            if (stripped ~ /^```/) {
+                in_fence = !in_fence
+                lines[++count] = $0
+                blank_run = 0
+                next
+            }
+            if (in_fence) {
+                lines[++count] = $0
+                next
+            }
+            if (stripped == "") {
+                blank_run++
+                if (blank_run <= 1) lines[++count] = ""
+                next
+            }
+            blank_run = 0
+            lines[++count] = $0
+        }
+        END {
+            while (count > 0 && lines[count] == "") count--
+            for (line_number=1; line_number<=count; line_number++) print lines[line_number]
+        }
+    ' "$target_path" > "$temp_path"
+    mv "$temp_path" "$target_path"
 }
 strip_frontmatter() {
     local source_path="$1"
@@ -550,19 +503,25 @@ render_managed_skill_file() {
     local source_path="$1"
     local target_path="$2"
     local temp_path="${target_path}.tmp"
+    local body_path="${target_path}.body.tmp"
+
+    if ! render_expanded_agent_body "$source_path" > "$body_path"; then
+        rm -f "$temp_path" "$body_path"
+        return 1
+    fi
 
     awk '
         BEGIN { inserted=0; in_frontmatter=0 }
         NR == 1 && $0 == "---" { in_frontmatter=1; print; next }
+        in_frontmatter && $0 ~ /^[[:space:]]*(renderer|workflow_interface|workflow_module|workflow_entry|workflow_receiver):[[:space:]]*/ { next }
         in_frontmatter && $0 == "---" {
             print
             print ""
             print "<!-- Generated by agentic-team. Edit the source skill to change this file. -->"
             inserted=1
-            in_frontmatter=0
-            next
+            exit
         }
-        { print }
+        in_frontmatter { print; next }
         END {
             if (inserted == 0) {
                 print "<!-- Generated by agentic-team. Edit the source skill to change this file. -->"
@@ -570,5 +529,9 @@ render_managed_skill_file() {
         }
     ' "$source_path" > "$temp_path"
 
+    printf '\n' >> "$temp_path"
+    cat "$body_path" >> "$temp_path"
+
     mv "$temp_path" "$target_path"
+    rm -f "$body_path"
 }

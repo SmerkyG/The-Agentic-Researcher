@@ -20,7 +20,7 @@ Read the following files (skip any that don't exist):
 1. `$PROJECT_DIR/REVISION.md` -- previous retrospective entries (if any)
 2. The active work branch experiment `SUMMARY.md` if available, plus individual experiment YAML files only when needed
 3. The active work branch `condensed_report.md` if available -- compact current findings and direction
-4. The active work branch `report.md` and relevant `report_pageN.md` files if available -- work-branch-local narrative analysis and report quality. `report_page1.md` is the oldest archived page, higher page numbers are newer, and `report.md` is newest/current.
+4. The active work branch numbered `report_pageN.md` files if available -- work-branch-local narrative analysis and report quality. `report_page1.md` is oldest and the highest number is current.
 5. The active work branch `TODO.md` if available -- work-branch-local open items and deferred work
 6. `$PROJECT_DIR/$INSTRUCTION_FILE` -- the materialized instructions governing this session, including the selected main-agent section
 7. The injected Agentic Notes section in `$INSTRUCTION_FILE`, especially project agent-type notes for the active agent type; read on-demand note files only when they are needed to evaluate a concrete note-related issue
@@ -35,7 +35,8 @@ experiment-log summary --project-dir "$PROJECT_DIR" --work-branch "$AR_WORK_BRAN
 WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"
 test -f "$WORK_STATE_DIR/condensed_report.md" && sed -n '1,180p' "$WORK_STATE_DIR/condensed_report.md"
 ls "$WORK_STATE_DIR"/report_page*.md 2>/dev/null || true
-test -f "$WORK_STATE_DIR/report.md" && sed -n '1,220p' "$WORK_STATE_DIR/report.md"
+latest_report="$(find "$WORK_STATE_DIR" -maxdepth 1 -type f -name 'report_page*.md' -printf '%f\n' | sort -V | tail -1)"
+test -n "$latest_report" && sed -n '1,220p' "$WORK_STATE_DIR/$latest_report"
 test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
 ```
 
@@ -74,11 +75,9 @@ Reflect on these additional dimensions:
 - Were corrections routed through the `experiment-corrector` subagent instead of manually altering old experiment fields?
 - Was `SUMMARY.md` append-maintained rather than regenerated or hand-edited?
 - Is `condensed_report.md` concise, current, and about one page rather than a growing chronology?
-- Are report pages paginated correctly with `report_page1.md` as the oldest page,
-  higher page numbers newer, and `report.md` newest/current? When `report.md`
-  grows beyond 300 lines, the next report write should start from a fresh
-  `report.md` by archiving the old page whole to the next `report_pageN.md`,
-  not by splitting existing sections.
+- Are report pages numbered correctly with `report_page1.md` as the oldest page
+  and the highest page number current? Does report appending start the next
+  numbered page only when the latest page already has 300 lines?
 - Is the report clear, well-structured, and useful as a work-branch-local narrative record?
 - Are report entries detailed enough to understand methods, analysis, and verification?
 - Are analyses insightful or superficial?

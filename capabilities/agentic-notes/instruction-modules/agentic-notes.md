@@ -60,4 +60,6 @@ expected.
 
 Do not edit org, project, or work-branch source notes directly from the main agent.
 Use `note-updater` so pulls, duplicate checks, optional rare cleanup rewrites,
-commits, pushes, and instruction refresh happen consistently.
+commits, and pushes happen consistently. Launcher startup and compaction refresh
+own materialized instruction rendering; note updates do not rewrite instruction
+files directly.

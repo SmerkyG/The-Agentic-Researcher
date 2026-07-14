@@ -1,0 +1,74 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["PyYAML>=6.0"]
+# ///
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+from command_common import load_request, main, print_json
+from branch_git_common import cleanup_commit_artifacts
+
+
+HELP = """Clean up branch-snapshot and branch-commit local artifacts.
+
+Reads YAML from stdin.
+
+Default behavior is a dry run. It scans
+${AR_RUNTIME_ROOT:-$AR_WORKSPACE_ROOT/.runtime}/commit-snapshots and selects
+committed, failed, or snapshotted artifacts older than 7 days. Queued and
+running commits are skipped unless explicitly selected, and live worker PIDs are
+always skipped.
+
+Examples:
+  branch-commit-cleanup <<'YAML'
+  dry_run: true
+  older_than_days: 7
+  YAML
+
+  branch-commit-cleanup <<'YAML'
+  dry_run: false
+  older_than_days: 0
+  states: [committed, failed]
+  project_dir: .
+  YAML
+
+  branch-commit-cleanup <<'YAML'
+  dry_run: false
+  snapshot_dir: /home/user/my-project-at/.runtime/commit-snapshots/123-research-main
+  older_than_days: 0
+  YAML
+
+Fields:
+  dry_run          Optional. Defaults to true. When true, only report planned deletions.
+  older_than_days  Optional. Defaults to 7. Set 0 to disable the age filter.
+  states           Optional. Defaults to [committed, failed, snapshotted].
+  project_dir      Optional. Only clean snapshots created from this project checkout.
+  snapshot_dir     Optional. Clean one explicit snapshot directory.
+  snapshot_dirs    Optional. Clean explicit snapshot directories.
+  include_active   Optional. Defaults to false. Queued/running entries with live PIDs still skip.
+"""
+
+
+def run() -> None:
+    response = {"command": "branch-commit-cleanup"}
+    response.update(cleanup_commit_artifacts(load_request()))
+    print_json(response)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        prog="branch-commit-cleanup",
+        description="Clean branch-snapshot metadata and branch-commit temporary worktrees.",
+        epilog=HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.parse_args()
+    raise SystemExit(main(run))

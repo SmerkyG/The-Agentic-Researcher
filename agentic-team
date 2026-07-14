@@ -47,6 +47,7 @@ source "$LAUNCHER_LIB_DIR/registry.sh"
 source "$LAUNCHER_LIB_DIR/config.sh"
 source "$LAUNCHER_LIB_DIR/workspace.sh"
 source "$LAUNCHER_LIB_DIR/preflight.sh"
+source "$LAUNCHER_LIB_DIR/storage.sh"
 source "$LAUNCHER_LIB_DIR/instructions.sh"
 source "$LAUNCHER_LIB_DIR/utils.sh"
 source "$LAUNCHER_LIB_DIR/capabilities.sh"
@@ -100,6 +101,7 @@ main() {
     if [[ "$RENDER_ONLY" != "true" ]]; then
         profile_step "setup_compaction_hooks" setup_compaction_hooks
         profile_step "setup_steering_hooks" setup_steering_hooks
+        profile_step "write_hook_configs" flush_managed_hook_json
         profile_step "translate_cli_args" translate_cli_args
         profile_step "setup_auth_binds" setup_auth_binds
         profile_step "setup_research_binds" setup_research_binds
@@ -109,12 +111,14 @@ main() {
         profile_step "print_debug_launch" print_debug_launch
         profile_step "cli setup_runtime" cli_call setup_runtime
     fi
+    profile_step "prepare_capability_render_bundle" prepare_capability_render_bundle
     profile_step "setup_project_skills" setup_project_skills
     profile_step "setup_project_agents" setup_project_agents
     profile_step "render_instruction_document" render_instruction_document
     if [[ -n "${INSTRUCTION_TARGET:-}" ]]; then
         profile_step "normalize_instruction_file" normalize_markdown_file "$WORKSPACE_DIR/$INSTRUCTION_TARGET"
     fi
+    cleanup_capability_render_bundle
     profile_step "setup_generated_file_excludes" setup_generated_file_excludes
     if [[ "$RENDER_ONLY" == "true" ]]; then
         profile_elapsed "startup setup total" "$startup_start_us"

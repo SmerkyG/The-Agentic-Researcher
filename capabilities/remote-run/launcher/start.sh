@@ -1,5 +1,5 @@
 echo "Starting remote-run dispatcher daemon..."
-bash "$SCRIPT_DIR/scripts/dispatcher.sh" "$DISPATCH_DIR/dispatch.conf" \
+bash "$SCRIPT_DIR/capabilities/remote-run/launcher/dispatcher.sh" "$DISPATCH_DIR/dispatch.conf" \
     >> "$DISPATCH_DIR/dispatcher.log" 2>&1 &
 REMOTE_RUN_DISPATCHER_PID=$!
 sleep 2

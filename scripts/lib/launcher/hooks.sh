@@ -1,41 +1,44 @@
 # Sourced by agentic-team. Compaction hook rendering and CLI argument translation.
 
+MANAGED_HOOK_TARGETS=()
+MANAGED_HOOK_MARKERS=()
+MANAGED_HOOK_PATCHES=()
+
 merge_managed_hook_json() {
     local target_path="$1"
     local marker="$2"
     local patch_json="$3"
 
-    mkdir -p "$(dirname "$target_path")"
+    MANAGED_HOOK_TARGETS+=("$target_path")
+    MANAGED_HOOK_MARKERS+=("$marker")
+    MANAGED_HOOK_PATCHES+=("$patch_json")
+}
 
-    AR_HOOK_PATCH_JSON="$patch_json" python3 - "$target_path" "$marker" <<'PY'
+flush_managed_hook_json() {
+    [[ ${#MANAGED_HOOK_TARGETS[@]} -gt 0 ]] || return 0
+
+    local temp_root patch_dir index
+    local -a python_args
+    temp_root="${RUNTIME_ROOT:-${TMPDIR:-/tmp}}"
+    mkdir -p "$temp_root"
+    patch_dir="$(mktemp -d "$temp_root/hook-patches.XXXXXX")" || return 1
+    python_args=()
+
+    for ((index=0; index<${#MANAGED_HOOK_TARGETS[@]}; index++)); do
+        printf '%s\n' "${MANAGED_HOOK_PATCHES[$index]}" > "$patch_dir/$index.json"
+        python_args+=(
+            "${MANAGED_HOOK_TARGETS[$index]}"
+            "${MANAGED_HOOK_MARKERS[$index]}"
+            "$patch_dir/$index.json"
+        )
+    done
+
+    if ! python3 - "${python_args[@]}" <<'PY'
 import json
-import os
 import sys
 from pathlib import Path
 
-target = Path(sys.argv[1])
-marker = sys.argv[2]
-patch = json.loads(os.environ["AR_HOOK_PATCH_JSON"])
-
-if target.exists():
-    try:
-        data = json.loads(target.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        print(f"{target}: invalid JSON ({exc})", file=sys.stderr)
-        sys.exit(1)
-else:
-    data = {}
-
-if not isinstance(data, dict):
-    print(f"{target}: top-level JSON value must be an object", file=sys.stderr)
-    sys.exit(1)
-
-data_hooks = data.setdefault("hooks", {})
-if not isinstance(data_hooks, dict):
-    print(f"{target}: hooks must be an object", file=sys.stderr)
-    sys.exit(1)
-
-def is_managed_group(group):
+def is_managed_group(group, marker):
     if not isinstance(group, dict):
         return False
     for hook in group.get("hooks", []):
@@ -51,20 +54,58 @@ def is_managed_group(group):
             return True
     return False
 
-for event_name, groups in patch.get("hooks", {}).items():
-    if not isinstance(groups, list):
-        print(f"patch hooks.{event_name}: value must be an array", file=sys.stderr)
-        sys.exit(1)
-    existing = data_hooks.get(event_name, [])
-    if not isinstance(existing, list):
-        existing = []
-    data_hooks[event_name] = [
-        group for group in existing
-        if not is_managed_group(group)
-    ] + groups
+documents = {}
+for offset in range(1, len(sys.argv), 3):
+    target = Path(sys.argv[offset])
+    marker = sys.argv[offset + 1]
+    patch_path = Path(sys.argv[offset + 2])
+    patch = json.loads(patch_path.read_text(encoding="utf-8"))
 
-target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    if target not in documents:
+        if target.exists():
+            try:
+                data = json.loads(target.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                print(f"{target}: invalid JSON ({exc})", file=sys.stderr)
+                sys.exit(1)
+        else:
+            data = {}
+        if not isinstance(data, dict):
+            print(f"{target}: top-level JSON value must be an object", file=sys.stderr)
+            sys.exit(1)
+        documents[target] = data
+
+    data = documents[target]
+    data_hooks = data.setdefault("hooks", {})
+    if not isinstance(data_hooks, dict):
+        print(f"{target}: hooks must be an object", file=sys.stderr)
+        sys.exit(1)
+
+    for event_name, groups in patch.get("hooks", {}).items():
+        if not isinstance(groups, list):
+            print(f"patch hooks.{event_name}: value must be an array", file=sys.stderr)
+            sys.exit(1)
+        existing = data_hooks.get(event_name, [])
+        if not isinstance(existing, list):
+            existing = []
+        data_hooks[event_name] = [
+            group for group in existing
+            if not is_managed_group(group, marker)
+        ] + groups
+
+for target, data in documents.items():
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 PY
+    then
+        rm -rf "$patch_dir"
+        return 1
+    fi
+
+    rm -rf "$patch_dir"
+    MANAGED_HOOK_TARGETS=()
+    MANAGED_HOOK_MARKERS=()
+    MANAGED_HOOK_PATCHES=()
 }
 
 render_compaction_context_hook_script() {

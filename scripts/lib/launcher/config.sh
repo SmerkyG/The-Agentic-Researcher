@@ -35,7 +35,14 @@ LAUNCHER_ENV_OVERRIDE_VARS=(
     AR_CUSTOM_ANTHROPIC_ENDPOINT
     AR_HTTPS_PROXY
     AR_HTTP_PROXY
+    APPTAINER_CACHEDIR
+    APPTAINER_TMPDIR
 )
+
+# Additional writable storage directories configured as ENV_NAME=/host/path.
+# Bash arrays are intentionally config-file-only. Ambient cache variables are
+# still used as built-in host-path overrides when no array entry replaces them.
+AR_STORAGE_DIRS=()
 
 capture_env_overrides() {
     local var override_var unset_marker="__AR_UNSET__"
@@ -164,6 +171,7 @@ INSTRUCTION_FILE_REGENERATED=false
 BRANCH_GUARD_FILE=""
 BRANCH_GUARD_HEARTBEAT_PID=""
 MAIN_AGENT_SOURCE_PATH=""
+MAIN_AGENT_CAPABILITY=""
 AGENTIC_NOTES_CAPABILITY_SETUP=false
 
 append_capability_override() {

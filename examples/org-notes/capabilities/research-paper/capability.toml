@@ -1,0 +1,2 @@
+description = "Provide organization research-paper agents."
+requires = ["agentic-notes"]

@@ -13,7 +13,6 @@ import json
 import os
 import re
 import sys
-import textwrap
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -113,26 +112,6 @@ def ensure_work_agent_notes_state_files(repo: Path, branch_name: str) -> list[Pa
         changed_paths.append(keep)
 
     return changed_paths
-
-
-def render_parent_instructions(project_dir: Path, cli: str | None) -> None:
-    command = [
-        str(REPO_ROOT / "agentic-team"),
-        "--sandbox",
-        "none",
-        "--cli",
-        cli or os.environ.get("AR_CLI", "codex"),
-        "--render-only",
-        "--main-agent",
-        agent_type(),
-    ]
-    if os.environ.get("AR_WORK_BRANCH"):
-        command.extend(["--work-branch", os.environ["AR_WORK_BRANCH"]])
-    command.append(str(project_dir))
-    result = run(command, check=False)
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip()
-        raise AtNotesError(f"instruction refresh failed: {detail}")
 
 
 def ensure_project_state(
@@ -582,40 +561,6 @@ def build_notes_section(
     return "\n".join(lines)
 
 
-def instruction_target(cli: str) -> str:
-    if cli == "gemini":
-        return "GEMINI.md"
-    if cli in {"opencode", "codex", "pi"}:
-        return "AGENTS.md"
-    return "CLAUDE.md"
-
-
-def render_instruction_template(target: Path) -> None:
-    source = REPO_ROOT / "INSTRUCTIONS.md"
-    text = source.read_text(encoding="utf-8")
-    if os.environ.get("AR_SANDBOX") in {"docker", "podman"}:
-        text = re.sub(
-            r"<!-- DOCKER-OMIT-START -->.*?<!-- DOCKER-OMIT-END -->\n?",
-            "",
-            text,
-            flags=re.S,
-        )
-    target.write_text(text, encoding="utf-8")
-
-
-def generate_instructions(args: argparse.Namespace) -> None:
-    project_dir = Path(args.project_dir).resolve()
-    active_agent_type = agent_type(args.agent_type)
-    target = project_dir / instruction_target(args.cli)
-    if not target.exists():
-        render_instruction_template(target)
-    text = target.read_text(encoding="utf-8")
-    if not getattr(args, "skip_ensure_project_state", False):
-        ensure_project_state(project_dir, push_changes=False)
-    notes_section = build_notes_section(project_dir, active_agent_type)
-    target.write_text(text.rstrip() + "\n\n" + notes_section, encoding="utf-8")
-
-
 def render_section(args: argparse.Namespace) -> None:
     project_dir = Path(args.project_dir).resolve()
     print(
@@ -827,11 +772,6 @@ def update_note(args: argparse.Namespace) -> None:
             print("No note changes needed.")
             return
         if push(repo):
-            if args.refresh_parent:
-                args._post_lock_action = lambda: render_parent_instructions(
-                    project_dir,
-                    os.environ.get("AR_CLI", "codex"),
-                )
             print(f"Updated {repo}")
             return
         if attempt == 0:
@@ -863,8 +803,6 @@ def replace_note(args: argparse.Namespace) -> None:
     changed = commit_if_changed(repo, f"notes: replace {note_path.relative_to(repo)}", [note_path])
     if changed and not push(repo):
         raise AtNotesError("push was rejected")
-    if args.refresh_parent:
-        args._post_lock_action = lambda: render_parent_instructions(project_dir, args.cli)
     print(f"Updated {note_path}")
 
 
@@ -892,13 +830,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--agent-type", default=None)
     p.set_defaults(func=steering_message)
 
-    p = sub.add_parser("generate-instructions")
-    p.add_argument("--project-dir", required=True)
-    p.add_argument("--agent-type", default=None)
-    p.add_argument("--cli", required=True, choices=["claude", "gemini", "opencode", "codex", "pi"])
-    p.add_argument("--skip-ensure-project-state", action="store_true")
-    p.set_defaults(func=generate_instructions)
-
     p = sub.add_parser("render-sections")
     p.add_argument("--project-dir", required=True)
     p.add_argument("--output-dir", required=True)
@@ -921,7 +852,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("update-note")
     p.add_argument("--request", required=True)
     p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
-    p.add_argument("--refresh-parent", action="store_true")
     p.set_defaults(func=update_note)
 
     p = sub.add_parser("replace-note")
@@ -931,8 +861,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
     p.add_argument("--agent-type", required=True)
     p.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH"))
-    p.add_argument("--refresh-parent", action="store_true")
-    p.add_argument("--cli", default=os.environ.get("AR_CLI", "codex"), choices=["claude", "gemini", "opencode", "codex", "pi"])
     p.set_defaults(func=replace_note)
 
     p = sub.add_parser("ensure-project-state")
@@ -977,7 +905,7 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
             add_work_branch_lock(work_branch_value)
     elif command == "init-org-notes":
         add_org_lock()
-    elif command in {"generate-instructions", "render-section", "render-sections", "read-note"}:
+    elif command in {"render-section", "render-sections", "read-note"}:
         if os.environ.get("AR_ORG_NOTES_REPO"):
             add_org_lock()
         add_project_lock()
@@ -1006,13 +934,6 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
         elif scope == "work":
             work_branch_value = target.get("work_branch") or source.get("work_branch")
             add_work_branch_lock(str(work_branch_value or "") or None)
-        if getattr(args, "refresh_parent", False):
-            if os.environ.get("AR_ORG_NOTES_REPO"):
-                add_org_lock()
-            add_project_lock()
-            work_branch_value = os.environ.get("AR_WORK_BRANCH")
-            if work_branch_value:
-                add_work_branch_lock(work_branch_value)
     elif command == "replace-note":
         scope = getattr(args, "scope", "")
         if scope == "org":
@@ -1021,13 +942,6 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
             add_project_lock()
         elif scope == "work":
             add_work_branch_lock(getattr(args, "work_branch", None))
-        if getattr(args, "refresh_parent", False):
-            if os.environ.get("AR_ORG_NOTES_REPO"):
-                add_org_lock()
-            add_project_lock()
-            work_branch_value = os.environ.get("AR_WORK_BRANCH")
-            if work_branch_value:
-                add_work_branch_lock(work_branch_value)
 
     unique: list[Path] = []
     seen: set[Path] = set()
@@ -1063,14 +977,10 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "request", None) == "-":
             args._request_text = sys.stdin.read()
             args._request_data = parse_yaml_mapping(args._request_text, "stdin request")
-        post_lock_action: Callable[[], None] | None = None
         with ExitStack() as stack:
             for lock_path in lock_paths_for_args(args):
                 stack.enter_context(state_lock(lock_path))
             args.func(args)
-            post_lock_action = getattr(args, "_post_lock_action", None)
-        if post_lock_action is not None:
-            post_lock_action()
     except AtNotesError as exc:
         print(f"agentic-notes-internal: {exc}", file=sys.stderr)
         return 1

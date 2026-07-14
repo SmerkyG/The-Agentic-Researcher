@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, replace
+from functools import lru_cache
 import importlib.util
 import os
 from pathlib import Path
@@ -39,6 +40,7 @@ class RenderContext:
     state_root: Path
     capability_name: str = ""
     capability_root: Path | None = None
+    capability_roots: tuple[Path, ...] = ()
 
 
 def enabled_capability_names() -> list[str]:
@@ -57,8 +59,9 @@ def enabled_capability_names() -> list[str]:
     return names
 
 
-def capability_root(capability_name: str, state_root: Path) -> Path | None:
+def capability_root(capability_name: str, project_dir: Path, state_root: Path) -> Path | None:
     candidates = [
+        project_dir / ".agentic-team" / "capabilities" / capability_name,
         state_root / "repos" / "org-agentic-notes" / "capabilities" / capability_name,
         REPO_ROOT / "capabilities" / capability_name,
     ]
@@ -73,6 +76,7 @@ def module_name_for(capability_name: str) -> str:
     return f"agentic_team_capability_render_{safe}"
 
 
+@lru_cache(maxsize=None)
 def load_render_module(capability_name: str, root: Path) -> ModuleType | None:
     render_path = root / "render.py"
     if not render_path.is_file():
@@ -91,11 +95,20 @@ def load_render_module(capability_name: str, root: Path) -> ModuleType | None:
 
 
 def capability_context(base: RenderContext, capability_name: str) -> tuple[RenderContext, ModuleType | None]:
-    root = capability_root(capability_name, base.state_root)
+    root = capability_root(capability_name, base.project_dir, base.state_root)
     if root is None:
         return replace(base, capability_name=capability_name, capability_root=None), None
     ctx = replace(base, capability_name=capability_name, capability_root=root)
     return ctx, load_render_module(capability_name, root)
+
+
+def enabled_capability_roots(project_dir: Path, state_root: Path) -> tuple[Path, ...]:
+    roots: list[Path] = []
+    for capability_name in enabled_capability_names():
+        root = capability_root(capability_name, project_dir, state_root)
+        if root is not None:
+            roots.append(root)
+    return tuple(roots)
 
 
 def call_render_func(module: ModuleType, function_name: str, *args: Any) -> str:
@@ -112,58 +125,81 @@ def call_render_func(module: ModuleType, function_name: str, *args: Any) -> str:
     return value.rstrip()
 
 
-def render_instruction(args: argparse.Namespace, base: RenderContext) -> None:
-    sections: list[str] = []
+def bundle_output_path(output_dir: Path, relative_path: str) -> Path:
+    path = (output_dir / relative_path).resolve()
+    if path != output_dir and output_dir not in path.parents:
+        raise CapabilityRenderError(f"bundle output escapes output directory: {relative_path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def write_bundle_text(output_dir: Path, relative_path: str, text: str) -> None:
+    path = bundle_output_path(output_dir, relative_path)
+    path.write_text(text.rstrip() + ("\n" if text else ""), encoding="utf-8")
+
+
+def render_bundle(args: argparse.Namespace, base: RenderContext) -> None:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for capability_name, source_kind, source_path, output_path in args.source_request:
+        if source_kind not in {"agent", "skill"}:
+            raise CapabilityRenderError(f"invalid source kind: {source_kind}")
+        ctx, module = capability_context(base, capability_name)
+        if module is None:
+            raise CapabilityRenderError(f"source renderer capability not found: {capability_name}")
+        source = Path(source_path).resolve()
+        rendered = call_render_func(module, "render_source", ctx, source, source_kind)
+        if not rendered:
+            raise CapabilityRenderError(
+                f"{module.__file__}: render_source returned no content for {source}"
+            )
+        write_bundle_text(output_dir, output_path, rendered)
+
+    section_requests: dict[str, list[tuple[str, str]]] = {}
+    for capability_name, agent_type, output_path in args.agent_section_request:
+        section_requests.setdefault(capability_name, []).append((agent_type, output_path))
+
+    for capability_name, requests in section_requests.items():
+        ctx, module = capability_context(base, capability_name)
+        if module is None:
+            continue
+        render_many = getattr(module, "render_agent_sections", None)
+        if render_many is not None:
+            if not callable(render_many):
+                raise CapabilityRenderError(
+                    f"{module.__file__}: render_agent_sections is not callable"
+                )
+            rendered = render_many(ctx, [agent_type for agent_type, _output in requests])
+            if not isinstance(rendered, dict):
+                raise CapabilityRenderError(
+                    f"{module.__file__}: render_agent_sections must return a dict"
+                )
+            for agent_type, output_path in requests:
+                text = rendered.get(agent_type, "")
+                if not isinstance(text, str):
+                    raise CapabilityRenderError(
+                        f"{module.__file__}: render_agent_sections must return dict[str, str]"
+                    )
+                write_bundle_text(output_dir, output_path, text)
+        else:
+            for agent_type, output_path in requests:
+                text = call_render_func(module, "render_agent_section", ctx, agent_type)
+                write_bundle_text(output_dir, output_path, text)
+
+    instruction_sections: list[str] = []
     for capability_name in enabled_capability_names():
         ctx, module = capability_context(base, capability_name)
         if module is None:
             continue
         section = call_render_func(module, "render_instruction", ctx)
         if section:
-            sections.append(section)
-    if sections:
-        print("\n\n".join(sections).rstrip())
-        print()
-
-
-def render_agent_section(args: argparse.Namespace, base: RenderContext) -> None:
-    ctx, module = capability_context(base, args.capability)
-    if module is None:
-        return
-    section = call_render_func(module, "render_agent_section", ctx, args.section_agent_type)
-    if section:
-        print(section)
-
-
-def render_agent_sections(args: argparse.Namespace, base: RenderContext) -> None:
-    output_dir = Path(args.output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    ctx, module = capability_context(base, args.capability)
-    if module is None:
-        return
-
-    rendered: dict[str, str] = {}
-    render_many = getattr(module, "render_agent_sections", None)
-    if render_many is not None:
-        if not callable(render_many):
-            raise CapabilityRenderError(f"{module.__file__}: render_agent_sections is not callable")
-        value = render_many(ctx, args.section_agent_type)
-        if not isinstance(value, dict):
-            raise CapabilityRenderError(f"{module.__file__}: render_agent_sections must return a dict")
-        for agent_type, text in value.items():
-            if not isinstance(agent_type, str) or not isinstance(text, str):
-                raise CapabilityRenderError(
-                    f"{module.__file__}: render_agent_sections must return dict[str, str]"
-                )
-            rendered[agent_type] = text.rstrip()
-    else:
-        for agent_type in args.section_agent_type:
-            rendered[agent_type] = call_render_func(module, "render_agent_section", ctx, agent_type)
-
-    for agent_type, text in rendered.items():
-        if not re.match(r"^[A-Za-z0-9._-]+$", agent_type):
-            raise CapabilityRenderError(f"invalid agent type: {agent_type}")
-        (output_dir / f"{agent_type}.md").write_text(text.rstrip() + "\n", encoding="utf-8")
+            instruction_sections.append(section)
+    write_bundle_text(
+        output_dir,
+        "instructions.md",
+        "\n\n".join(instruction_sections).rstrip(),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -174,19 +210,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cli", default=os.environ.get("AR_CLI", "codex"))
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("instruction")
-    p.set_defaults(func=render_instruction)
-
-    p = sub.add_parser("agent-section")
-    p.add_argument("--capability", required=True)
-    p.add_argument("--agent-type", dest="section_agent_type", required=True)
-    p.set_defaults(func=render_agent_section)
-
-    p = sub.add_parser("agent-sections")
-    p.add_argument("--capability", required=True)
+    p = sub.add_parser("bundle")
     p.add_argument("--output-dir", required=True)
-    p.add_argument("--agent-type", dest="section_agent_type", action="append", required=True)
-    p.set_defaults(func=render_agent_sections)
+    p.add_argument(
+        "--source",
+        dest="source_request",
+        action="append",
+        nargs=4,
+        default=[],
+        metavar=("CAPABILITY", "KIND", "SOURCE", "OUTPUT"),
+    )
+    p.add_argument(
+        "--agent-section",
+        dest="agent_section_request",
+        action="append",
+        nargs=3,
+        default=[],
+        metavar=("CAPABILITY", "AGENT_TYPE", "OUTPUT"),
+    )
+    p.set_defaults(func=render_bundle)
 
     return parser
 
@@ -194,13 +236,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    project_dir = Path(args.project_dir).resolve()
+    state_root = Path(os.environ.get("AR_STATE_ROOT", "~/.cache/agentic-team")).expanduser()
     base = RenderContext(
-        project_dir=Path(args.project_dir).resolve(),
+        project_dir=project_dir,
         agent_type=args.agent_type,
         work_branch=args.work_branch,
         cli=args.cli,
         repo_root=REPO_ROOT,
-        state_root=Path(os.environ.get("AR_STATE_ROOT", "~/.cache/agentic-team")).expanduser(),
+        state_root=state_root,
+        capability_roots=enabled_capability_roots(project_dir, state_root),
     )
     try:
         args.func(args, base)

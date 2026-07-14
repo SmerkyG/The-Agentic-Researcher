@@ -12,8 +12,9 @@ mkdir -p "$new_state/context/parent" "$new_state/images"
 if [[ -f "$parent_state/condensed_report.md" && ! -e "$new_state/context/parent/condensed_report.md" ]]; then
     cp "$parent_state/condensed_report.md" "$new_state/context/parent/condensed_report.md"
 fi
-if [[ -f "$parent_state/report.md" && ! -e "$new_state/context/parent/report.md" ]]; then
-    cp "$parent_state/report.md" "$new_state/context/parent/report.md"
+latest_parent_report="$(find "$parent_state" -maxdepth 1 -type f -name 'report_page*.md' -printf '%f\n' | sort -V | tail -1)"
+if [[ -n "$latest_parent_report" && ! -e "$new_state/context/parent/$latest_parent_report" ]]; then
+    cp "$parent_state/$latest_parent_report" "$new_state/context/parent/$latest_parent_report"
 fi
 if [[ -f "$parent_state/TODO.md" && ! -e "$new_state/context/parent/TODO.md" ]]; then
     cp "$parent_state/TODO.md" "$new_state/context/parent/TODO.md"
@@ -60,7 +61,7 @@ def selected_files(repo: Path) -> list[str]:
     names = [
         name
         for name in tracked
-        if name in {"condensed_report.md", "report.md", "report_old.md", "TODO.md", "TODO_old.md"}
+        if name in {"condensed_report.md", "TODO.md"}
         or (name.startswith("report_page") and name.endswith(".md"))
         or name.startswith("images/")
     ]
@@ -73,7 +74,7 @@ def selected_files(repo: Path) -> list[str]:
         key=report_page_sort_key,
     )
     preferred.extend(report_pages)
-    for name in ("report_old.md", "report.md", "TODO_old.md", "TODO.md"):
+    for name in ("TODO.md",):
         if name in names:
             preferred.append(name)
     preferred.extend(name for name in names if name not in preferred)
@@ -188,10 +189,10 @@ readme_lines = [
     "The immediate parent's lightweight records are copied locally when present:",
     "",
     "- `context/parent/condensed_report.md`",
-    "- `context/parent/report.md`",
+    "- the latest `context/parent/report_pageN.md`",
     "- `context/parent/TODO.md`",
     "",
-    "All inherited condensed-report/report-page/legacy-report/TODO/image references are flattened in `context/manifest.yaml`.",
+    "All inherited condensed-report/report-page/TODO/image references are flattened in `context/manifest.yaml`.",
     "Read a referenced file with:",
     "",
     "```bash",
@@ -222,23 +223,20 @@ if not condensed_report.exists():
         encoding="utf-8",
     )
 
-report = new_state / "report.md"
+report = new_state / "report_page1.md"
 if not report.exists():
     report.write_text(
         f"# Research Log: {work_name}\n\n"
         f"Created from `{parent_branch}` into `{new_branch}`.\n\n"
         "## Inherited Context\n\n"
         "Read `context/README.md` first. The immediate parent's `condensed_report.md`, "
-        "`report.md`, and `TODO.md` are copied under `context/parent/` when "
+        "latest numbered report page, and `TODO.md` are copied under `context/parent/` when "
         "present; larger artifacts such as older report pages and images are "
         "referenced by commit in `context/manifest.yaml`.\n\n"
-        f"Use this report for new analysis, derivations, figures, verification notes, "
-        f"and selected result tables for `{new_branch}`. Before adding new "
-        f"narrative report content, run "
-        f"`research-coordinator-report-rollover --work-state-dir \"$WORK_STATE_DIR\"`. "
-        f"If `report.md` already exceeds 300 lines, the helper archives it whole "
-        f"to the next `report_pageN.md` file, with `report_page1.md` as the "
-        f"oldest page and higher numbers newer.\n",
+        f"Use numbered report pages for new analysis, derivations, figures, "
+        f"verification notes, and selected result tables for `{new_branch}`. "
+        f"Append sections with `research-coordinator-report-append`; it starts the "
+        f"next numbered page when the latest page already has 300 lines.\n",
         encoding="utf-8",
     )
 

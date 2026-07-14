@@ -477,6 +477,14 @@ prompt_at_source_ref() {
 }
 
 relative_path_between() {
+    local relative_path
+
+    if command -v realpath >/dev/null 2>&1 \
+        && relative_path="$(realpath --relative-to="$2" "$1" 2>/dev/null)"; then
+        printf '%s\n' "$relative_path"
+        return 0
+    fi
+
     python3 - "$1" "$2" <<'PY'
 import os
 import sys
@@ -776,9 +784,10 @@ resolve_main_agent_metadata() {
 
     if ! MAIN_AGENT_SOURCE_PATH="$(find_agent_source_by_name "$main_agent")"; then
         echo "Error: Main agent definition not found: $main_agent"
-        echo "Add agents/$main_agent.md with frontmatter 'kind: main' to Agentic Team or the org repo."
+        echo "Add an agents/$main_agent.md definition with 'kind: main' inside a project, org, or built-in capability."
         exit 1
     fi
+    MAIN_AGENT_CAPABILITY="$(capability_name_for_source "$MAIN_AGENT_SOURCE_PATH" || true)"
 
     kind="$(agent_kind_for_source "$MAIN_AGENT_SOURCE_PATH")"
     if [[ "$kind" != "main" ]]; then

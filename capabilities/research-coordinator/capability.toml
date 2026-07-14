@@ -1,0 +1,2 @@
+description = "Provide the research coordinator, its subagents, skills, and state tools."
+requires = ["imperative-workflows", "agentic-notes", "experiment-log", "branch"]

@@ -16,6 +16,8 @@ FIRST_SETUP_SCRIPT = REPO_ROOT / "scripts" / "first-setup.sh"
 CLEANUP_SCRIPT = REPO_ROOT / "scripts" / "cleanup.sh"
 CLI_ADAPTER_DIR = REPO_ROOT / "scripts" / "lib" / "cli"
 LAUNCHER_LIB_DIR = REPO_ROOT / "scripts" / "lib" / "launcher"
+SANDBOX_LIB_DIR = REPO_ROOT / "scripts" / "lib" / "sandbox"
+REMOTE_RUN_LAUNCHER_DIR = REPO_ROOT / "capabilities" / "remote-run" / "launcher"
 REAL_GIT = shutil.which("git")
 
 
@@ -156,6 +158,33 @@ def test_build_script_reads_xdg_config_for_proxy(base_env: dict[str, str], tmp_p
     assert result.returncode == 0
     podman_log = read_log(base_env["FAKE_PODMAN_LOG"])
     assert "env:https_proxy=http://proxy.example:3128 http_proxy=http://proxy.example:3128" in podman_log
+
+
+def test_sandbox_implementations_stay_out_of_generic_launcher_files() -> None:
+    instructions = (LAUNCHER_LIB_DIR / "instructions.sh").read_text()
+    storage = (LAUNCHER_LIB_DIR / "storage.sh").read_text()
+    build = BUILD_SCRIPT.read_text()
+    apptainer = (SANDBOX_LIB_DIR / "apptainer.sh").read_text()
+
+    assert "APPTAINER_" not in instructions
+    assert "APPTAINER_" not in storage
+    assert "apptainer build" not in build
+    assert "sandbox_call_required build_image" in build
+    assert "sandbox_apptainer_setup_storage" in apptainer
+    assert "apptainer build" in apptainer
+
+
+def test_remote_run_owns_its_dispatcher() -> None:
+    dispatcher = REMOTE_RUN_LAUNCHER_DIR / "dispatcher.sh"
+    start = (REMOTE_RUN_LAUNCHER_DIR / "start.sh").read_text()
+    dispatcher_text = dispatcher.read_text()
+
+    assert dispatcher.is_file()
+    assert "srun --overlap" in dispatcher_text
+    assert "STORAGE_NAMES" in dispatcher_text
+    assert "UV_CACHE_DIR:/uv-cache" not in dispatcher_text
+    assert "capabilities/remote-run/launcher/dispatcher.sh" in start
+    assert not (REPO_ROOT / "scripts" / "dispatcher.sh").exists()
 
 
 def test_launcher_apply_defaults_keeps_real_auth_defaults(base_env: dict[str, str]) -> None:
@@ -319,11 +348,43 @@ def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str]
     assert f"{REPO_ROOT}:/opt/agentic-team:ro" in podman_log
     assert "AR_SANDBOX=podman" in podman_log
     assert "AR_INSTALL_DIR=/opt/agentic-team" in podman_log
+    assert "AR_WORKFLOW_PATH=" in podman_log
+    assert "/opt/agentic-team/capabilities/imperative-workflows/package" in podman_log
+    assert "/opt/agentic-team/capabilities/research-coordinator/package" in podman_log
     assert "PATH=" in podman_log
     assert "/opt/agentic-team/scripts/bin" in podman_log
     assert "/opt/agentic-team/scripts/lib/commands" in podman_log
     assert "--entrypoint /bin/bash" in podman_log
     assert "/test_sandbox.sh" in podman_log
+
+
+def test_configured_storage_dirs_mount_and_export_in_podman(
+    base_env: dict[str, str], tmp_path: Path
+) -> None:
+    xdg_config_home = tmp_path / "xdg-config-storage"
+    model_cache = tmp_path / "shared" / "models"
+    triton_cache = tmp_path / "local" / "triton"
+    write_xdg_config(
+        xdg_config_home,
+        "AR_STORAGE_DIRS=(\n"
+        f'    "MY_MODEL_CACHE={model_cache}"\n'
+        f'    "TRITON_CACHE_DIR={triton_cache}"\n'
+        ")\n",
+    )
+
+    result = run(
+        [str(AGENTIC_TEAM), "--sandbox", "podman", "--cli", "codex", "--test"],
+        {**base_env, "XDG_CONFIG_HOME": str(xdg_config_home)},
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert model_cache.is_dir()
+    assert triton_cache.is_dir()
+    podman_log = read_log(base_env["FAKE_PODMAN_LOG"])
+    assert f"-v {model_cache}:/agent-storage/MY_MODEL_CACHE" in podman_log
+    assert "-e MY_MODEL_CACHE=/agent-storage/MY_MODEL_CACHE" in podman_log
+    assert f"-v {triton_cache}:/agent-storage/TRITON_CACHE_DIR" in podman_log
+    assert "-e TRITON_CACHE_DIR=/agent-storage/TRITON_CACHE_DIR" in podman_log
 
 
 def test_launcher_auto_builds_missing_podman_image(
@@ -369,7 +430,9 @@ def test_launcher_native_runs_host_cli__without_container(
         "printf 'uv_cache:%s\\n' \"${UV_CACHE_DIR-}\" >> \"${FAKE_CODEX_LOG:?}\"\n"
         "printf 'uv_python:%s\\n' \"${UV_PYTHON_INSTALL_DIR-}\" >> \"${FAKE_CODEX_LOG:?}\"\n"
         "printf 'uv_tools:%s\\n' \"${UV_TOOL_DIR-}\" >> \"${FAKE_CODEX_LOG:?}\"\n"
-        "printf 'artifacts:%s\\n' \"${AR_ARTIFACTS_DIR-}\" >> \"${FAKE_CODEX_LOG:?}\"\n",
+        "printf 'artifacts:%s\\n' \"${AR_ARTIFACTS_DIR-}\" >> \"${FAKE_CODEX_LOG:?}\"\n"
+        "printf 'workflow_path:%s\\n' \"${AR_WORKFLOW_PATH-}\" >> \"${FAKE_CODEX_LOG:?}\"\n"
+        "printf 'branch_snapshot:%s\\n' \"$(command -v branch-snapshot)\" >> \"${FAKE_CODEX_LOG:?}\"\n",
     )
     native_env = {**base_env, "FAKE_CODEX_LOG": str(cli__log)}
     for key in ("UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "UV_TOOL_DIR"):
@@ -403,19 +466,20 @@ def test_launcher_native_runs_host_cli__without_container(
     assert "uv_python:\n" in cli__log_text
     assert "uv_tools:\n" in cli__log_text
     assert f"artifacts:{expected_artifacts}" in cli__log_text
+    assert f"{REPO_ROOT}/capabilities/imperative-workflows/package" in cli__log_text
+    assert f"{REPO_ROOT}/capabilities/research-coordinator/package" in cli__log_text
+    assert "capabilities/branch/bin/branch-snapshot" in cli__log_text
     assert not (Path(native_env["HOME"]) / ".cache" / "agentic-team" / "uv").exists()
     research_skill = workspace / ".agents" / "skills" / "do_research" / "SKILL.md"
     assert research_skill.exists()
-    assert "name: \"do_research\"" in research_skill.read_text()
-    codex_agent = workspace / ".codex" / "agents" / "gpu-job-runner.toml"
+    assert "name: do_research" in research_skill.read_text()
+    codex_agent = workspace / ".codex" / "agents" / "research-finalizer.toml"
     assert codex_agent.exists()
     codex_agent_text = codex_agent.read_text()
-    assert 'name = "gpu-job-runner"' in codex_agent_text
+    assert 'name = "research-finalizer"' in codex_agent_text
     assert 'model_reasoning_effort = "low"' in codex_agent_text
     assert "developer_instructions" in codex_agent_text
-    experiment_logger = workspace / ".codex" / "agents" / "experiment-logger.toml"
-    assert experiment_logger.exists()
-    assert 'name = "experiment-logger"' in experiment_logger.read_text()
+    assert "Follow `ResearchFinalizerWorkflow`" in codex_agent_text
     assert not (workspace / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
     codex_hook = workspace / ".codex" / "hooks" / "agentic-team-compaction.py"
     assert codex_hook.exists()
@@ -446,6 +510,45 @@ def test_launcher_native_runs_host_cli__without_container(
     assert str(workspace) in post_compact_command
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
+
+
+def test_configured_storage_dirs_export_host_paths_in_native_mode(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-native-storage"
+    init_work_branch_workspace(workspace)
+    cli_log = tmp_path / "codex-native-storage.log"
+    model_cache = tmp_path / "shared" / "models"
+    xdg_config_home = tmp_path / "xdg-config-native-storage"
+    write_xdg_config(
+        xdg_config_home,
+        "AR_STORAGE_DIRS=(\n"
+        f'    "MY_MODEL_CACHE={model_cache}"\n'
+        ")\n",
+    )
+    make_executable(
+        fake_bin / "codex",
+        "#!/bin/sh\n"
+        "printf '%s' \"${MY_MODEL_CACHE-}\" > \"${FAKE_CODEX_LOG:?}\"\n",
+    )
+
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--sandbox", "none",
+            "--cli", "codex",
+            *at_launch_args(workspace),
+        ],
+        {
+            **base_env,
+            "XDG_CONFIG_HOME": str(xdg_config_home),
+            "FAKE_CODEX_LOG": str(cli_log),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert model_cache.is_dir()
+    assert cli_log.read_text() == str(model_cache)
 
 
 def test_launcher_native_codex_yolo_uses_current_codex_flag(
@@ -760,10 +863,10 @@ def test_native_cluster_run_backend_renders_project_skill(
     assert "AGENTIC-TEAM-SKILL-INSTRUCTIONS-START cluster-run" not in instruction_text
     assert "Job Backend: cluster-run" in instruction_text
     assert (workspace / ".agents" / "skills" / "retro" / "SKILL.md").exists()
-    experiment_agent = workspace / ".codex" / "agents" / "experiment-runner.toml"
-    assert experiment_agent.exists()
-    assert 'model_reasoning_effort = "medium"' in experiment_agent.read_text()
-    assert (workspace / ".codex" / "agents" / "experiment-logger.toml").exists()
+    finalizer_agent = workspace / ".codex" / "agents" / "research-finalizer.toml"
+    assert finalizer_agent.exists()
+    assert 'model_reasoning_effort = "low"' in finalizer_agent.read_text()
+    assert "Follow `ResearchFinalizerWorkflow`" in finalizer_agent.read_text()
 
 
 def test_gpu_backend_flag_is_removed(base_env: dict[str, str], tmp_path: Path) -> None:
@@ -877,7 +980,7 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
     assert result.returncode == 0
     assert (workspace / ".claude" / "skills" / "cluster-run" / "SKILL.md").exists()
     assert (workspace / ".claude" / "skills" / "do_research" / "SKILL.md").exists()
-    claude_agent = workspace / ".claude" / "agents" / "gpu-job-runner.md"
+    claude_agent = workspace / ".claude" / "agents" / "research-finalizer.md"
     assert claude_agent.exists()
     assert "codex_reasoning_effort" not in claude_agent.read_text()
     claude_hook = workspace / ".claude" / "hooks" / "agentic-team-compaction.py"
@@ -920,7 +1023,7 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     assert result.returncode == 0
     assert (workspace / ".gemini" / "skills" / "cluster-run" / "SKILL.md").exists()
     assert (workspace / ".gemini" / "skills" / "do_research" / "SKILL.md").exists()
-    gemini_agent = workspace / ".gemini" / "agents" / "gpu-job-runner.md"
+    gemini_agent = workspace / ".gemini" / "agents" / "research-finalizer.md"
     assert gemini_agent.exists()
     assert "codex_reasoning_effort" not in gemini_agent.read_text()
     assert not (workspace / ".agents" / "skills" / "cluster-run" / "SKILL.md").exists()
@@ -975,7 +1078,7 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     assert result.returncode == 0
     assert (workspace / ".opencode" / "skills" / "cluster-run" / "SKILL.md").exists()
     assert (workspace / ".opencode" / "skills" / "do_research" / "SKILL.md").exists()
-    opencode_agent = workspace / ".opencode" / "agents" / "gpu-job-runner.md"
+    opencode_agent = workspace / ".opencode" / "agents" / "research-finalizer.md"
     assert opencode_agent.exists()
     opencode_agent_text = opencode_agent.read_text()
     assert "mode: subagent" in opencode_agent_text

@@ -73,6 +73,9 @@ branch. Existing non-empty notes in the new work-state branch are not
 overwritten.
 
 The generated instruction file is a materialized view. Do not edit injected note text there directly.
+Note updates change Git-backed note state only. Launcher startup and compaction
+refresh rematerialize instruction files; Agentic Notes commands do not select or
+rewrite CLI-specific instruction targets.
 
 ## Background Refresh and Steering
 

@@ -1,14 +1,26 @@
-# Imperative Research Workflows
+# Imperative Agent Workflows
 
-This directory contains an experimental rewrite of the current
-`research-coordinator` role and research subagents using
-`docs/imperative-workflow-specs.md`.
+An imperative workflow is valid Python that may be followed directly by an
+agent or executed by a conforming runtime. Follow the selected workflow class
+statement by statement; ordinary Python ordering, scope, branches, loops,
+calls, and return values are authoritative.
 
-The live agent definitions in `agents/*.md` are unchanged. Treat
-`research_roles.py` as a reviewable prototype for the code-shaped workflow
-contract: ordering, branching, waiting, and failure behavior are Python control
-flow; `self.do([...])` takes a literal actions list of atomic plain-language work
-items. Related model-facing work is grouped by putting multiple strings in that
-same list when one structured result depends on several related substeps.
-`self.fill(SchemaType, ...)` is used when an `Annotated` dataclass schema fully
-describes the requested structured output without a separate action string.
+The generated instructions include the minimal public contract and workflow
+source. Contract docstrings define model-operation semantics. They do not add
+workflow steps.
+
+Top-level agents and subagents include their transitive workflow modules because
+they start new contexts. Skills run inside an existing main-agent context and
+include only their own workflow module. If a skill imports a definition that is
+not already in the active instructions, resolve and read that module from the
+colon-separated package roots in `$AR_WORKFLOW_PATH` by replacing dots with `/`
+and appending `.py`.
+
+Use `launch()` only for tracked asynchronous work and assign its result to an
+annotated `Job[...]`. Use bare `launch_detached()` for fire-and-forget work; it
+returns no handle and the caller must not wait or poll it.
+
+Deterministic helper behavior is authoritative, followed by workflow code,
+then declarative Markdown guidance. Agent-definition YAML frontmatter is
+launcher metadata: Agentic Team consumes it before stripping it from the
+model-facing instruction body.

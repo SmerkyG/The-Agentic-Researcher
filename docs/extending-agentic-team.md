@@ -1,11 +1,13 @@
 # Extending Agentic Team
 
-Agentic Team has two main extension surfaces:
+Agentic Team extensions are capability packages. A capability can provide main
+agents, subagents, tools, skills, Python workflow modules, rendering behavior,
+launcher hooks, and startup instructions. Selecting a main agent automatically
+enables the capability that provides it.
 
-- `agents/` for portable main-agent and subagent definitions.
-- `capabilities/` for selected packages that can contribute commands, launcher hooks, Python instruction renderers, model-facing skills, and startup instructions.
-
-The org repo can use the same `agents/` and `capabilities/` layout. Org definitions win over built-ins with the same name, and org capabilities win over built-in capabilities with the same name.
+Capabilities may come from the project, configured organization repo, or
+Agentic Team installation. A project capability replaces an org or built-in
+capability with the same name; an org capability replaces the built-in one.
 
 ## Capability Packages
 
@@ -13,6 +15,11 @@ A capability is one selected package. It may contain any combination of these pa
 
 ```text
   capabilities/<name>/
+  capability.toml        # optional metadata and capability dependencies
+  agents/                 # optional main-agent and subagent definitions
+    agent-name.md
+  package/                # optional Python workflow contracts and operations
+    python-package/
   instruction-modules/    # optional reusable Markdown included by agents
     module-name.md
   skills/                  # optional model-facing skills rendered into CLI skill dirs
@@ -48,13 +55,26 @@ Or configure the complete enabled list:
 agentic-team --setup AR_CAPABILITIES=agentic-notes,experiment-log,remote-run
 ```
 
-The default capability list is `agentic-notes,experiment-log`.
+The default capability list is `agentic-notes,experiment-log`. In addition, the
+launcher enables the capability providing the selected main agent and follows
+the transitive `requires` list from each enabled capability's
+`capability.toml`:
 
-Capabilities can be as small as a single prompt skill or as broad as a runtime
-integration. A main agent that needs capability-provided skills should list that
-capability in its `required_capabilities` frontmatter. For example, the built-in
-`research-coordinator` main agent requires the `research-coordinator` capability,
-which contributes the `do_research` and `retro` skills.
+```toml
+description = "Provide a research workflow."
+requires = ["imperative-workflows", "agentic-notes", "experiment-log"]
+```
+
+Capabilities can be as small as a single prompt skill or as broad as a complete
+agent implementation. The built-in `research-coordinator` capability provides
+the coordinator, its subagents, the `do_research` and `retro` skills, and its
+research-state commands.
+
+Project capabilities live at
+`<project>/.agentic-team/capabilities/<name>/`. Choosing an agent exported by a
+project capability or explicitly enabling that capability allows its prompts,
+renderers, hooks, and commands to run. Review project capability code with the
+same care as other project automation.
 
 ### `skills/`
 
@@ -101,8 +121,8 @@ Commands are added to `PATH` in this order:
 1. enabled capability `capabilities/<capability>/bin/`
 2. built-in core commands in `scripts/bin/`
 
-When an org capability and a built-in capability have the same name, the org
-capability root is used.
+Provider precedence is project, then organization, then built-in. A higher
+precedence capability replaces the lower provider as one unit.
 
 Use `lib/` for private support code used by that capability's own commands,
 hooks, renderer, and launcher scripts. The launcher does not add capability
@@ -119,6 +139,7 @@ used for rendering. A render module may define any of these functions:
 def render_instruction(ctx) -> str: ...
 def render_agent_section(ctx, agent_type: str) -> str: ...
 def render_agent_sections(ctx, agent_types: list[str]) -> dict[str, str]: ...
+def render_source(ctx, source_path, source_kind: str) -> str: ...
 ```
 
 `ctx` provides:
@@ -132,9 +153,11 @@ repo_root
 state_root
 capability_name
 capability_root
+capability_roots
 ```
 
-`render_instruction` appends content to the main rendered instruction file.
+`render_source` transforms an agent or skill source that names the capability in
+its `renderer:` frontmatter. `render_instruction` appends content to the main rendered instruction file.
 `render_agent_section` appends capability-owned content to one rendered
 subagent definition. `render_agent_sections` is an optional batch fast path for
 rendering sections for many subagents at once. Missing functions are treated as
@@ -153,6 +176,74 @@ definition can include by capability-qualified name:
 
 Modules are resolved from the selected capability root, so org capabilities can
 override built-in capability modules by overriding the whole capability.
+
+### Imperative workflows
+
+The optional `imperative-workflows` capability is a source renderer. A provider
+that uses it lists it in `capability.toml`; plain Markdown agent capabilities do
+not need it. Modular workflows keep public invocation contracts and reusable
+operations in ordinary Python, while agent Markdown keeps launcher metadata,
+declarative guidance, and one implementation block:
+
+```text
+capabilities/<provider>/
+  package/<python-package>/     public contracts and operations
+  agents/                       agent guidance and workflow implementations
+  skills/                       on-demand skill definitions
+```
+
+An agent definition declares the interface and implementation pairing in
+frontmatter:
+
+```yaml
+renderer: imperative-workflows
+workflow_interface: agentic_workflows.research.finalizer:ResearchFinalizer
+workflow_module: agentic_workflows.research.workflows.finalizer
+workflow_entry: ResearchFinalizerWorkflow
+```
+
+Its body contains exactly one tagged block:
+
+````markdown
+```python agentic-workflow
+from agentic_workflows.research.finalizer import ResearchFinalizer
+
+class ResearchFinalizerWorkflow(ResearchFinalizer):
+    def workflow(self) -> None:
+        ...
+```
+````
+
+The renderer combines `package/` roots from enabled capabilities. It indexes
+Python modules below those roots, indexes tagged agent and skill modules,
+and walks local imports from both the public interface and implementation. The
+rendered agent therefore receives the complete implementation graph, while a
+caller that imports only the public class does not receive the called agent's
+implementation module. Workflow metadata is stripped from platform-specific
+agent files.
+
+A modular skill uses the same tagged block but extends the current agent
+context instead of declaring a separately dispatched agent:
+
+```yaml
+renderer: imperative-workflows
+workflow_receiver: agentic_workflows.research.research_coordinator:ResearchCoordinator
+workflow_module: agentic_workflows.research.do_research
+workflow_entry: do_research
+```
+
+Its entry is an ordinary function whose first parameter is annotated with the
+receiver class:
+
+```python
+def do_research(self: ResearchCoordinator) -> None:
+    ...
+```
+
+The launcher validates that annotation, walks imports from the receiver and
+skill module, preserves normal skill discovery fields such as `name` and
+`description`, and strips the `workflow_*` metadata from the installed
+`SKILL.md`. Plain Markdown skills remain valid.
 
 ### `hooks/`
 
@@ -208,7 +299,8 @@ launcher/
 
 ## Agents and Agent Types
 
-Agent definitions are neutral Markdown files with frontmatter:
+Agent definitions are neutral Markdown files under a capability's `agents/`
+directory:
 
 ```markdown
 ---
@@ -229,20 +321,22 @@ required_capabilities:
 - `kind: subagent` definitions are rendered into the selected CLI's project subagent directory.
 - `description` should be short and action-oriented.
 - `codex_reasoning_effort` is optional and rendered only for Codex-compatible configs.
-- Main agents can declare required capabilities with `required_capabilities:`. The launcher adds these to the selected capability set automatically before validation.
+- Selecting a main agent enables its providing capability. Put shared dependencies in the provider's `capability.toml`; `required_capabilities:` remains available for agent-specific additions.
 
 Subagents should have exactly one `## Subagent Contract` section with one request template. If a workflow needs a different request shape, create another subagent.
 
-## Org Repo Layout
+## Org And Project Layout
 
 An org repo can provide portable extensions:
 
 ```text
-agents/
-  research-paper-author.md
-  data-curator.md
-capabilities/
-  lab-slurm/
+  capabilities/
+    research-paper/
+      capability.toml
+      agents/
+        research-paper-author.md
+        data-curator.md
+    lab-slurm/
     INSTRUCTIONS.md
     skills/
       lab-slurm/
@@ -260,7 +354,9 @@ agent-notes/
     slurm.md
 ```
 
-Org capabilities are resolved before built-in capabilities with the same name.
+An org repo uses `capabilities/` at its root. A project uses the same layout
+below `.agentic-team/capabilities/`. Project providers win over org providers,
+which win over built-ins.
 
 ## Authoring Checklist
 

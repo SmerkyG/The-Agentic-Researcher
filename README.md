@@ -78,9 +78,9 @@ The installer adds the `agentic-team` launcher. The setup wizard creates local c
 2. **Create or choose the AT workspace when prompted.** Launching from the normal checkout always enters the AT setup flow because AT needs a separate workspace for code worktrees, state worktrees, artifacts, and runtime files. Accept the default sibling directory `../my-project-at` unless you want a different AT workspace root.
 3. **Create a new AT work entry when prompted.** Enter a stable work name such as `research-main`. Agentic Team creates `<work-name>/code` and `<work-name>/state` under the AT workspace, backed by the corresponding code branch and work-state branch.
 4. **Ask the launched agent to initialize the research workflow.** Your selected LLM CLI is now running in the AT worktree. For a new research effort, invoke the `do_research` skill. In Codex, type `$do_research` or select it from `/skills`. This starts the setup dialogue about the research goal, evaluation metrics, constraints, and compute budget.
-5. Research workflows create a short rolling `condensed_report.md`, a paginated report
-   (`report_page1.md` is oldest; `report.md` is newest/current and rolls over
-   whole after it passes 300 lines), a `TODO.md` checklist, report figures, and
+5. Research workflows create a short rolling `condensed_report.md`, numbered report
+   pages (`report_page1.md` is oldest and the highest number is current), a
+   `TODO.md` checklist, report figures, and
    an experiment log under the AT workspace's `<work-name>/state/` directory.
 
 ### Resuming a Session
@@ -132,12 +132,28 @@ Run `agentic-team --setup` to create a configuration file at `${XDG_CONFIG_HOME:
 - **Project artifacts directory** (`AR_ARTIFACTS_DIR`) — optional override for bulky shared project artifacts. Defaults to `$AR_WORKSPACE_ROOT/artifacts/project`
 - **Global state/cache directory** (`AR_STATE_ROOT`) — where shared caches, container `/tmp`, CLI config state, and the optional org repo checkout are stored. Defaults to `~/.cache/agentic-team`. On HPC systems with Apptainer, set this to a path with sufficient space (e.g. on a scratch filesystem) to avoid hitting the default 64 MB overlay limit
 - **Extra environment variables** (`AR_EXTRA_ENV`) — pipe-separated `KEY=VALUE` pairs forwarded into the container (e.g. `HF_TOKEN=hf_...|WANDB_API_KEY=...`)
+- **Additional writable storage** (`AR_STORAGE_DIRS`) — a Bash array of `ENV_NAME=/absolute/host/path` entries. Matching names override built-in cache locations; new names are mounted into sandboxes at `/agent-storage/ENV_NAME` and exported to the agent
 - **Network proxy** — HTTP/HTTPS proxy settings for use inside the container
 - **Extra bind directories** — additional host paths to mount into the sandbox
 - **Auto-build** (`AR_AUTO_BUILD`) — whether missing container images should be built automatically on first launch
 - **Capabilities** (`AR_CAPABILITIES`) — comma-separated capability packages from `capabilities/`
 - **Agentic Notes refresh** (`AR_NOTES_REFRESH_MODE`, `AR_NOTES_REFRESH_INTERVAL_SECONDS`) — defaults to periodic background refresh every 120 seconds while at least one agent for the project is running; set mode to `foreground` for synchronous launch refresh or `manual` to disable periodic refresh
 - **Startup profiling** (`AR_PROFILE_STARTUP=true`) — print per-phase launcher setup timings to stderr before the selected CLI starts
+
+For example, add arbitrary writable tool storage or relocate one built-in cache
+in `config.sh`:
+
+```bash
+AR_STORAGE_DIRS=(
+    "TRITON_CACHE_DIR=/scratch/local/$USER/triton"
+    "MY_MODEL_CACHE=/shared/cache/models"
+)
+```
+
+In native mode, each variable receives its host path directly. In a sandbox,
+the launcher mounts each directory and sets the variable to
+`/agent-storage/ENV_NAME`. Built-in UV paths retain their established `/uv-*`
+destinations. Later entries replace earlier entries with the same variable name.
 
 You can re-run `--setup` at any time to update your configuration.
 
@@ -232,9 +248,9 @@ For details, see:
 
 Capability packages can be used for job placement and execution backends, and Agentic Team comes with a SLURM capability called `remote-run`.
 
-Capabilities can also provide prompt-only skills under `capabilities/<name>/skills/<skill-name>/SKILL.md`. Enabled or required capability skills are rendered into the selected CLI's project discovery path: `.claude/skills` for Claude, `.gemini/skills` for Gemini, `.opencode/skills` for OpenCode, and `.agents/skills` for Codex/pi. The built-in `research-coordinator` main agent requires the `research-coordinator` capability, which provides the `do_research` and `retro` research workflow skills. Capability `INSTRUCTIONS.md` files are injected into the workspace instruction file when that capability is enabled.
+Capabilities can provide agents, Python workflow modules, and prompt skills under `agents/`, `package/`, and `skills/`. Enabled capability skills are rendered into the selected CLI's project discovery path: `.claude/skills` for Claude, `.gemini/skills` for Gemini, `.opencode/skills` for OpenCode, and `.agents/skills` for Codex/pi. Selecting a main agent automatically enables its providing capability and dependencies. The built-in `research-coordinator` capability provides that main agent, its research subagents, and the `do_research` and `retro` skills. Capability `INSTRUCTIONS.md` files are injected when that capability is enabled.
 
-Agent definitions start from neutral Markdown files in Agentic Team's built-in `agents/` directory and optional org repo `agents/` directory. A definition with `kind: main` can be selected with `AR_MAIN_AGENT` and is inserted into the top-level instruction file. Built-in main agents include `research-coordinator` for experiment-driven research and `systems-developer` for interactive Linux-focused systems/tooling development. Main agents can declare `required_capabilities`; the launcher adds those automatically before validating the selected capability set. A definition with `kind: subagent` is rendered into the selected CLI's project agent path: `.claude/agents` for Claude, `.gemini/agents` for Gemini, `.opencode/agents` for OpenCode, and `.codex/agents` for Codex. Built-in subagents include helpers such as `research-finalizer`, `note-updater`, `experiment-logger`, `experiment-corrector`, `code-reviewer`, and `branch-integrator`. The top-level instruction file also gets a compact generated subagent catalog with each subagent's rendered definition path; the agent reads the rendered subagent contract on demand before launching that subagent. Org repo agents render after built-ins, so org agents win on name conflict. Add `codex_reasoning_effort: low|medium|high` to an agent's frontmatter to render Codex `model_reasoning_effort` for that agent where supported. To add agents and agent types, see [docs/extending-agentic-team.md](docs/extending-agentic-team.md#agents-and-agent-types).
+Agent definitions are neutral Markdown files supplied by capability `agents/` directories. A `kind: main` definition can be selected with `AR_MAIN_AGENT`; a `kind: subagent` definition is rendered into the selected CLI's project agent path. Built-in providers include `research-coordinator` for experiment-driven research and `systems-developer` for interactive Linux-focused development. The top-level instruction file gets a compact catalog of subagents from enabled capabilities. Project capabilities under `.agentic-team/capabilities/` override configured organization providers, which override built-ins with the same capability name. Add `codex_reasoning_effort: low|medium|high` to render Codex reasoning effort where supported. See [docs/extending-agentic-team.md](docs/extending-agentic-team.md#agents-and-agent-types).
 
 ```bash
 agentic-team --capability cluster-run
@@ -263,10 +279,12 @@ The org repo is optional. Use one when you want notes, custom agents, or custom 
 For a starter layout, copy or adapt [examples/org-notes/](examples/org-notes/):
 
 ```text
-agents/
-  data-curator.md          # kind: subagent rendered for every install
-  research-paper-author.md # kind: main selectable with AR_MAIN_AGENT
 capabilities/
+  research-paper/
+    capability.toml
+    agents/
+      data-curator.md
+      research-paper-author.md
   my-capability/
     skills/
       my-skill/
@@ -289,7 +307,7 @@ agent-notes/
 
 Put only short, high-value guidance in `always-injected.md`. Put longer or situational details in topic notes such as `agent-notes/all-agents/git.md`, `agent-notes/all-agents/slurm.md`, `agent-notes/all-agents/pytorch.md`, or `agent-notes/gpu-kernel-engineer/benchmarking.md`; Agentic Team lists those topics so agents can read the rendered note only when relevant.
 
-Org-provided agents in `agents/*.md` use the same neutral Markdown format as Agentic Team's built-in agents. They are rendered after built-ins, so an org agent with the same `name` as a built-in agent wins. Org-provided capabilities in `capabilities/<capability>/` are resolved before built-in capabilities with the same name. Enabled capabilities may ship prompt skills under `capabilities/<capability>/skills/<skill-name>/SKILL.md`, commands under `capabilities/<capability>/bin/`, private support code under `capabilities/<capability>/lib/`, launcher hooks under `capabilities/<capability>/launcher/`, and instruction lifecycle hooks under `capabilities/<capability>/hooks/`. Capabilities are selected with `AR_CAPABILITIES` or `--capability`; main agents can list required capabilities so their prompt skills and state/runtime support are always available. `AR_MAIN_AGENT` selects both the top-level main-agent definition and the agent-type-specific notes for that top-level agent. Subagents use their own `name` as the agent type for agent-type notes.
+Org-provided agents live inside `capabilities/<capability>/agents/`. A capability may also ship Python workflow modules under `package/`, skills under `skills/`, commands under `bin/`, private helpers under `lib/`, launcher hooks under `launcher/`, and instruction lifecycle hooks under `hooks/`. `capability.toml` declares transitive dependencies. Capabilities are selected explicitly or by selecting a main agent they provide. Project providers use the same structure under `.agentic-team/capabilities/` and take precedence over org and built-in providers.
 
 See [docs/agentic-notes.md](docs/agentic-notes.md) for the notes layout and [docs/extending-agentic-team.md](docs/extending-agentic-team.md) for the agent and capability extension points.
 
@@ -321,7 +339,7 @@ At launch, Agentic Team also renders a project-local compaction hook for the sel
 
 ### Research Agent Instructions
 
-The framework ships `INSTRUCTIONS.md` as a shared base template, capability-owned `instruction-modules/*.md` files as reusable instruction modules, and `agents/*.md` as neutral main-agent and subagent definitions. Agent files can include a capability module with `<!-- AT_INSTRUCTION_MODULE: capability-name/module-name -->`; the launcher expands that directive when it materializes the selected CLI's instruction file or subagent definition.
+The framework ships `INSTRUCTIONS.md` as a shared base template and capability-owned agent definitions, instruction modules, and source renderers. Agent files can include a capability module with `<!-- AT_INSTRUCTION_MODULE: capability-name/module-name -->`; the launcher expands that directive when it materializes the selected CLI's instruction file or subagent definition.
 
 ### Agentic State
 
@@ -329,10 +347,13 @@ Agentic State is implemented as shared command-library code used by capabilities
 
 ### Capabilities
 
-Capabilities own optional commands, structured actions, launcher hooks, and stateful instruction sections. Built-in capabilities live in `capabilities/`:
+Capabilities own agent and tool implementations, skills, commands, launcher hooks, and stateful instruction sections. Built-in capabilities live in `capabilities/`:
 
 - `agentic-notes` owns the `agent-notes/` data model, initializes and refreshes org/project/work-branch note state from its launcher hooks, renders Agentic Notes guidance plus dynamic always-injected and on-demand note listings, provides `agentic-notes read-note`, `agentic-notes update-note`, and `agentic-notes rewrite-note`, runs the background notes refresh loop, and emits lightweight steering notices when refreshed note topics change during a running session.
 - `experiment-log` owns the active work-branch `experiment-log/` data model, renders active experiment-log guidance, and provides `experiment-log append`, `experiment-log correct`, and `experiment-log summary`. The experiment log is capability-owned and may be absent until the workflow records an experiment.
+- `branch` provides snapshot-based branch commit, status, and cleanup tools shared by main-agent capabilities.
+- `imperative-workflows` renders and validates Python-shaped agent and skill workflows.
+- `research-coordinator` provides the research coordinator agent family and research-state workflow.
 
 The default capability list is `agentic-notes,experiment-log` via `AR_CAPABILITIES`. After context compaction, the generated CLI hook runs `capability-refresh`, which delegates to `agentic-team --render-only --refresh-capabilities` so the launcher refreshes configured capabilities and rematerializes the instruction file for that exact invocation.
 

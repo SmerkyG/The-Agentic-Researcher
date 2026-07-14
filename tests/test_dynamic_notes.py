@@ -17,7 +17,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTIC_NOTES_INTERNAL = REPO_ROOT / "capabilities" / "agentic-notes" / "lib" / "agentic-notes-internal"
 AGENTIC_NOTES = REPO_ROOT / "capabilities" / "agentic-notes" / "bin" / "agentic-notes"
 EXPERIMENT_LOG = REPO_ROOT / "capabilities" / "experiment-log" / "bin" / "experiment-log"
-REPORT_ROLLOVER = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-report-rollover"
+REPORT_APPEND = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-report-append"
+WORK_STATE_SNAPSHOT = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-work-state-snapshot"
+WORK_STATE_COMMIT = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-work-state-commit"
+INITIALIZE_RESEARCH_STATE = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-initialize-state"
 AGENTIC_TEAM = REPO_ROOT / "agentic-team"
 AGENTIC_WORKSPACE = REPO_ROOT / "scripts" / "bin" / "agentic-workspace"
 
@@ -26,6 +29,11 @@ def test_builtin_subagents_have_one_contract_template() -> None:
     for agent_path in sorted((REPO_ROOT / "agents").glob("*.md")):
         text = agent_path.read_text(encoding="utf-8")
         if "kind: subagent" not in text:
+            continue
+        if "workflow_module:" in text:
+            assert text.count("```python agentic-workflow") == 1, agent_path.name
+            assert "workflow_interface:" in text, agent_path.name
+            assert "workflow_entry:" in text, agent_path.name
             continue
         assert "## Subagent Contract" in text, agent_path.name
         contract = text.split("## Subagent Contract", 1)[1]
@@ -65,23 +73,110 @@ def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
     return run(["git", *args], cwd=repo, check=check)
 
 
-def test_research_report_rollover_archives_whole_overlong_current_page(tmp_path: Path) -> None:
+def test_research_report_append_uses_latest_numbered_page(tmp_path: Path) -> None:
     state = tmp_path / "work-state"
     state.mkdir()
-    (state / "report_page1.md").write_text("# Research Log\n\nOlder page.\n", encoding="utf-8")
-    report_text = "# Research Log: demo\n\n" + "\n".join(f"line {i}" for i in range(301)) + "\n"
-    (state / "report.md").write_text(report_text, encoding="utf-8")
 
-    result = run([str(REPORT_ROLLOVER), "--work-state-dir", str(state), "--max-lines", "300"])
+    first = run(
+        [str(REPORT_APPEND)],
+        input=yaml.safe_dump({"work_state_dir": str(state), "content": "## First result\n\nEvidence."}),
+    )
+    first_response = json.loads(first.stdout)
+    assert first_response["page_number"] == 1
+    assert first_response["created"] is True
+    assert (state / "report_page1.md").read_text(encoding="utf-8") == "## First result\n\nEvidence.\n"
 
-    assert result.returncode == 0
-    assert "archived 303-line report.md to report_page2.md" in result.stdout
-    assert (state / "report_page2.md").read_text(encoding="utf-8") == report_text
-    assert (state / "report.md").read_text(encoding="utf-8") == "# Research Log: demo\n\n"
+    second = run(
+        [str(REPORT_APPEND)],
+        input=yaml.safe_dump({"work_state_dir": str(state), "content": "## Second result"}),
+    )
+    second_response = json.loads(second.stdout)
+    assert second_response["page_number"] == 1
+    assert second_response["created"] is False
+    assert (state / "report_page1.md").read_text(encoding="utf-8").endswith("\n\n## Second result\n")
 
-    second = run([str(REPORT_ROLLOVER), "--work-state-dir", str(state), "--max-lines", "300"])
-    assert "no rollover needed" in second.stdout
-    assert not (state / "report_page3.md").exists()
+
+def test_research_report_append_starts_page_after_line_limit(tmp_path: Path) -> None:
+    state = tmp_path / "work-state"
+    state.mkdir()
+    (state / "report_page1.md").write_text("\n".join(f"line {index}" for index in range(300)) + "\n", encoding="utf-8")
+
+    result = run(
+        [str(REPORT_APPEND)],
+        input=yaml.safe_dump({"work_state_dir": str(state), "content": "## New page"}),
+    )
+    response = json.loads(result.stdout)
+
+    assert response["page_number"] == 2
+    assert response["created"] is True
+    assert (state / "report_page2.md").read_text(encoding="utf-8") == "## New page\n"
+
+
+def test_work_state_snapshot_commit_does_not_replace_newer_live_edits(tmp_path: Path) -> None:
+    state = tmp_path / "work-state"
+    run(["git", "init", str(state)])
+    configure_git(state)
+    report = state / "report_page1.md"
+    report.write_text("# Initial\n", encoding="utf-8")
+    git(state, "add", "report_page1.md")
+    git(state, "commit", "-m", "initial state")
+
+    report.write_text("# Captured result\n", encoding="utf-8")
+    env = {**os.environ, "AR_RUNTIME_ROOT": str(tmp_path / "runtime")}
+    captured = run(
+        [str(WORK_STATE_SNAPSHOT)],
+        env=env,
+        input=yaml.safe_dump(
+            {"work_state_dir": str(state), "paths": ["report_page1.md"]}
+        ),
+    )
+    snapshot_dir = json.loads(captured.stdout)["snapshot_dir"]
+
+    report.write_text("# Newer uncommitted result\n", encoding="utf-8")
+    committed = run(
+        [str(WORK_STATE_COMMIT)],
+        env=env,
+        input=yaml.safe_dump(
+            {"snapshot_dir": snapshot_dir, "message": "work-state: captured result"}
+        ),
+    )
+
+    response = json.loads(committed.stdout)
+    assert response["changed"] is True
+    assert git(state, "show", "HEAD:report_page1.md").stdout == "# Captured result\n"
+    assert report.read_text(encoding="utf-8") == "# Newer uncommitted result\n"
+    assert git(state, "status", "--short").stdout == " M report_page1.md\n"
+
+
+def test_initialize_research_state_creates_numbered_records(tmp_path: Path) -> None:
+    state = tmp_path / "work-state"
+    run(["git", "init", str(state)])
+    configure_git(state)
+    (state / ".seed").write_text("seed\n", encoding="utf-8")
+    git(state, "add", ".seed")
+    git(state, "commit", "-m", "initial state")
+    env = {
+        **os.environ,
+        "AR_WORK_STATE_DIR": str(state),
+        "AR_WORK_BRANCH": "research-main",
+        "AR_MAIN_AGENT": "research-coordinator",
+    }
+
+    result = run(
+        [str(INITIALIZE_RESEARCH_STATE)],
+        env=env,
+        input=yaml.safe_dump({"plan": "# Research Plan\n\nMeasure the baseline."}),
+    )
+
+    response = json.loads(result.stdout)
+    assert response["command"] == "research-coordinator-initialize-state"
+    assert (state / "report_page1.md").exists()
+    assert not (state / "report.md").exists()
+    assert (state / "condensed_report.md").exists()
+    assert (state / "TODO.md").read_text(encoding="utf-8").endswith(
+        "- [ ] Run baseline evaluation\n"
+    )
+    assert git(state, "status", "--short").stdout == ""
 
 
 def configure_git(repo: Path) -> None:
@@ -223,6 +318,10 @@ def local_experiment_id(ref: str) -> str:
     return ref.split("::", 1)[1] if "::" in ref else ref
 
 
+def operation_result(output: str, field: str) -> str:
+    return str(json.loads(output)[field])
+
+
 def org_checkout(env: dict[str, str]) -> Path:
     return Path(env["AR_STATE_ROOT"]) / "repos" / "org-agentic-notes"
 
@@ -245,7 +344,7 @@ def seed_project_remote(tmp_path: Path) -> Path:
     return init_bare_remote(tmp_path, "project", {"README.md": "# Project\n"})
 
 
-def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_notes(tmp_path: Path) -> None:
+def test_render_section_injects_always_injected_notes_and_lists_on_demand_notes(tmp_path: Path) -> None:
     org_remote = seed_org_remote(tmp_path)
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
@@ -296,24 +395,18 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     git(state, "commit", "-m", "seed project state")
     git(state, "push")
 
-    (project / "AGENTS.md").write_text("# Existing Materialized File\n\n# Main Agent Body\n", encoding="utf-8")
-
-    run(
+    text = run(
         [
             str(AGENTIC_NOTES_INTERNAL),
-            "generate-instructions",
+            "render-section",
             "--project-dir",
             str(project),
             "--agent-type",
             "gpu-kernel-engineer",
-            "--cli",
-            "codex",
         ],
         env=env,
-    )
+    ).stdout
 
-    text = (project / "AGENTS.md").read_text(encoding="utf-8")
-    assert "# Main Agent Body" in text
     assert "Org body." in text
     assert "Agent Type body." in text
     assert "Project body." in text
@@ -349,29 +442,24 @@ def test_generate_instruction_injects_always_injected_notes_and_lists_on_demand_
     assert "Source:" not in rendered_note
 
 
-def test_generate_instruction_skips_title_only_placeholder_notes(tmp_path: Path) -> None:
+def test_render_section_skips_title_only_placeholder_notes(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
     env = base_env(tmp_path)
 
     run([str(AGENTIC_NOTES_INTERNAL), "ensure-project-state", "--project-dir", str(project)], env=env)
-    (project / "AGENTS.md").write_text("# Existing Materialized File\n", encoding="utf-8")
-
-    run(
+    text = run(
         [
             str(AGENTIC_NOTES_INTERNAL),
-            "generate-instructions",
+            "render-section",
             "--project-dir",
             str(project),
             "--agent-type",
             "research-coordinator",
-            "--cli",
-            "codex",
         ],
         env=env,
-    )
+    ).stdout
 
-    text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "### Always-Injected Notes" not in text
     assert "Project All Agents Notes" not in text
     assert "### Available On-Demand Note Topics" not in text
@@ -586,7 +674,7 @@ def test_refresh_loop_pulls_org_notes_while_heartbeat_is_active(tmp_path: Path) 
             proc.wait(timeout=5)
 
 
-def test_replace_project_agent_note_updates_shared_state_and_rendered_instructions(tmp_path: Path) -> None:
+def test_replace_project_agent_note_updates_shared_state_and_capability_rendering(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
     env = base_env(tmp_path)
@@ -616,9 +704,6 @@ def test_replace_project_agent_note_updates_shared_state_and_rendered_instructio
             "always-injected",
             "--note-file",
             str(note_file),
-            "--refresh-parent",
-            "--cli",
-            "codex",
         ],
         env=env,
     )
@@ -627,7 +712,17 @@ def test_replace_project_agent_note_updates_shared_state_and_rendered_instructio
     stored = (
         state / "agent-notes" / "research-coordinator" / "always-injected.md"
     ).read_text(encoding="utf-8")
-    rendered = (project / "AGENTS.md").read_text(encoding="utf-8")
+    rendered = run(
+        [
+            str(AGENTIC_NOTES_INTERNAL),
+            "render-section",
+            "--project-dir",
+            str(project),
+            "--agent-type",
+            "research-coordinator",
+        ],
+        env=env,
+    ).stdout
     listed = run(
         [
             str(AGENTIC_NOTES_INTERNAL),
@@ -664,20 +759,6 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
     git(state, "add", "agent-notes/all-agents/always-injected.md")
     git(state, "commit", "-m", "seed old project note")
     git(state, "push")
-    run(
-        [
-            str(AGENTIC_NOTES_INTERNAL),
-            "generate-instructions",
-            "--project-dir",
-            str(project),
-            "--agent-type",
-            "gpu-kernel-engineer",
-            "--cli",
-            "codex",
-        ],
-        env=env,
-    )
-    assert "Old project body." in (project / "AGENTS.md").read_text(encoding="utf-8")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
@@ -693,6 +774,7 @@ def test_compaction_refresh_pulls_notes_and_rematerializes_instructions(tmp_path
         env=env,
     )
     assert launch.returncode == 0
+    assert "Old project body." in (project / "AGENTS.md").read_text(encoding="utf-8")
     hook = project / ".codex" / "hooks" / "agentic-team-compaction.py"
     assert hook.exists()
 
@@ -990,7 +1072,7 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     plan = tmp_path / "plan.md"
     condensed_report = tmp_path / "condensed_report.md"
-    report = tmp_path / "report.md"
+    report = tmp_path / "report_page1.md"
     todo = tmp_path / "TODO.md"
     figure = tmp_path / "baseline.png"
     plan.write_text(
@@ -1027,42 +1109,59 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
             "always-injected",
             "--note-file",
             str(plan),
-            "--refresh-parent",
-            "--cli",
-            "codex",
         ],
         env=env,
     )
     work_state = work_state_dir(env)
     (work_state / "condensed_report.md").write_text(condensed_report.read_text(encoding="utf-8"), encoding="utf-8")
-    (work_state / "report.md").write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
+    (work_state / "report_page1.md").write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
     (work_state / "TODO.md").write_text(todo.read_text(encoding="utf-8"), encoding="utf-8")
     (work_state / "images").mkdir()
     (work_state / "images" / "baseline.png").write_bytes(figure.read_bytes())
-    git(work_state, "add", "condensed_report.md", "report.md", "TODO.md", "images/")
+    git(work_state, "add", "condensed_report.md", "report_page1.md", "TODO.md", "images/")
     git(work_state, "commit", "-m", "work-state: update research records")
     git(work_state, "push")
 
     stored_plan = work_state / "agent-notes" / "research-coordinator" / "always-injected.md"
     assert stored_plan.read_text(encoding="utf-8") == plan.read_text(encoding="utf-8")
     assert (work_state / "condensed_report.md").read_text(encoding="utf-8") == condensed_report.read_text(encoding="utf-8")
-    assert (work_state / "report.md").read_text(encoding="utf-8") == report.read_text(encoding="utf-8")
+    assert (work_state / "report_page1.md").read_text(encoding="utf-8") == report.read_text(encoding="utf-8")
     assert (work_state / "TODO.md").read_text(encoding="utf-8") == todo.read_text(encoding="utf-8")
     assert (work_state / "images" / "baseline.png").read_bytes() == figure.read_bytes()
     assert not (project / "condensed_report.md").exists()
-    assert not (project / "report.md").exists()
+    assert not (project / "report_page1.md").exists()
     assert not (project / "TODO.md").exists()
     assert not (project / "images" / "baseline.png").exists()
 
+    run(
+        [
+            str(AGENTIC_TEAM),
+            "--sandbox",
+            "none",
+            "--cli",
+            "codex",
+            "--render-only",
+            "--main-agent",
+            "research-coordinator",
+            "--work-branch",
+            "kernel-search",
+            str(project),
+        ],
+        env=env,
+    )
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "## Agentic State" in instruction_text
     assert "agentic/work-state/kernel-search" in instruction_text
     assert 'WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"' in instruction_text
-    assert 'mkdir -p "$WORK_STATE_DIR/images"' in instruction_text
-    assert 'git -C "$WORK_STATE_DIR" add condensed_report.md report.md TODO.md images/' in instruction_text
-    assert "report_page1.md` is the oldest" in instruction_text
-    assert "research-coordinator-report-rollover" in instruction_text
-    assert "300 lines" in instruction_text
+    assert "## Imperative Workflow" in instruction_text
+    assert "Follow `ResearchCoordinatorWorkflow`" in instruction_text
+    assert "### Workflow Modules" in instruction_text
+    assert "class AgentWorkflow(Operation[ResultT], Generic[ResultT]):" in instruction_text
+    assert "def _schema_for_annotation" not in instruction_text
+    assert "from dataclasses import" not in instruction_text
+    assert "class ResearchCoordinator(UserFacingWorkflow[None]):" in instruction_text
+    assert "def launch(self) -> Job[ResultT]:" in instruction_text
+    assert "research-coordinator-report-append" in instruction_text
     assert "$WORK_STATE_DIR/images/" in instruction_text
     assert (
         "do not skip report-ready PNG/PDF figures merely because they are binary files"
@@ -1131,12 +1230,12 @@ def test_agentic_notes_state_ensure_does_not_commit_dirty_work_records(tmp_path:
     state = work_state_dir(env)
     assert state.exists()
     base_head = git(state, "rev-parse", "HEAD").stdout.strip()
-    (state / "report.md").write_text("# Research Log\n\nUncommitted result.\n", encoding="utf-8")
+    (state / "report_page1.md").write_text("# Research Log\n\nUncommitted result.\n", encoding="utf-8")
 
     run([str(AGENTIC_NOTES_INTERNAL), "refresh", "--project-dir", str(project)], env=env)
 
     assert git(state, "rev-parse", "HEAD").stdout.strip() == base_head
-    assert git(state, "status", "--short").stdout == "?? report.md\n"
+    assert git(state, "status", "--short").stdout == "?? report_page1.md\n"
 
 
 def test_named_work_creates_at_layout_and_references_research_context(tmp_path: Path) -> None:
@@ -1182,9 +1281,7 @@ def test_named_work_creates_at_layout_and_references_research_context(tmp_path: 
     )
     (parent_state / "condensed_report.md").write_text("# Condensed Report\n\nBest parent finding.\n", encoding="utf-8")
     (parent_state / "report_page1.md").write_text("# Parent Page 1\n\nOld result.\n", encoding="utf-8")
-    (parent_state / "report_old.md").write_text("# Legacy Parent Report\n\nOlder legacy result.\n", encoding="utf-8")
-    (parent_state / "report.md").write_text("# Parent Report\n\nUseful result.\n", encoding="utf-8")
-    (parent_state / "TODO_old.md").write_text("- [x] Legacy parent todo\n", encoding="utf-8")
+    (parent_state / "report_page2.md").write_text("# Parent Page 2\n\nUseful result.\n", encoding="utf-8")
     (parent_state / "TODO.md").write_text("- [ ] Parent todo\n", encoding="utf-8")
     (parent_state / "images").mkdir(exist_ok=True)
     (parent_state / "images" / "parent.png").write_bytes(b"png")
@@ -1199,7 +1296,7 @@ def test_named_work_creates_at_layout_and_references_research_context(tmp_path: 
                     "work_branch": "agent/ancestor",
                     "state_branch": "agentic/work-state/agent/ancestor",
                     "state_commit": "abc123",
-                    "files": ["report.md", "images/ancestor.png"],
+                    "files": ["report_page3.md", "images/ancestor.png"],
                 }
             ],
         },
@@ -1209,9 +1306,7 @@ def test_named_work_creates_at_layout_and_references_research_context(tmp_path: 
         "add",
         "condensed_report.md",
         "report_page1.md",
-        "report_old.md",
-        "report.md",
-        "TODO_old.md",
+        "report_page2.md",
         "TODO.md",
         "images/",
         "context/manifest.yaml",
@@ -1262,38 +1357,33 @@ def test_named_work_creates_at_layout_and_references_research_context(tmp_path: 
     assert "parent scaling note" in (
         state_dir / "agent-notes" / "research-coordinator" / "experiment-scaling.md"
     ).read_text(encoding="utf-8")
-    report_text = (state_dir / "report.md").read_text(encoding="utf-8")
+    report_text = (state_dir / "report_page1.md").read_text(encoding="utf-8")
     assert report_text.startswith("# Research Log: kdtree-bounds")
     assert "Created from `kernel-search` into `agent/alice/kdtree-bounds`" in report_text
     condensed_text = (state_dir / "condensed_report.md").read_text(encoding="utf-8")
     assert condensed_text.startswith("# Condensed Report: kdtree-bounds")
     assert "Keep this condensed report to about one page" in condensed_text
     assert (state_dir / "context" / "parent" / "condensed_report.md").read_text(encoding="utf-8").startswith("# Condensed Report")
-    assert (state_dir / "context" / "parent" / "report.md").read_text(encoding="utf-8").startswith("# Parent Report")
+    assert (state_dir / "context" / "parent" / "report_page2.md").read_text(encoding="utf-8").startswith("# Parent Page 2")
     assert (state_dir / "context" / "parent" / "TODO.md").exists()
     assert not (state_dir / "context" / "parent" / "report_page1.md").exists()
-    assert not (state_dir / "context" / "parent" / "report_old.md").exists()
-    assert not (state_dir / "context" / "parent" / "TODO_old.md").exists()
     assert not (state_dir / "context" / "parent" / "images" / "parent.png").exists()
     manifest = yaml.safe_load((state_dir / "context" / "manifest.yaml").read_text(encoding="utf-8"))
     assert manifest["created_from"]["work_branch"] == "kernel-search"
     assert [entry["work_branch"] for entry in manifest["references"]] == ["agent/ancestor", "kernel-search"]
-    assert manifest["references"][0]["files"] == ["report.md", "images/ancestor.png"]
+    assert manifest["references"][0]["files"] == ["report_page3.md", "images/ancestor.png"]
     assert manifest["references"][1]["state_branch"] == "agentic/work-state/kernel-search"
     assert manifest["references"][1]["files"] == [
         "condensed_report.md",
         "report_page1.md",
-        "report_old.md",
-        "report.md",
-        "TODO_old.md",
+        "report_page2.md",
         "TODO.md",
         "images/parent.png",
     ]
     readme_text = (state_dir / "context" / "README.md").read_text(encoding="utf-8")
     assert "condensed_report.md" in readme_text
     assert "report_page1.md" in readme_text
-    assert "report_old.md" in readme_text
-    assert "TODO_old.md" in readme_text
+    assert "report_page2.md" in readme_text
     assert "images/parent.png" in readme_text
     assert (root / "project-state").exists()
     assert (
@@ -1536,7 +1626,7 @@ def test_init_org_notes_creates_empty_always_injected_placeholder(tmp_path: Path
     assert note.read_text(encoding="utf-8") == ""
 
 
-def test_update_note_refresh_parent_locks_org_and_parent_project(tmp_path: Path) -> None:
+def test_update_org_note_locks_only_org_state(tmp_path: Path) -> None:
     request = make_request(
         tmp_path,
         {
@@ -1563,7 +1653,6 @@ def test_update_note_refresh_parent_locks_org_and_parent_project(tmp_path: Path)
                 command="update-note",
                 request=str(request),
                 project_dir=str(tmp_path / "project"),
-                refresh_parent=True,
             )
         )
     finally:
@@ -1574,29 +1663,57 @@ def test_update_note_refresh_parent_locks_org_and_parent_project(tmp_path: Path)
                 os.environ[key] = value
 
     lock_names = {path.name for path in locks}
-    assert "org-agentic-notes.lock" in lock_names
-    assert "project.lock" in lock_names
+    assert lock_names == {"org-agentic-notes.lock"}
 
 
 def experiment_request(tmp_path: Path, short_description: str, key_result: str = "passed") -> Path:
     return make_request(
         tmp_path,
         {
-            "kind": "experiment_result_request",
-            "user_id": "alice",
             "short_description": short_description,
             "title": short_description,
             "description": "Test experiment.",
-            "source": {"actor_id": "gpu-kernel-engineer", "agent_type": "gpu-kernel-engineer"},
-            "code": {"repo": "local", "branch": "test", "commit": "9f4d2a8c7b0e", "dirty": False},
+            "code": {"branch": "test", "commit": "9f4d2a8c7b0e"},
             "command": "uv run pytest",
             "status": "completed",
+            "success": False,
             "key_result": key_result,
-            "metrics": {"tests_passed": 1},
-            "artifacts": {},
-            "notes": "",
+            "metrics": [{"name": "tests_passed", "value": "1"}],
+            "artifacts": [],
+            "notes": None,
         },
     )
+
+
+def test_experiment_log_rejects_payloads_outside_the_tool_schema(tmp_path: Path) -> None:
+    cases = [
+        (lambda data: data.pop("title"), "request.title: required field is missing"),
+        (lambda data: data.__setitem__("success", "false"), "request.success: expected bool"),
+        (lambda data: data.__setitem__("status", "successful"), "request.status: expected one of"),
+        (lambda data: data.__setitem__("metrics", {"tests_passed": 1}), "request.metrics: expected a list"),
+        (lambda data: data.__setitem__("artifacts", {}), "request.artifacts: expected a list"),
+        (lambda data: data.__setitem__("mystery", True), "request: unknown field(s): mystery"),
+        (lambda data: data["code"].__setitem__("repo", "local"), "request.code: unknown field(s): repo"),
+        (
+            lambda data: (data.__setitem__("success", True), data.__setitem__("status", "failed")),
+            "success=true requires status=completed",
+        ),
+        (
+            lambda data: (data.__setitem__("success", True), data["code"].__setitem__("commit", None)),
+            "success=true requires code.commit",
+        ),
+    ]
+
+    for mutate, expected in cases:
+        data = yaml.safe_load(experiment_request(tmp_path, "Invalid request").read_text())
+        mutate(data)
+        request = make_request(tmp_path, data)
+        result = run(
+            [str(EXPERIMENT_LOG), "append", "--request", str(request), "--project-dir", str(tmp_path)],
+            check=False,
+        )
+        assert result.returncode == 1
+        assert expected in result.stderr
 
 
 def summary_rows(summary: str) -> list[str]:
@@ -1619,6 +1736,7 @@ def test_experiment_logger_creates_counter_ids_and_appends_summary(tmp_path: Pat
         ],
         env=env,
     ).stdout.strip()
+    first = operation_result(first, "experiment_id")
     second = run(
         [
             str(EXPERIMENT_LOG),
@@ -1630,6 +1748,7 @@ def test_experiment_logger_creates_counter_ids_and_appends_summary(tmp_path: Pat
         ],
         env=env,
     ).stdout.strip()
+    second = operation_result(second, "experiment_id")
 
     log_dir = work_log(env)
     first_id = local_experiment_id(first)
@@ -1655,24 +1774,21 @@ def test_successful_experiment_creates_local_success_tag(tmp_path: Path) -> None
     request = make_request(
         tmp_path,
         {
-            "kind": "experiment_result_request",
-            "user_id": "alice",
             "short_description": "Successful run",
             "title": "Successful run",
             "description": "Test experiment.",
-            "source": {"actor_id": "research-coordinator", "agent_type": "research-coordinator"},
-            "code": {"repo": "local", "branch": "kernel-search", "commit": commit, "dirty": False},
+            "code": {"branch": "kernel-search", "commit": commit},
             "command": "uv run pytest",
             "status": "completed",
             "success": True,
             "key_result": "new best result",
-            "metrics": {"tests_passed": 1},
-            "artifacts": {},
-            "notes": "",
+            "metrics": [{"name": "tests_passed", "value": "1"}],
+            "artifacts": [],
+            "notes": None,
         },
     )
 
-    experiment_ref = run(
+    experiment_ref = operation_result(run(
         [
             str(EXPERIMENT_LOG),
             "append",
@@ -1682,7 +1798,7 @@ def test_successful_experiment_creates_local_success_tag(tmp_path: Path) -> None
             str(project),
         ],
         env=env,
-    ).stdout.strip()
+    ).stdout.strip(), "experiment_id")
 
     experiment_id = local_experiment_id(experiment_ref)
     tag_name = f"exp/kernel-search/{experiment_id}-success"
@@ -1706,6 +1822,7 @@ def test_summary_is_append_only_and_existing_experiment_files_are_unchanged(tmp_
         ],
         env=env,
     ).stdout.strip()
+    first = operation_result(first, "experiment_id")
     log_dir = work_log(env)
     first_id = local_experiment_id(first)
     first_file = log_dir / "experiments" / f"{first_id}.yaml"
@@ -1728,6 +1845,7 @@ def test_summary_is_append_only_and_existing_experiment_files_are_unchanged(tmp_
         ],
         env=env,
     ).stdout.strip()
+    second = operation_result(second, "experiment_id")
 
     summary = (log_dir / "SUMMARY.md").read_text()
     assert first_file.read_text(encoding="utf-8") == first_content
@@ -1776,7 +1894,7 @@ def test_push_conflict_retries_with_next_counter_number(tmp_path: Path) -> None:
             break
         time.sleep(0.05)
     assert waiting.exists()
-    winner = run(
+    winner = operation_result(run(
         [
             str(EXPERIMENT_LOG),
             "append",
@@ -1786,11 +1904,11 @@ def test_push_conflict_retries_with_next_counter_number(tmp_path: Path) -> None:
             str(project_one),
         ],
         env=env_one,
-    ).stdout.strip()
+    ).stdout.strip(), "experiment_id")
     allow.touch()
     stdout, stderr = proc_two.communicate(timeout=30)
     assert proc_two.returncode == 0, stderr
-    loser = stdout.strip()
+    loser = operation_result(stdout.strip(), "experiment_id")
     assert winner.startswith("kernel-search::E0001_")
     assert loser.startswith("kernel-search::E0002_")
 
@@ -1855,8 +1973,8 @@ def test_same_installation_multiple_actor_worktrees_serialize_project_log_update
     stdout_two, stderr_two = proc_two.communicate(timeout=30)
     assert proc_one.returncode == 0, stderr_one
     assert proc_two.returncode == 0, stderr_two
-    assert stdout_one.strip().startswith("kernel-search::E0001_")
-    assert stdout_two.strip().startswith("kernel-search::E0002_")
+    assert operation_result(stdout_one.strip(), "experiment_id").startswith("kernel-search::E0001_")
+    assert operation_result(stdout_two.strip(), "experiment_id").startswith("kernel-search::E0002_")
     summary = (work_log(env) / "SUMMARY.md").read_text()
     assert len(summary_rows(summary)) == 2
 
@@ -1865,7 +1983,7 @@ def test_correction_logging_appends_to_experiment_file_and_summary_row(tmp_path:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
     env = base_env(tmp_path)
-    experiment_id = run(
+    experiment_id = operation_result(run(
         [
             str(EXPERIMENT_LOG),
             "append",
@@ -1875,19 +1993,17 @@ def test_correction_logging_appends_to_experiment_file_and_summary_row(tmp_path:
             str(project),
         ],
         env=env,
-    ).stdout.strip()
+    ).stdout.strip(), "experiment_id")
     correction_request = make_request(
         tmp_path,
         {
-            "kind": "experiment_correction_request",
             "experiment_id": experiment_id,
-            "user_id": "alice",
             "summary": "Metric was computed on the wrong split.",
             "correction": "Use the fixed validation split.",
         },
     )
 
-    correction_id = run(
+    correction_id = operation_result(run(
         [
             str(EXPERIMENT_LOG),
             "correct",
@@ -1897,18 +2013,16 @@ def test_correction_logging_appends_to_experiment_file_and_summary_row(tmp_path:
             str(project),
         ],
         env=env,
-    ).stdout.strip()
+    ).stdout.strip(), "correction_id")
     second_request = make_request(
         tmp_path,
         {
-            "kind": "experiment_correction_request",
             "experiment_id": experiment_id,
-            "user_id": "alice",
             "summary": "Artifact path was stale.",
             "correction": "Use the artifact path from the rerun.",
         },
     )
-    second_correction_id = run(
+    second_correction_id = operation_result(run(
         [
             str(EXPERIMENT_LOG),
             "correct",
@@ -1918,7 +2032,7 @@ def test_correction_logging_appends_to_experiment_file_and_summary_row(tmp_path:
             str(project),
         ],
         env=env,
-    ).stdout.strip()
+    ).stdout.strip(), "correction_id")
 
     log_dir = work_log(env)
     local_id = local_experiment_id(experiment_id)
@@ -2019,7 +2133,7 @@ def test_launcher_render_only_rewrites_managed_instruction_and_normalizes_whites
     assert "<!-- AGENTIC-TEAM-TOPIC-START" not in text
     assert "<!-- AGENTIC-TEAM-SUBAGENTS-START" not in text
     assert text.count("<!--") == 0
-    assert (project / ".codex" / "agents" / "experiment-logger.toml").exists()
+    assert (project / ".codex" / "agents" / "research-finalizer.toml").exists()
     status = git(project, "status", "--short", "--untracked-files=all", "AGENTS.md", ".codex", ".agents")
     assert status.stdout == ""
     exclude_text = (project / ".git" / "info" / "exclude").read_text(encoding="utf-8")
@@ -2104,7 +2218,7 @@ def test_main_agent_required_capabilities_are_added_to_empty_selection(tmp_path:
     assert "## Agentic Notes" in text
     assert "## Agentic State" in text
     assert "## Experiment Log" in text
-    assert (project / ".codex" / "agents" / "experiment-logger.toml").exists()
+    assert (project / ".codex" / "agents" / "research-finalizer.toml").exists()
 
 
 def test_systems_developer_required_capabilities_do_not_add_experiment_log(tmp_path: Path) -> None:
@@ -2199,12 +2313,21 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     )
 
     assert result.returncode == 0
-    assert (project / ".agents" / "skills" / "do_research" / "SKILL.md").exists()
+    research_skill = project / ".agents" / "skills" / "do_research" / "SKILL.md"
+    assert research_skill.exists()
+    research_skill_text = research_skill.read_text(encoding="utf-8")
+    assert "name: do_research" in research_skill_text
+    assert "def do_research(self: ResearchCoordinator) -> None:" in research_skill_text
+    assert "extends the current workflow context" in research_skill_text
+    assert "`$AR_WORKFLOW_PATH`" in research_skill_text
+    assert "agentic_workflows.contract" not in research_skill_text
+    assert "class ResearchStateInitializeTool" not in research_skill_text
+    assert "workflow_receiver:" not in research_skill_text
+    assert "```python agentic-workflow" not in research_skill_text
     assert not (project / ".agents" / "skills" / "note_usage" / "SKILL.md").exists()
     assert not (project / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
     assert (project / ".codex" / "agents" / "note-updater.toml").exists()
-    assert (project / ".codex" / "agents" / "experiment-logger.toml").exists()
-    assert (project / ".codex" / "agents" / "experiment-corrector.toml").exists()
+    assert (project / ".codex" / "agents" / "research-finalizer.toml").exists()
     assert not (project / ".codex" / "agents" / "branch-committer.toml").exists()
     assert not (project / ".codex" / "agents" / "branch-commit-status.toml").exists()
     assert (project / ".codex" / "agents" / "branch-integrator.toml").exists()
@@ -2215,16 +2338,15 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert "## Available Subagents" in instruction_text
     assert "Standing user request" in instruction_text
     assert "If the subagent spawn fails, try to spawn it one more time" in instruction_text
-    assert "On Codex, those contracts are project-scoped custom agents under `.codex/agents/`" in instruction_text
-    assert "Do not search `.agents` for subagent contracts" in instruction_text
-    assert "- `experiment-logger`:" in instruction_text
-    assert "- `experiment-corrector`:" in instruction_text
+    assert "On Codex, these definitions are project-scoped custom agents under `.codex/agents/`" in instruction_text
+    assert "Do not search `.agents` for subagent definitions" in instruction_text
+    assert "- `research-finalizer`:" in instruction_text
     assert "- `branch-committer`:" not in instruction_text
     assert "- `branch-commit-status`:" not in instruction_text
     assert "- `branch-integrator`:" in instruction_text
     assert "Request: `" not in instruction_text
     assert "Contract: `" in instruction_text
-    assert "# Research Coordinator Instructions" in instruction_text
+    assert "# Research Coordinator" in instruction_text
     assert "## Agentic Notes" in instruction_text
     assert "## Agent Branch" not in instruction_text
     assert "<!-- AGENTIC-TEAM-PROVIDER-START" not in instruction_text
@@ -2270,7 +2392,11 @@ def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path
         "org-agent-extensions",
         {
             "agent-notes/all-agents/always-injected.md": "# Org Notes\n\nOrg body.\n",
-            "agents/experiment-runner.md": (
+            "capabilities/org-agents/capability.toml": (
+                'description = "Organization agent extensions."\n'
+                'requires = ["agentic-notes"]\n'
+            ),
+            "capabilities/org-agents/agents/experiment-runner.md": (
                 "---\n"
                 "name: experiment-runner\n"
                 "kind: subagent\n"
@@ -2279,7 +2405,7 @@ def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path
                 "---\n\n"
                 "You are the org-specific experiment runner.\n"
             ),
-            "agents/data-curator.md": (
+            "capabilities/org-agents/agents/data-curator.md": (
                 "---\n"
                 "name: data-curator\n"
                 "kind: subagent\n"
@@ -2300,6 +2426,7 @@ def test_launcher_renders_org_agents_and_overrides_builtin_agents(tmp_path: Path
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = base_env(tmp_path, org_remote)
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["AR_CAPABILITIES"] += ",org-agents"
 
     run(
         [
@@ -2333,7 +2460,11 @@ def test_launcher_renders_org_main_agent_override_without_subagent(tmp_path: Pat
         tmp_path,
         "org-main-agents",
         {
-            "agents/research-coordinator.md": (
+            "capabilities/research-coordinator/capability.toml": (
+                'description = "Organization research coordinator."\n'
+                'requires = ["agentic-notes"]\n'
+            ),
+            "capabilities/research-coordinator/agents/research-coordinator.md": (
                 "---\n"
                 "name: research-coordinator\n"
                 "kind: main\n"
@@ -2378,12 +2509,223 @@ def test_launcher_renders_org_main_agent_override_without_subagent(tmp_path: Pat
     assert not (project / ".codex" / "agents" / "research-coordinator.toml").exists()
 
 
+def test_launcher_renders_modular_main_agent_and_subagent(tmp_path: Path) -> None:
+    org_remote = init_bare_remote(
+        tmp_path,
+        "org-modular-agents",
+        {
+            "capabilities/demo/capability.toml": (
+                'description = "Demo modular agents."\n'
+                'requires = ["imperative-workflows"]\n'
+            ),
+            "capabilities/demo/package/demo/__init__.py": "",
+            "capabilities/demo/package/demo/contract.py": (
+                "class WorkflowRecord:\n"
+                "    pass\n\n"
+                "class AgentWorkflow(WorkflowRecord):\n"
+                "    pass\n\n"
+                "class UserFacingWorkflow(AgentWorkflow):\n"
+                "    pass\n\n"
+                "def Value(description: str):\n"
+                "    return None\n"
+            ),
+            "capabilities/demo/package/demo/main.py": (
+                "from demo.contract import UserFacingWorkflow\n\n"
+                "class ModularMain(UserFacingWorkflow):\n"
+                "    pass\n"
+            ),
+            "capabilities/demo/package/demo/helper.py": (
+                "from demo.contract import AgentWorkflow, Value\n\n"
+                "class ModularHelper(AgentWorkflow):\n"
+                "    summary: str = Value(\"helper request summary\")\n"
+            ),
+            "capabilities/demo/agents/modular-main.md": (
+                "---\n"
+                "name: modular-main\n"
+                "kind: main\n"
+                "description: Modular main agent.\n"
+                "renderer: imperative-workflows\n"
+                "workflow_interface: demo.main:ModularMain\n"
+                "workflow_module: demo.workflows.main\n"
+                "workflow_entry: ModularMainWorkflow\n"
+                "---\n\n"
+                "# Modular Main\n\n"
+                "```python agentic-workflow\n"
+                "from demo.helper import ModularHelper\n"
+                "from demo.main import ModularMain\n\n"
+                "class ModularMainWorkflow(ModularMain):\n"
+                "    def workflow(self) -> None:\n"
+                "        ModularHelper(summary=\"inspect state\").run()\n"
+                "```\n"
+            ),
+            "capabilities/demo/agents/modular-helper.md": (
+                "---\n"
+                "name: modular-helper\n"
+                "kind: subagent\n"
+                "description: Modular helper agent.\n"
+                "codex_reasoning_effort: low\n"
+                "renderer: imperative-workflows\n"
+                "workflow_interface: demo.helper:ModularHelper\n"
+                "workflow_module: demo.workflows.helper\n"
+                "workflow_entry: ModularHelperWorkflow\n"
+                "---\n\n"
+                "# Modular Helper\n\n"
+                "```python agentic-workflow\n"
+                "from demo.helper import ModularHelper\n\n"
+                "class ModularHelperWorkflow(ModularHelper):\n"
+                "    def workflow(self) -> None:\n"
+                "        self.do([\"inspect requested state\"])\n"
+                "```\n"
+            ),
+        },
+    )
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = base_env(tmp_path, org_remote)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--sandbox",
+            "none",
+            "--cli",
+            "codex",
+            "--render-only",
+            "--main-agent",
+            "modular-main",
+            str(project),
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    helper_text = (project / ".codex" / "agents" / "modular-helper.toml").read_text(
+        encoding="utf-8"
+    )
+    assert "class ModularMainWorkflow(ModularMain):" in instruction_text
+    assert "class ModularHelper(AgentWorkflow):" in instruction_text
+    assert 'Value("helper request summary")' in instruction_text
+    assert "class ModularHelperWorkflow" not in instruction_text
+    assert "class ModularHelperWorkflow(ModularHelper):" in helper_text
+    assert "workflow_interface:" not in instruction_text
+    assert "workflow_module:" not in helper_text
+    assert "```python agentic-workflow" not in instruction_text
+
+
+def test_project_capability_can_provide_and_activate_main_agent(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    capability = project / ".agentic-team" / "capabilities" / "project-agent"
+    (capability / "agents").mkdir(parents=True)
+    (capability / "capability.toml").write_text(
+        'description = "Project agent provider."\n'
+        'requires = ["agentic-notes"]\n',
+        encoding="utf-8",
+    )
+    (capability / "INSTRUCTIONS.md").write_text(
+        "# Project Provider Instructions\n",
+        encoding="utf-8",
+    )
+    (capability / "agents" / "project-main.md").write_text(
+        "---\n"
+        "name: project-main\n"
+        "kind: main\n"
+        "description: Project-local main agent.\n"
+        "---\n\n"
+        "# Project Main Agent\n\n"
+        "Use the project-local workflow.\n",
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = base_env(tmp_path)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["AR_CAPABILITIES"] = "none"
+
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--sandbox",
+            "none",
+            "--cli",
+            "codex",
+            "--render-only",
+            "--main-agent",
+            "project-main",
+            str(project),
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "# Project Main Agent" in instruction_text
+    assert "# Project Provider Instructions" in instruction_text
+    assert "## Agentic Notes" in instruction_text
+
+
+def test_project_capability_replaces_builtin_provider_with_same_name(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    capability = project / ".agentic-team" / "capabilities" / "research-coordinator"
+    (capability / "agents").mkdir(parents=True)
+    (capability / "capability.toml").write_text(
+        'description = "Project research provider."\n'
+        'requires = ["agentic-notes"]\n',
+        encoding="utf-8",
+    )
+    (capability / "agents" / "research-coordinator.md").write_text(
+        "---\n"
+        "name: research-coordinator\n"
+        "kind: main\n"
+        "description: Project research coordinator.\n"
+        "---\n\n"
+        "# Project Research Coordinator\n",
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
+    env = base_env(tmp_path)
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["AR_CAPABILITIES"] = "none"
+
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--sandbox",
+            "none",
+            "--cli",
+            "codex",
+            "--render-only",
+            str(project),
+        ],
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "# Project Research Coordinator" in instruction_text
+    assert "class ResearchCoordinatorWorkflow" not in instruction_text
+    assert not (project / ".agents" / "skills" / "do_research" / "SKILL.md").exists()
+
+
 def test_main_agent_branch_ownership_frontmatter_is_removed(tmp_path: Path) -> None:
     org_remote = init_bare_remote(
         tmp_path,
         "org-main-agent-branch-ownership",
         {
-            "agents/readonly-reporter.md": (
+            "capabilities/readonly-reporter/capability.toml": (
+                'description = "Removed readonly reporter."\n'
+                'requires = []\n'
+            ),
+            "capabilities/readonly-reporter/agents/readonly-reporter.md": (
                 "---\n"
                 "name: readonly-reporter\n"
                 "kind: main\n"
@@ -2424,7 +2766,11 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_agent_notes(tmp
         tmp_path,
         "org-paper-agent",
         {
-            "agents/research-paper-author.md": (
+            "capabilities/research-paper-author/capability.toml": (
+                'description = "Research paper author."\n'
+                'requires = ["agentic-notes"]\n'
+            ),
+            "capabilities/research-paper-author/agents/research-paper-author.md": (
                 "---\n"
                 "name: research-paper-author\n"
                 "kind: main\n"
@@ -2518,7 +2864,7 @@ def test_multiple_main_agents_use_separate_worktrees_and_project_agent_notes(tmp
     assert paper_launch.returncode == 0, paper_launch.stderr
     coordinator_text = (coordinator / "AGENTS.md").read_text(encoding="utf-8")
     paper_text = (paper / "AGENTS.md").read_text(encoding="utf-8")
-    assert "# Research Coordinator Instructions" in coordinator_text
+    assert "# Research Coordinator" in coordinator_text
     assert "# Research Paper Author Instructions" not in coordinator_text
     assert "# Research Paper Author Instructions" in paper_text
     assert "# Research Coordinator Instructions" not in paper_text

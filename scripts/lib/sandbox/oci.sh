@@ -8,7 +8,29 @@ oci_image_exists() {
 
 oci_build_image() {
     local oci_runtime="$1"
-    "$SCRIPT_DIR/container/build.sh" --runtime "$oci_runtime"
+    local first_char rest first_char_upper runtime_name
+
+    if ! command -v "$oci_runtime" >/dev/null 2>&1; then
+        echo "Error: '$oci_runtime' is not installed or not on PATH."
+        echo ""
+        echo "Install $oci_runtime on the host, then rerun:"
+        echo "  $SCRIPT_DIR/container/build.sh --runtime $oci_runtime"
+        return 1
+    fi
+
+    first_char="${oci_runtime%${oci_runtime#?}}"
+    rest="${oci_runtime#?}"
+    first_char_upper="$(printf '%s' "$first_char" | tr '[:lower:]' '[:upper:]')"
+    runtime_name="${first_char_upper}${rest}"
+
+    echo "Building ${runtime_name} container..."
+    if [[ "$oci_runtime" == "podman" ]]; then
+        "$oci_runtime" build --format docker -t agentic-team:latest "$SCRIPT_DIR/container"
+    else
+        "$oci_runtime" build -t agentic-team:latest "$SCRIPT_DIR/container"
+    fi
+    echo ""
+    echo "${runtime_name} image built: agentic-team:latest"
 }
 
 oci_launch() {
@@ -34,9 +56,6 @@ oci_launch() {
         --init
         -v "$WORKSPACE_DIR:/workspace"
         -v "$SCRIPT_DIR:$AR_INSTALL_CONTAINER_DIR:ro"
-        -v "$UV_CACHE_DIR:/uv-cache"
-        -v "$UV_PYTHON_INSTALL_DIR:/uv-python"
-        -v "$UV_TOOL_DIR:/uv-tools"
         -v "$STATE_ROOT:$STATE_ROOT"
         -v "$AR_WORKSPACE_ROOT:$AR_WORKSPACE_ROOT"
         -v "$AR_RUNTIME_ROOT:$AR_RUNTIME_ROOT"
@@ -44,6 +63,7 @@ oci_launch() {
         -v "$AR_CONFIG_STORE:$AR_SANDBOX_HOME"
         -w /workspace
     )
+    append_storage_bind_args OCI_ARGS -v
 
     if [[ -t 0 && -t 1 ]]; then
         OCI_ARGS+=(-it)
@@ -80,13 +100,7 @@ oci_launch() {
     done
 
     OCI_ARGS+=(
-        -e "UV_CACHE_DIR=/uv-cache"
-        -e "UV_PYTHON_INSTALL_DIR=/uv-python"
-        -e "UV_TOOL_DIR=/uv-tools"
         -e "UV_LINK_MODE=symlink"
-        -e "HF_HOME=$HF_HOME"
-        -e "TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
-        -e "WANDB_DIR=$WANDB_DIR"
         -e "TERM=${TERM:-xterm-256color}"
         -e "HOME=$AR_SANDBOX_HOME"
         -e "HOST_UID=$host_uid"
@@ -95,6 +109,7 @@ oci_launch() {
         -e "HOST_GROUP=$host_group"
         -e "SANDBOX_CLI=$AR_CLI"
     )
+    append_storage_env_args OCI_ARGS -e
     append_ar_runtime_env_args OCI_ARGS -e
 
     if [[ -n "${AR_HTTPS_PROXY:-}" ]]; then

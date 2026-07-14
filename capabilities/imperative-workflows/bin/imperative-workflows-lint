@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Entry point for the imperative workflow linter."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+
+CAPABILITY_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(CAPABILITY_ROOT / "lib"))
+
+from workflow_lint import main  # noqa: E402
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

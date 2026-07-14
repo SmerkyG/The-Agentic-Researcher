@@ -6,7 +6,7 @@ import datetime as dt
 from pathlib import Path
 import re
 import sys
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -27,10 +27,21 @@ from agentic_state import (  # noqa: E402
     work_state_branch,
     write_yaml,
 )
+from experiment_log_models import (  # noqa: E402
+    Experiment,
+    ExperimentCorrection,
+    ExperimentLogAppendRequest,
+    ExperimentLogCorrectRequest,
+    decode_model,
+    model_data,
+)
 
 
 class ExperimentLogError(RuntimeError):
     pass
+
+
+RequestT = TypeVar("RequestT", ExperimentLogAppendRequest, ExperimentLogCorrectRequest)
 
 
 def initial_summary() -> str:
@@ -124,43 +135,23 @@ def append_summary_row(summary_path: Path, row: str) -> None:
     summary_path.write_text(text + row + "\n", encoding="utf-8")
 
 
-def short_commit(request: dict[str, Any]) -> str:
-    code = request.get("code")
-    if isinstance(code, dict):
-        commit = str(code.get("commit") or "").strip()
-        if commit:
-            return commit[:7]
-    return ""
-
-
-def request_successful(request: dict[str, Any]) -> bool:
-    value = request.get("success", False)
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    return str(value).strip().lower() in {"1", "true", "yes", "on", "success", "successful"}
-
-
-def code_commit(request: dict[str, Any]) -> str:
-    code = request.get("code")
-    if isinstance(code, dict):
-        return str(code.get("commit") or "").strip()
-    return ""
-
-
 def success_tag_name(branch_name: str, experiment_id: str) -> str:
     return f"exp/{work_branch(branch_name)}/{experiment_id}-success"
 
 
-def tag_successful_experiment(request: dict[str, Any], project_dir: Path, branch_name: str, generated_id: str) -> None:
-    if not request_successful(request):
+def tag_successful_experiment(
+    request: ExperimentLogAppendRequest,
+    project_dir: Path,
+    branch_name: str,
+    generated_id: str,
+) -> None:
+    if not request.success:
         return
-    if str(request.get("status") or "completed").strip().lower() not in {"completed", "success", "successful"}:
-        raise ExperimentLogError("success tags require a completed/successful experiment status")
+    if request.status != "completed":
+        raise ExperimentLogError("success tags require status=completed")
 
     _, experiment_id = split_experiment_ref(generated_id, branch_name)
-    commit = code_commit(request)
+    commit = request.code.commit or ""
     if not commit:
         raise ExperimentLogError("success tags require code.commit in the experiment request")
 
@@ -188,51 +179,59 @@ def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def final_experiment_doc(request: dict[str, Any], branch_name: str, experiment_id: str) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "kind": "experiment_result",
-        "experiment_id": experiment_id,
-        "work_branch": work_branch(branch_name),
-        "title": request.get("title") or request.get("short_description") or experiment_id,
-        "created_at": now_iso(),
-        "user_id": request.get("user_id") or user_id(),
-        "source": request.get("source") or {},
-        "description": request.get("description") or "",
-        "code": request.get("code") or {},
-        "command": request.get("command") or "",
-        "status": request.get("status") or "completed",
-        "success": request_successful(request),
-        "key_result": request.get("key_result") or "",
-        "metrics": request.get("metrics") or {},
-        "artifacts": request.get("artifacts") or {},
-        "notes": request.get("notes") or "",
-    }
+def final_experiment(
+    request: ExperimentLogAppendRequest,
+    branch_name: str,
+    experiment_id: str,
+) -> Experiment:
+    return Experiment(
+        schema_version=1,
+        kind="experiment_result",
+        experiment_id=experiment_id,
+        work_branch=work_branch(branch_name),
+        title=request.title,
+        short_description=request.short_description,
+        created_at=now_iso(),
+        user_id=user_id(),
+        description=request.description,
+        code=request.code,
+        command=request.command,
+        status=request.status,
+        success=request.success,
+        key_result=request.key_result,
+        metrics=request.metrics,
+        artifacts=request.artifacts,
+        notes=request.notes,
+    )
 
 
-def log_experiment_once(request: dict[str, Any], project_dir: Path, branch_name: str) -> tuple[Path, str]:
+def log_experiment_once(
+    request: ExperimentLogAppendRequest,
+    project_dir: Path,
+    branch_name: str,
+) -> tuple[Path, str]:
     branch_name = work_branch(branch_name)
     repo = ensure_work_state(project_dir, branch_name)
     init_paths = ensure_experiment_log_files(repo, branch_name)
     log_dir = experiment_log_dir(repo)
     counter = load_counter(log_dir)
     number = int(counter.get("next_experiment_number") or 1)
-    description = str(request.get("short_description") or request.get("title") or "experiment")
+    description = request.short_description
     experiment_id = f"E{number:04d}_{slugify(description, default='experiment')}"
     experiment_path = log_dir / "experiments" / f"{experiment_id}.yaml"
     if experiment_path.exists():
         raise ExperimentLogError(f"experiment file already exists: {experiment_path}")
-    write_yaml(experiment_path, final_experiment_doc(request, branch_name, experiment_id))
+    write_yaml(experiment_path, model_data(final_experiment(request, branch_name, experiment_id)))
     counter["next_experiment_number"] = number + 1
     write_yaml(log_dir / "COUNTER.yaml", counter)
-    commit = short_commit(request)
+    commit = (request.code.commit or "")[:7]
     commit_cell = f"`{commit}`" if commit else ""
     row = (
         f"| [{experiment_id}](experiments/{experiment_id}.yaml) "
-        f"| {summary_cell(request.get('user_id') or user_id())} "
-        f"| {summary_cell(request.get('status') or 'completed')} "
+        f"| {summary_cell(user_id())} "
+        f"| {summary_cell(request.status)} "
         f"| {summary_cell(description)} "
-        f"| {summary_cell(request.get('key_result') or '')} "
+        f"| {summary_cell(request.key_result)} "
         f"| {commit_cell} |"
     )
     append_summary_row(log_dir / "SUMMARY.md", row)
@@ -246,11 +245,11 @@ def log_experiment_once(request: dict[str, Any], project_dir: Path, branch_name:
 
 def retry_generated_log(
     operation: str,
-    func: Callable[[dict[str, Any], Path, str], tuple[Path, str]],
-    request: dict[str, Any],
+    func: Callable[[RequestT, Path, str], tuple[Path, str]],
+    request: RequestT,
     project_dir: Path,
     branch_name: str,
-    after_push: Callable[[dict[str, Any], Path, str, str], None] | None = None,
+    after_push: Callable[[RequestT, Path, str, str], None] | None = None,
 ) -> str:
     repo: Path | None = None
     generated_id = ""
@@ -266,11 +265,17 @@ def retry_generated_log(
     raise ExperimentLogError(f"{operation} push was rejected after retry")
 
 
-def log_experiment(request: dict[str, Any], project_dir: Path, branch_name: str | None = None) -> str:
-    if request.get("kind") != "experiment_result_request":
-        raise ExperimentLogError("request kind must be experiment_result_request")
+def log_experiment(
+    request: ExperimentLogAppendRequest,
+    project_dir: Path,
+    branch_name: str | None = None,
+) -> str:
+    if request.success and request.status != "completed":
+        raise ExperimentLogError("success=true requires status=completed")
+    if request.success and not request.code.commit:
+        raise ExperimentLogError("success=true requires code.commit")
     try:
-        active_work_branch = work_branch(branch_name or request.get("work_branch"))
+        active_work_branch = work_branch(branch_name or request.work_branch)
         with state_lock(work_lock_path(project_dir, active_work_branch)):
             return retry_generated_log(
                 "experiment",
@@ -297,34 +302,35 @@ def correction_id_base(experiment_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "", experiment_id.split("_", 1)[0]) or "experiment"
 
 
-def next_correction_revision(corrections: list[Any]) -> int:
+def next_correction_revision(corrections: list[ExperimentCorrection]) -> int:
     highest = 0
     for correction in corrections:
-        if not isinstance(correction, dict):
-            continue
-        correction_id = str(correction.get("correction_id") or "")
-        match = re.search(r"_R(\d+)$", correction_id)
+        match = re.search(r"_R(\d+)$", correction.correction_id)
         if match:
             highest = max(highest, int(match.group(1)))
     return highest + 1
 
 
-def final_correction_doc(request: dict[str, Any], correction_id: str) -> dict[str, Any]:
-    return {
-        "correction_id": correction_id,
-        "created_at": now_iso(),
-        "user_id": request.get("user_id") or user_id(),
-        "status": request.get("status") or "corrected",
-        "summary": request.get("summary") or "",
-        "correction": request.get("correction") or request.get("notes") or "",
-        "source": request.get("source") or {},
-    }
+def final_correction(
+    request: ExperimentLogCorrectRequest,
+    correction_id: str,
+) -> ExperimentCorrection:
+    return ExperimentCorrection(
+        correction_id=correction_id,
+        created_at=now_iso(),
+        user_id=user_id(),
+        status="corrected",
+        summary=request.summary,
+        correction=request.correction,
+    )
 
 
-def log_correction_once(request: dict[str, Any], project_dir: Path, branch_name: str) -> tuple[Path, str]:
-    experiment_ref = str(request.get("experiment_id") or "").strip()
-    if not experiment_ref:
-        raise ExperimentLogError("correction request requires experiment_id")
+def log_correction_once(
+    request: ExperimentLogCorrectRequest,
+    project_dir: Path,
+    branch_name: str,
+) -> tuple[Path, str]:
+    experiment_ref = request.experiment_id.strip()
     branch_name, experiment_id = split_experiment_ref(experiment_ref, branch_name)
     repo = ensure_work_state(project_dir, branch_name)
     init_paths = ensure_experiment_log_files(repo, branch_name)
@@ -332,26 +338,19 @@ def log_correction_once(request: dict[str, Any], project_dir: Path, branch_name:
     experiment_path = experiment_path_for_id(log_dir, experiment_id)
     if not experiment_path.exists():
         raise ExperimentLogError(f"experiment file does not exist: {experiment_path}")
-    experiment_doc = safe_load_yaml(experiment_path)
-    recorded_id = str(experiment_doc.get("experiment_id") or "").strip()
-    if recorded_id and recorded_id != experiment_id:
-        raise ExperimentLogError(f"experiment_id mismatch in {experiment_path}: {recorded_id}")
-    corrections = experiment_doc.get("corrections")
-    if corrections is None:
-        corrections = []
-    if not isinstance(corrections, list):
-        raise ExperimentLogError(f"corrections must be a list in {experiment_path}")
-    number = next_correction_revision(corrections)
+    experiment = decode_model(Experiment, safe_load_yaml(experiment_path), path=str(experiment_path))
+    if experiment.experiment_id != experiment_id:
+        raise ExperimentLogError(f"experiment_id mismatch in {experiment_path}: {experiment.experiment_id}")
+    number = next_correction_revision(experiment.corrections)
     correction_id = f"{correction_id_base(experiment_id)}_R{number:03d}"
-    corrections.append(final_correction_doc(request, correction_id))
-    experiment_doc["corrections"] = corrections
-    write_yaml(experiment_path, experiment_doc)
+    experiment.corrections.append(final_correction(request, correction_id))
+    write_yaml(experiment_path, model_data(experiment))
     row = (
         f"| [{correction_id}](experiments/{experiment_id}.yaml) "
-        f"| {summary_cell(request.get('user_id') or user_id())} "
+        f"| {summary_cell(user_id())} "
         f"| correction "
         f"| Correction for {summary_cell(experiment_id)} "
-        f"| {summary_cell(request.get('summary') or request.get('correction') or '')} "
+        f"| {summary_cell(request.summary)} "
         f"|  |"
     )
     append_summary_row(log_dir / "SUMMARY.md", row)
@@ -363,12 +362,14 @@ def log_correction_once(request: dict[str, Any], project_dir: Path, branch_name:
     return repo, qualified_experiment_ref(branch_name, correction_id)
 
 
-def log_correction(request: dict[str, Any], project_dir: Path, branch_name: str | None = None) -> str:
-    if request.get("kind") != "experiment_correction_request":
-        raise ExperimentLogError("request kind must be experiment_correction_request")
+def log_correction(
+    request: ExperimentLogCorrectRequest,
+    project_dir: Path,
+    branch_name: str | None = None,
+) -> str:
     try:
         active_work_branch = branch_name
-        experiment_ref = str(request.get("experiment_id") or "")
+        experiment_ref = request.experiment_id
         if not active_work_branch and "::" in experiment_ref:
             active_work_branch = experiment_ref.split("::", 1)[0]
         active_work_branch = work_branch(active_work_branch)

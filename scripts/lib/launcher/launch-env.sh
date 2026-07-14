@@ -98,17 +98,12 @@ setup_optional_binds() {
 }
 build_env_args() {
     ENV_ARGS=(
-        --env UV_CACHE_DIR=/uv-cache
-        --env UV_PYTHON_INSTALL_DIR=/uv-python
-        --env UV_TOOL_DIR=/uv-tools
         --env UV_LINK_MODE=symlink
-        --env "HF_HOME=$HF_HOME"
-        --env "TRITON_CACHE_DIR=$TRITON_CACHE_DIR"
-        --env "WANDB_DIR=$WANDB_DIR"
         --env "TERM=${TERM:-xterm-256color}"
         --env "USER=$USER"
         --env "GIT_SSH_COMMAND=$GIT_SSH_COMMAND"
     )
+    append_storage_env_args ENV_ARGS --env
     append_ar_runtime_env_args ENV_ARGS --env
 
     # Proxy
@@ -144,6 +139,13 @@ print_debug_launch() {
     echo "  State root:     $STATE_ROOT"
     echo "  Runtime root:   $AR_RUNTIME_ROOT"
     echo "  Artifacts dir:  $AR_ARTIFACTS_DIR"
+    if [[ ${#STORAGE_NAMES[@]} -gt 0 ]]; then
+        echo "  Storage:"
+        local storage_index
+        for ((storage_index=0; storage_index<${#STORAGE_NAMES[@]}; storage_index++)); do
+            echo "    ${STORAGE_NAMES[$storage_index]}: ${STORAGE_HOST_DIRS[$storage_index]} -> ${STORAGE_SANDBOX_DIRS[$storage_index]}"
+        done
+    fi
     if [[ "$AR_SANDBOX" == "docker" || "$AR_SANDBOX" == "podman" ]]; then
         echo "  Container image: agentic-team:latest"
     elif [[ "$AR_SANDBOX" == "none" ]]; then

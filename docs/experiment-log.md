@@ -39,22 +39,27 @@ Use `::`-qualified references outside the current work branch:
 feature/kernel-search::E0001_block-sparse-baseline
 ```
 
-Agent and user metadata, including `work_branch`, `user_id`, invocation IDs, branch names, commits, commands, metrics, and artifacts, lives inside the YAML file.
+The YAML record contains the generated user and work-branch metadata together
+with the typed request fields: code identity, command, status, metrics, and
+artifact paths.
 
 ## Logging Flow
 
-Working agents do not write experiment-log state directly. They use subagents:
+Working agents do not edit experiment-log state directly. Imperative workflows
+use structured tools:
 
-- `experiment-logger` records completed meaningful experiment results.
-- `experiment-corrector` appends corrections to existing experiment files.
+- `ExperimentLogAppendTool` records completed experiment results.
+- `ExperimentLogCorrectTool` appends corrections to existing experiment files.
 - `branch-commit` can finalize an experiment log entry automatically after a code commit hash exists, when the snapshot includes an `after_commit.experiment_log` payload.
 
-Generated instructions treat `experiment-logger` and `experiment-corrector` as
-required subagent handoffs: the parent agent should try to spawn the named
-subagent, retry once if spawning fails, and alert the user if it still cannot be
-spawned rather than silently calling `experiment-log` directly.
+When logging an experiment, the append tool pulls latest work-branch state,
+reads the counter, writes one YAML file, increments the counter, appends one row
+to `SUMMARY.md`, commits, and pushes.
 
-When logging an experiment, the experiment logger pulls latest work-branch state, reads the counter, writes one YAML file, increments the counter, appends one row to `SUMMARY.md`, commits, and pushes.
+Append and correction requests are decoded against their workflow tool schemas.
+Missing required fields, unknown fields, and wrong scalar or collection types
+are rejected before state is changed. Successful command responses are JSON
+objects containing `experiment_id` or `correction_id`.
 
 If a push is rejected, the helper retries from the latest remote state. If it cannot safely merge the requested append, it reports the error instead of rewriting existing experiment history.
 
@@ -88,9 +93,9 @@ experiment-log correct --request REQUEST.yaml --project-dir PATH --work-branch W
 experiment-log summary --project-dir PATH --work-branch WORK_BRANCH
 ```
 
-Research workflows often keep `condensed_report.md`, paginated report files
-(`report_page1.md` oldest, `report.md` newest/current and rolled over whole
-after it passes 300 lines), `TODO.md`, and report-ready figures under `images/`
+Research workflows often keep `condensed_report.md`, numbered report files
+(`report_page1.md` oldest and the highest number current), `TODO.md`, and
+report-ready figures under `images/`
 on the same work-branch state branch. Those files are mutable
 synthesis/checklist/report-asset records owned by the research workflow, not by
 the experiment-log capability. `condensed_report.md` is deliberately distinct

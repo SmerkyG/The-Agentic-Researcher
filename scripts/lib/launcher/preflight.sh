@@ -104,6 +104,19 @@ append_main_agent_required_capabilities() {
     done < <(frontmatter_list_values "$MAIN_AGENT_SOURCE_PATH" "required_capabilities")
 }
 
+append_capability_requirements() {
+    local index=0 capability_name capability_dir required_name
+
+    while [[ "$index" -lt "${#SELECTED_CAPABILITIES[@]}" ]]; do
+        capability_name="${SELECTED_CAPABILITIES[$index]}"
+        index=$((index + 1))
+        capability_dir="$(capability_root "$capability_name")" || continue
+        while IFS= read -r required_name; do
+            append_enabled_capability "$required_name"
+        done < <(capability_required_names "$capability_dir")
+    done
+}
+
 selected_capabilities_csv() {
     local IFS=,
     printf '%s' "${SELECTED_CAPABILITIES[*]}"
@@ -113,7 +126,9 @@ resolve_capabilities() {
     SELECTED_CAPABILITIES=()
     JOB_BACKEND="none"
     append_capabilities_from_list "${AR_CAPABILITIES:-agentic-notes,experiment-log}"
+    append_enabled_capability "${MAIN_AGENT_CAPABILITY:-}"
     append_main_agent_required_capabilities
+    append_capability_requirements
     AR_CAPABILITIES="$(selected_capabilities_csv)"
     AR_CAPABILITIES="${AR_CAPABILITIES:-none}"
     export AR_CAPABILITIES
@@ -142,10 +157,10 @@ validate_capabilities() {
         fi
         if ! capability_dir="$(capability_root "$capability_name")"; then
             echo "Error: Capability not found: $capability_name"
-            echo "Expected org or built-in directory named: capabilities/$capability_name"
+            echo "Expected project, org, or built-in directory named: capabilities/$capability_name"
             exit 1
         fi
-        if [[ ! -d "$capability_dir/skills" && ! -f "$capability_dir/INSTRUCTIONS.md" && ! -d "$capability_dir/bin" && ! -d "$capability_dir/lib" && ! -d "$capability_dir/hooks" && ! -d "$capability_dir/launcher" ]]; then
+        if [[ ! -d "$capability_dir/agents" && ! -d "$capability_dir/package" && ! -f "$capability_dir/render.py" && ! -d "$capability_dir/skills" && ! -f "$capability_dir/INSTRUCTIONS.md" && ! -d "$capability_dir/bin" && ! -d "$capability_dir/lib" && ! -d "$capability_dir/hooks" && ! -d "$capability_dir/launcher" ]]; then
             echo "Error: Capability $capability_name has no recognized content"
             exit 1
         fi

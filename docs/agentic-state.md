@@ -133,8 +133,7 @@ agent-notes/
   research-coordinator/
     always-injected.md
 condensed_report.md                     # research workflow condensed report, when created
-report_pageN.md                # archived report pages; page1 is oldest
-report.md                      # newest/current report page; rolls over whole after 300 lines
+report_pageN.md                # numbered report pages; page1 is oldest, highest N is current
 TODO.md                        # research workflow checklist, when created
 images/                        # report-ready figures referenced by report pages
 experiment-log/                 # experiment-log capability, when used

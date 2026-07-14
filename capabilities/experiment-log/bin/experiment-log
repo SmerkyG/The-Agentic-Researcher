@@ -16,7 +16,16 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 from agentic_state import AgenticStateError, parse_yaml_mapping, safe_load_yaml, work_branch  # noqa: E402
-from command_common import CommandError, internal_request, load_request, main, print_json, project_dir_from  # noqa: E402
+from command_common import CommandError, load_request, main, print_json  # noqa: E402
+from experiment_log_models import (  # noqa: E402
+    ExperimentLogAppendResult,
+    ExperimentLogAppendRequest,
+    ExperimentLogCorrectResult,
+    ExperimentLogCorrectRequest,
+    ModelError,
+    decode_model,
+    model_data,
+)
 from experiment_log_common import (  # noqa: E402
     ExperimentLogError,
     log_correction,
@@ -31,60 +40,34 @@ def request_from_path(path: str) -> dict[str, object]:
     return safe_load_yaml(Path(path))
 
 
-def command_project_dir(request: dict[str, object], explicit: str | None) -> Path:
+def command_project_dir(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit).resolve()
-    return Path(project_dir_from(request)).resolve()
+    return Path(os.environ.get("AR_PROJECT_DIR") or ".").resolve()
 
 
-def print_result(value: str, *, json_response: bool, payload_key: str, command: str) -> None:
-    if json_response:
-        print_json(
-            {
-                "command": command,
-                "state": "ok",
-                "stdout": value,
-                payload_key: value,
-            }
-        )
-    else:
-        print(value)
+def print_result(result: ExperimentLogAppendResult | ExperimentLogCorrectResult) -> None:
+    print_json(model_data(result))
 
 
 def append_request(
-    request: dict[str, object],
+    request: ExperimentLogAppendRequest,
     *,
     project_dir: Path,
     branch_name: str | None,
-    json_response: bool,
 ) -> None:
-    if "kind" not in request:
-        request = internal_request(request, "experiment_result_request")
     experiment_ref = log_experiment(request, project_dir, branch_name)
-    print_result(
-        experiment_ref,
-        json_response=json_response,
-        payload_key="experiment_id",
-        command="experiment-log append",
-    )
+    print_result(ExperimentLogAppendResult(experiment_id=experiment_ref))
 
 
 def correct_request(
-    request: dict[str, object],
+    request: ExperimentLogCorrectRequest,
     *,
     project_dir: Path,
     branch_name: str | None,
-    json_response: bool,
 ) -> None:
-    if "kind" not in request:
-        request = internal_request(request, "experiment_correction_request")
     correction_ref = log_correction(request, project_dir, branch_name)
-    print_result(
-        correction_ref,
-        json_response=json_response,
-        payload_key="correction_id",
-        command="experiment-log correct",
-    )
+    print_result(ExperimentLogCorrectResult(correction_id=correction_ref))
 
 
 def add_request_args(parser: argparse.ArgumentParser) -> None:
@@ -99,14 +82,16 @@ def run_append(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     try:
-        request = request_from_path(args.request) if args.request else load_request()
+        request = decode_model(
+            ExperimentLogAppendRequest,
+            request_from_path(args.request) if args.request else load_request(),
+        )
         append_request(
             request,
-            project_dir=command_project_dir(request, args.project_dir),
-            branch_name=args.work_branch or str(request.get("work_branch") or ""),
-            json_response=args.request is None,
+            project_dir=command_project_dir(args.project_dir),
+            branch_name=args.work_branch or request.work_branch,
         )
-    except (AgenticStateError, ExperimentLogError) as exc:
+    except (AgenticStateError, ExperimentLogError, ModelError) as exc:
         raise CommandError(str(exc)) from exc
 
 
@@ -116,14 +101,16 @@ def run_correct(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     try:
-        request = request_from_path(args.request) if args.request else load_request()
+        request = decode_model(
+            ExperimentLogCorrectRequest,
+            request_from_path(args.request) if args.request else load_request(),
+        )
         correct_request(
             request,
-            project_dir=command_project_dir(request, args.project_dir),
-            branch_name=args.work_branch or str(request.get("work_branch") or ""),
-            json_response=args.request is None,
+            project_dir=command_project_dir(args.project_dir),
+            branch_name=args.work_branch,
         )
-    except (AgenticStateError, ExperimentLogError) as exc:
+    except (AgenticStateError, ExperimentLogError, ModelError) as exc:
         raise CommandError(str(exc)) from exc
 
 

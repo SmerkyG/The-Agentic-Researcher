@@ -79,7 +79,15 @@ python_runtime_command_json_array() {
 }
 
 json_string() {
-    python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$1"
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\b'/\\b}"
+    value="${value//$'\f'/\\f}"
+    value="${value//$'\n'/\\n}"
+    value="${value//$'\r'/\\r}"
+    value="${value//$'\t'/\\t}"
+    printf '"%s"' "$value"
 }
 
 workspace_runtime_path() {
@@ -217,15 +225,18 @@ ar_capability_execution_env_pairs() {
 ar_agent_command_env_pairs() {
     local install_dir="$1"
     local path_prefix="$2"
-    local command_lib_path
+    local command_lib_path workflow_path
 
     path_env_pair "$path_prefix"
     if [[ "$install_dir" == "$SCRIPT_DIR" ]]; then
         command_lib_path="$(ar_core_command_lib_host_path)"
+        workflow_path="$(capability_workflow_host_path)"
     else
         command_lib_path="$(ar_core_command_lib_env_path)"
+        workflow_path="$(capability_workflow_runtime_path)"
     fi
     pythonpath_env_pair "$command_lib_path"
+    printf 'AR_WORKFLOW_PATH=%s\n' "$workflow_path"
     ar_core_env_pairs "$install_dir"
     ar_agent_context_env_pairs
     ar_capability_config_env_pairs
