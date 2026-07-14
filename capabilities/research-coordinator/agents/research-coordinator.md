@@ -36,7 +36,6 @@ from agentic_workflows.research.experiment_log import (
     ExperimentLogSummaryTool,
 )
 from agentic_workflows.research.git import (
-    BranchSnapshotAfterCommit,
     BranchSnapshotTool,
     GitRecentLogTool,
     GitStatusShortTool,
@@ -135,7 +134,6 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
                         paths=paths,
                         commit_message=message,
                         checks=checks,
-                        after_commit=BranchSnapshotAfterCommit(experiment_log=experiment_log),
                     ).run()
                     if not self.evaluate("the snapshot name-status contains unexpected files"):
                         break
@@ -160,12 +158,14 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
                 paths=state_paths
             ).run()
 
-            ResearchFinalizer(
-                experiment_log=experiment_log,
-                note_update=note_update,
-                code_snapshot=snapshot,
-                work_state_snapshot=work_state_snapshot,
-            ).launch_detached()
+            self.fire_and_forget(
+                ResearchFinalizer(
+                    experiment_log=experiment_log,
+                    note_update=note_update,
+                    code_snapshot=snapshot,
+                    work_state_snapshot=work_state_snapshot,
+                )
+            )
 
             if self.evaluate("research continuation requires user input"):
                 direction: str = self.ask_user(

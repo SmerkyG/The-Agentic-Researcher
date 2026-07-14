@@ -50,7 +50,8 @@ use structured tools:
 
 - `ExperimentLogAppendTool` records completed experiment results.
 - `ExperimentLogCorrectTool` appends corrections to existing experiment files.
-- `branch-commit` can finalize an experiment log entry automatically after a code commit hash exists, when the snapshot includes an `after_commit.experiment_log` payload.
+- `ResearchFinalizer` commits a code snapshot, fills the resulting branch and
+  commit hash into `ExperimentLogAppendTool`, and then invokes it explicitly.
 
 When logging an experiment, the append tool pulls latest work-branch state,
 reads the counter, writes one YAML file, increments the counter, appends one row

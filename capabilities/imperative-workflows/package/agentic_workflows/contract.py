@@ -6,6 +6,7 @@ from typing import Any, ClassVar, Generic, Sequence, TypeVar
 
 
 ResultT = TypeVar("ResultT")
+StartedResultT = TypeVar("StartedResultT")
 
 
 def Value(
@@ -39,15 +40,7 @@ class Operation(WorkflowRecord, Generic[ResultT]):
     guidance: ClassVar[str] = ""
 
     def run(self) -> ResultT:
-        """Dispatch synchronously and return the declared result."""
-        ...
-
-    def launch(self) -> Job[ResultT]:
-        """Dispatch tracked asynchronous work and return its required Job handle."""
-        ...
-
-    def launch_detached(self) -> None:
-        """Dispatch fire-and-forget work without a handle; never wait or poll."""
+        """Start this tool or subagent synchronously and return its result."""
         ...
 
 
@@ -80,8 +73,6 @@ class YAMLArgvTool(ArgvTool[ResultT], Generic[ResultT]):
 class AgentWorkflow(Operation[ResultT], Generic[ResultT]):
     """A workflow with separate invocation and body semantics.
 
-    run(), launch(), and launch_detached() dispatch this workflow into its
-    configured agent context.
     A callable agent declares a public contract subclass containing its inputs
     and result type, then an implementation subclass overriding workflow(). The
     manifest pairs the two classes. At top-level startup, follow on_startup()
@@ -120,6 +111,19 @@ class AgentWorkflow(Operation[ResultT], Generic[ResultT]):
         """Fill one typed record from current scope and field descriptions."""
         ...
 
+    def launch(self, operation: Operation[StartedResultT]) -> Job[StartedResultT]:
+        """Start a tool or named subagent asynchronously and return its tracked Job."""
+        ...
+
+    def fire_and_forget(self, operation: Operation[Any]) -> None:
+        """Start asynchronously, discard its platform handle, and continue now.
+
+        Immediately follow the next Python statement. Never wait for, poll,
+        list, message, follow up with, or otherwise inspect this operation. No
+        later action or response may depend on its completion or result.
+        """
+        ...
+
     def wait(self, job: Job[ResultT], timeout_seconds: float | None = None) -> ResultT:
         """Wait for one job and return its typed result."""
         ...
@@ -143,6 +147,17 @@ class AgentWorkflow(Operation[ResultT], Generic[ResultT]):
     def timeout(self, seconds: float) -> Any:
         """Bound the enclosed operation with an explicit timeout."""
         ...
+
+
+class SubagentWorkflow(AgentWorkflow[ResultT], Generic[ResultT]):
+    """A workflow that must run in a separately started subagent context.
+
+    The child follows the contract named by agent_name and receives the typed
+    constructor fields as its request. Preserve inherited history when the
+    platform supports it. If a native named role cannot inherit history, a
+    history fork must be explicitly directed to follow the named contract.
+    The caller must never execute this workflow's body.
+    """
 
 
 class UserFacingWorkflow(AgentWorkflow[ResultT], Generic[ResultT]):

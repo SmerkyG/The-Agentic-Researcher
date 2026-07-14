@@ -174,15 +174,7 @@ class Operation(WorkflowRecord):
             dataclass(cls)
 
     def run(self) -> Any:
-        """Complete the operation synchronously and return its declared result."""
-        raise NotImplementedError
-
-    def launch(self) -> Job:
-        """Launch tracked asynchronous work and return its required Job handle."""
-        raise NotImplementedError
-
-    def launch_detached(self) -> None:
-        """Launch fire-and-forget work without a handle; never wait or poll."""
+        """Start this tool or subagent synchronously and return its result."""
         raise NotImplementedError
 
 
@@ -268,6 +260,19 @@ class AgentWorkflow(Operation):
         """
         raise NotImplementedError
 
+    def launch(self, operation: Operation) -> Job:
+        """Start a tool or named subagent asynchronously and return its tracked Job."""
+        raise NotImplementedError
+
+    def fire_and_forget(self, operation: Operation) -> None:
+        """Start asynchronously, discard its platform handle, and continue now.
+
+        Immediately follow the next Python statement. Never wait for, poll,
+        list, message, follow up with, or otherwise inspect this operation. No
+        later action or response may depend on its completion or result.
+        """
+        raise NotImplementedError
+
     def wait_all(self, jobs, timeout_seconds=None) -> Any:
         """Wait for every job and return completion/progress results."""
         raise NotImplementedError
@@ -287,6 +292,17 @@ class AgentWorkflow(Operation):
     def timeout(self, seconds) -> Any:
         """Bound the enclosed operation with an explicit timeout policy."""
         raise NotImplementedError
+
+
+class SubagentWorkflow(AgentWorkflow):
+    """A workflow that must run in a separately started subagent context.
+
+    The child follows the contract named by agent_name and receives the typed
+    constructor fields as its request. Preserve inherited history when the
+    platform supports it. If a native named role cannot inherit history, a
+    history fork must be explicitly directed to follow the named contract.
+    The caller must never execute this workflow's body.
+    """
 
 
 class UserFacingWorkflow(AgentWorkflow):

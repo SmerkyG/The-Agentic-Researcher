@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
-from command_common import CommandError, load_request, main, print_json
+from command_common import load_request, main, print_json
 from branch_git_common import create_snapshot
 
 
@@ -32,12 +32,6 @@ Example:
   checks:
     - "uv run pytest tests/test_kernel.py"
   check_timeout_seconds: 900
-  after_commit:
-    experiment_log:
-      title: Kernel update
-      short_description: kernel-update
-      status: completed
-      key_result: Tests pass.
   YAML
 
 Required fields:
@@ -49,24 +43,11 @@ Common optional fields:
   work_branch                  Active work branch. Defaults from AR_WORK_BRANCH/current branch.
   checks                       Shell commands run in the temporary commit worktree.
   check_timeout_seconds        Per-check timeout.
-  after_commit.experiment_log  Experiment-log payload to finalize after commit.
 """
 
 
-def normalize_request(request: dict) -> dict:
-    data = dict(request)
-    after_commit = data.get("after_commit")
-    if isinstance(after_commit, dict):
-        normalized = dict(after_commit)
-        if "experiment_result_request" in normalized:
-            raise CommandError("use after_commit.experiment_log, not experiment_result_request")
-        data["after_commit"] = normalized
-    return data
-
-
 def run() -> None:
-    request = normalize_request(load_request())
-    result = create_snapshot(request)
+    result = create_snapshot(load_request())
     response = {"command": "branch-snapshot"}
     response.update(result)
     print_json(response)

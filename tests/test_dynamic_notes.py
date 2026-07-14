@@ -1160,7 +1160,15 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     assert "def _schema_for_annotation" not in instruction_text
     assert "from dataclasses import" not in instruction_text
     assert "class ResearchCoordinator(UserFacingWorkflow[None]):" in instruction_text
-    assert "def launch(self) -> Job[ResultT]:" in instruction_text
+    assert "def launch(self, operation: Operation[StartedResultT]) -> Job[StartedResultT]:" in instruction_text
+    assert "def fire_and_forget(self, operation: Operation[Any]) -> None:" in instruction_text
+    normalized_instructions = " ".join(instruction_text.split())
+    assert "discard its platform handle, and continue now" in normalized_instructions
+    assert "Never wait for, poll, list, message, follow up with" in normalized_instructions
+    assert "follows the contract named by `agent_name`" in instruction_text
+    assert "preserve inherited history when supported" in instruction_text
+    assert "use the history fork and explicitly direct that child" in instruction_text
+    assert "do not call `wait_agent`, `list_agents`, `send_message`, or `followup_task`" in instruction_text
     assert "research-coordinator-report-append" in instruction_text
     assert "$WORK_STATE_DIR/images/" in instruction_text
     assert (
@@ -2524,6 +2532,8 @@ def test_launcher_renders_modular_main_agent_and_subagent(tmp_path: Path) -> Non
                 "    pass\n\n"
                 "class AgentWorkflow(WorkflowRecord):\n"
                 "    pass\n\n"
+                "class SubagentWorkflow(AgentWorkflow):\n"
+                "    pass\n\n"
                 "class UserFacingWorkflow(AgentWorkflow):\n"
                 "    pass\n\n"
                 "def Value(description: str):\n"
@@ -2535,8 +2545,8 @@ def test_launcher_renders_modular_main_agent_and_subagent(tmp_path: Path) -> Non
                 "    pass\n"
             ),
             "capabilities/demo/package/demo/helper.py": (
-                "from demo.contract import AgentWorkflow, Value\n\n"
-                "class ModularHelper(AgentWorkflow):\n"
+                "from demo.contract import SubagentWorkflow, Value\n\n"
+                "class ModularHelper(SubagentWorkflow):\n"
                 "    summary: str = Value(\"helper request summary\")\n"
             ),
             "capabilities/demo/agents/modular-main.md": (
@@ -2608,7 +2618,7 @@ def test_launcher_renders_modular_main_agent_and_subagent(tmp_path: Path) -> Non
         encoding="utf-8"
     )
     assert "class ModularMainWorkflow(ModularMain):" in instruction_text
-    assert "class ModularHelper(AgentWorkflow):" in instruction_text
+    assert "class ModularHelper(SubagentWorkflow):" in instruction_text
     assert 'Value("helper request summary")' in instruction_text
     assert "class ModularHelperWorkflow" not in instruction_text
     assert "class ModularHelperWorkflow(ModularHelper):" in helper_text

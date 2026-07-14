@@ -80,20 +80,7 @@ def test_commit_snapshot_uses_temp_index_and_advances_work_branch(tmp_path: Path
     env = os.environ.copy()
     env["AR_STATE_ROOT"] = str(tmp_path / "state")
     env["AR_WORK_BRANCH"] = "kernel-search"
-    experiment_log_call = tmp_path / "experiment-log-request.yaml"
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_experiment_log = fake_bin / "experiment-log"
-    fake_experiment_log.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json, os, pathlib, sys\n"
-        "pathlib.Path(os.environ['FAKE_EXPERIMENT_LOG_CALL']).write_text(sys.stdin.read(), encoding='utf-8')\n"
-        "print(json.dumps({'experiment_id': 'kernel-search::E0001_snapshot-experiment'}))\n",
-        encoding="utf-8",
-    )
-    fake_experiment_log.chmod(0o755)
-    env["PATH"] = f"{fake_bin}:{BIN_DIR}:{env['PATH']}"
-    env["FAKE_EXPERIMENT_LOG_CALL"] = str(experiment_log_call)
+    env["PATH"] = f"{BIN_DIR}:{env['PATH']}"
 
     (repo / "staged.txt").write_text("keep staged\n", encoding="utf-8")
     git(repo, "add", "staged.txt")
@@ -108,20 +95,6 @@ def test_commit_snapshot_uses_temp_index_and_advances_work_branch(tmp_path: Path
         "paths": ["README.md", "src/kernel.py"],
         "commit_message": "test: commit snapshot",
         "checks": ["test -f src/kernel.py"],
-        "after_commit": {
-            "experiment_log": {
-                "title": "Snapshot experiment",
-                "short_description": "snapshot experiment",
-                "code": {"branch": None, "commit": None},
-                "description": "Test branch snapshot experiment logging.",
-                "command": "test -f src/kernel.py",
-                "status": "completed",
-                "success": True,
-                "key_result": "helper produced commit",
-                "metrics": [],
-                "artifacts": [],
-            },
-        },
     }
 
     snapshot = json.loads(run_agent_command("branch-snapshot", request, env=env).stdout)
@@ -144,8 +117,8 @@ def test_commit_snapshot_uses_temp_index_and_advances_work_branch(tmp_path: Path
     )
 
     assert committed["state"] == "committed"
-    assert committed["experiment_log_state"] == "logged"
-    assert committed["experiment_log_id"] == "kernel-search::E0001_snapshot-experiment"
+    assert "experiment_log_state" not in committed
+    assert "experiment_log_id" not in committed
     assert git(repo, "log", "-1", "--format=%s") == "test: commit snapshot"
     assert git(repo, "show", "HEAD:README.md") == "snapshotted"
     assert git(repo, "show", "HEAD:src/kernel.py") == "print('snap')"
@@ -154,90 +127,14 @@ def test_commit_snapshot_uses_temp_index_and_advances_work_branch(tmp_path: Path
     assert "README.md" in git(repo, "status", "--short", "--", "README.md")
     assert git(repo, "status", "--short", "--", "src/kernel.py") == ""
 
-    experiment_request = yaml.safe_load(
-        Path(committed["experiment_request_path"]).read_text(encoding="utf-8")
-    )
-    assert experiment_request["code"]["branch"] == "kernel-search"
-    assert experiment_request["code"]["commit"] == committed["commit"]
-    assert experiment_request["work_branch"] == "kernel-search"
-    logged_request = yaml.safe_load(experiment_log_call.read_text(encoding="utf-8"))
-    assert logged_request["code"]["branch"] == "kernel-search"
-    assert logged_request["code"]["commit"] == committed["commit"]
-    assert "project_dir" not in logged_request
-    assert logged_request["work_branch"] == "kernel-search"
-    assert committed["experiment_log_command"] == [
-        "experiment-log",
-        "append",
-        "--project-dir",
-        str(repo),
-    ]
-
     status = json.loads(
         run_agent_command("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
     )
     assert status["state"] == "committed"
     assert status["commit"] == committed["commit"]
-    assert status["experiment_log_state"] == "logged"
-    assert status["experiment_log_id"] == "kernel-search::E0001_snapshot-experiment"
-
-
-def test_commit_snapshot_reports_experiment_log_failure_after_commit(tmp_path: Path) -> None:
-    repo = init_repo(tmp_path)
-    env = os.environ.copy()
-    env["AR_STATE_ROOT"] = str(tmp_path / "state")
-    env["AR_WORK_BRANCH"] = "kernel-search"
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_experiment_log = fake_bin / "experiment-log"
-    fake_experiment_log.write_text(
-        "#!/bin/sh\n"
-        "echo 'simulated experiment log failure'\n"
-        "exit 17\n",
-        encoding="utf-8",
-    )
-    fake_experiment_log.chmod(0o755)
-    env["PATH"] = f"{fake_bin}:{BIN_DIR}:{env['PATH']}"
-
-    (repo / "README.md").write_text("snapshotted\n", encoding="utf-8")
-    request = {
-        "project_dir": str(repo),
-        "work_branch": "kernel-search",
-        "paths": ["README.md"],
-        "commit_message": "test: commit despite log failure",
-        "after_commit": {
-            "experiment_log": {
-                "title": "Snapshot experiment",
-                "short_description": "snapshot experiment",
-                "description": "Test failed experiment logging after commit.",
-                "command": "true",
-                "status": "completed",
-                "success": False,
-                "key_result": "helper produced commit",
-                "metrics": [],
-                "artifacts": [],
-            },
-        },
-    }
-
-    snapshot = json.loads(run_agent_command("branch-snapshot", request, env=env).stdout)
-    committed = json.loads(
-        run_agent_command(
-            "branch-commit",
-            {"snapshot_dir": snapshot["snapshot_dir"], "background": False},
-            env=env,
-        ).stdout
-    )
-
-    assert committed["state"] == "committed"
-    assert committed["experiment_log_state"] == "failed"
-    assert "simulated experiment log failure" in committed["experiment_log_error"]
-    assert git(repo, "log", "-1", "--format=%s") == "test: commit despite log failure"
-    status = json.loads(
-        run_agent_command("branch-commit-status", {"snapshot_dir": snapshot["snapshot_dir"]}, env=env).stdout
-    )
-    assert status["state"] == "committed"
-    assert status["experiment_log_state"] == "failed"
-    assert "simulated experiment log failure" in status["experiment_log_error"]
+    assert "experiment_log_state" not in status
+    metadata = yaml.safe_load((Path(snapshot["snapshot_dir"]) / "metadata.yaml").read_text(encoding="utf-8"))
+    assert "after_commit" not in metadata
 
 
 def test_background_commit_reports_running_check_and_streams_log(tmp_path: Path) -> None:

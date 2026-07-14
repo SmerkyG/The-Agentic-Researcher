@@ -75,6 +75,8 @@ ALLOWED_SELF_METHODS = {
     "do",
     "evaluate",
     "fill",
+    "fire_and_forget",
+    "launch",
     "lock",
     "timeout",
     "wait_all",
@@ -291,7 +293,10 @@ def _is_workflow_record(node: ast.ClassDef) -> bool:
 
 
 def _is_agent_workflow(node: ast.ClassDef) -> bool:
-    return any(_call_name(base) in {"AgentWorkflow", "UserFacingWorkflow"} for base in node.bases)
+    return any(
+        _call_name(base) in {"AgentWorkflow", "SubagentWorkflow", "UserFacingWorkflow"}
+        for base in node.bases
+    )
 
 
 def _is_user_facing_workflow(node: ast.ClassDef) -> bool:
@@ -371,7 +376,10 @@ class WorkflowVisitor(ast.NodeVisitor):
             self._check_evaluate_call(node)
         if isinstance(node.func, ast.Attribute) and node.func.attr == "fill":
             self._check_fill_call(node)
-        if isinstance(node.func, ast.Attribute) and node.func.attr in {"launch", "launch_detached"}:
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"launch", "fire_and_forget", "launch_detached"}
+        ):
             self._check_launch_call(node)
         self.generic_visit(node)
 
@@ -674,13 +682,42 @@ class WorkflowVisitor(ast.NodeVisitor):
                 code="WF501",
                 message=(
                     f"self.{node.func.attr}(...) is not declared in the AgentWorkflow contract; "
-                    "use a declared runtime primitive, a plain helper function, or a workflow object's run/launch method"
+                    "use a declared runtime primitive, a plain helper function, or operation.run()"
                 ),
             )
         )
 
     def _check_launch_call(self, node: ast.Call) -> None:
         if not isinstance(node.func, ast.Attribute):
+            return
+        is_self_call = (
+            isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "self"
+        )
+        if node.func.attr == "launch_detached" or not is_self_call:
+            self.findings.append(
+                Finding(
+                    path=self.path,
+                    line=node.lineno,
+                    col=node.col_offset,
+                    code="WF802",
+                    message=(
+                        "start asynchronous operations through self.launch(operation) or "
+                        "self.fire_and_forget(operation), not an operation-level launch method"
+                    ),
+                )
+            )
+            return
+        if len(node.args) != 1 or node.keywords:
+            self.findings.append(
+                Finding(
+                    path=self.path,
+                    line=node.lineno,
+                    col=node.col_offset,
+                    code="WF802",
+                    message=f"self.{node.func.attr}(...) requires exactly one positional operation",
+                )
+            )
             return
         parent = getattr(node, "_workflow_parent", None)
         if node.func.attr == "launch":
@@ -698,7 +735,7 @@ class WorkflowVisitor(ast.NodeVisitor):
                     code="WF802",
                     message=(
                         "launch() starts tracked work and must be assigned with an explicit "
-                        "Job[...] annotation; use launch_detached() for fire-and-forget work"
+                        "Job[...] annotation; use self.fire_and_forget(operation) when no result is needed"
                     ),
                 )
             )
@@ -711,7 +748,7 @@ class WorkflowVisitor(ast.NodeVisitor):
                 line=node.lineno,
                 col=node.col_offset,
                 code="WF802",
-                message="launch_detached() is fire-and-forget and must be a bare expression",
+                message="self.fire_and_forget(operation) must be a bare expression",
             )
         )
 

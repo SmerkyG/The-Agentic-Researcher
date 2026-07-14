@@ -42,10 +42,12 @@ class ResearchFinalizerWorkflow(ResearchFinalizer):
                 snapshot_dir=self.code_snapshot.snapshot_dir,
                 background=False,
             ).run()
-            if commit_result.state != "committed":
+            if commit_result.state != "committed" or commit_result.commit is None:
                 errors.append("Code snapshot commit did not complete.")
-            if self.experiment_log is not None and commit_result.experiment_log_state != "logged":
-                errors.append(commit_result.experiment_log_error or "Experiment log update failed.")
+            elif self.experiment_log is not None:
+                self.experiment_log.code.branch = self.code_snapshot.branch
+                self.experiment_log.code.commit = commit_result.commit
+                self.experiment_log.run()
         elif self.experiment_log is not None:
             self.experiment_log.run()
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from agentic_workflows.contract import AgentWorkflow, WorkflowRecord
+from agentic_workflows.contract import SubagentWorkflow, WorkflowRecord
 from agentic_workflows.research.agentic_notes import AgenticNotesUpdateTool
 from agentic_workflows.research.experiment_log import ExperimentLogAppendTool
 from agentic_workflows.research.git import Snapshot
@@ -15,7 +15,7 @@ class ResearchFinalizerResult(WorkflowRecord):
     errors: list[str]
 
 
-class ResearchFinalizer(AgentWorkflow[ResearchFinalizerResult]):
+class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):
     """Invocation contract for finalizing one research result."""
 
     agent_name: ClassVar[str] = "research-finalizer"

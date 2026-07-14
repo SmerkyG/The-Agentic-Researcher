@@ -69,10 +69,15 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     rendered = render_workflow(source, package_roots=PACKAGE_ROOTS)
 
     assert "```python agentic-workflow" not in rendered
-    assert "class ResearchFinalizer(AgentWorkflow[ResearchFinalizerResult]):" in rendered
+    assert "class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):" in rendered
     assert 'summary: str = Value("Compact topic hints, at most 80 characters")' in rendered
     assert "class BranchCommitTool" in rendered
     assert "class ResearchFinalizerWorkflow(ResearchFinalizer):" in rendered
+    assert "self.experiment_log.code.branch = self.code_snapshot.branch" in rendered
+    assert "self.experiment_log.code.commit = commit_result.commit" in rendered
+    assert rendered.index("BranchCommitTool(") < rendered.index("self.experiment_log.run()")
+    assert "experiment_log_state" not in rendered
+    assert "BranchSnapshotAfterCommit" not in rendered
     assert "class NoteUpdaterWorkflow" not in rendered
 
 
@@ -82,8 +87,16 @@ def test_coordinator_launches_finalizer_without_tracking_or_waiting() -> None:
     rendered = render_workflow(source, package_roots=PACKAGE_ROOTS)
 
     assert "ResearchFinalizer(" in rendered
-    assert ").launch_detached()" in rendered
+    assert "self.fire_and_forget(" in rendered
+    assert "BranchSnapshotAfterCommit" not in rendered
+    assert "after_commit=" not in rendered
     assert "finalizer: Job" not in rendered
+    assert "discards the platform handle" in rendered
+    assert "immediately continues with the next Python statement" in rendered
+    assert "never wait, poll, list, message, follow up with, or depend on" in rendered
+    assert "follows the contract named by its `agent_name`" in rendered
+    assert "Preserve inherited history when supported" in rendered
+    assert "explicitly direct the history-forked child" in rendered
 
 
 def test_related_workflows_share_one_module_index(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,6 +136,41 @@ def test_modular_source_requires_exactly_one_tagged_block(tmp_path: Path) -> Non
 
     with pytest.raises(WorkflowSourceError, match="expected exactly one"):
         parse_workflow_definition(source)
+
+
+def test_subagent_workflow_requires_explicit_subagent_interface(tmp_path: Path) -> None:
+    package = tmp_path / "package" / "demo"
+    package.mkdir(parents=True)
+    (package / "contract.py").write_text(
+        "class AgentWorkflow:\n    pass\n",
+        encoding="utf-8",
+    )
+    (package / "helper.py").write_text(
+        "from demo.contract import AgentWorkflow\n\n"
+        "class Helper(AgentWorkflow):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "agents" / "helper.md"
+    source.parent.mkdir()
+    source.write_text(
+        "---\n"
+        "kind: subagent\n"
+        "workflow_interface: demo.helper:Helper\n"
+        "workflow_module: demo.workflows.helper\n"
+        "workflow_entry: HelperWorkflow\n"
+        "---\n\n"
+        "```python agentic-workflow\n"
+        "from demo.helper import Helper\n\n"
+        "class HelperWorkflow(Helper):\n"
+        "    def workflow(self) -> None:\n"
+        "        pass\n"
+        "```\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkflowSourceError, match="must subclass SubagentWorkflow"):
+        render_workflow(source)
 
 
 def test_workflow_source_cli_emits_machine_readable_manifest() -> None:

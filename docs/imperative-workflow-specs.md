@@ -41,8 +41,9 @@ declarative guidance; the embedded workflow supplies control flow.
 A workflow spec MUST be written as normal Python control flow. The workflow
 source may use helper methods supplied by the runtime, but it should still read
 like an ordinary function. Workflows that invoke subagents or tools SHOULD
-construct the exact operation object and call its `run()`, `launch()`, or
-`launch_detached()` method:
+construct the exact operation object. Call `operation.run()` for synchronous
+work, `self.launch(operation)` for tracked asynchronous work, or
+`self.fire_and_forget(operation)` when no handle or result is needed:
 
 ```python
 def complete_result(self, result) -> None:
@@ -54,7 +55,6 @@ def complete_result(self, result) -> None:
             paths=result.snapshot_paths,
             commit_message=result.snapshot_commit_message,
             checks=result.snapshot_checks,
-            after_commit=BranchSnapshotAfterCommit(experiment_log=result.experiment_log),
         ).run()
         status = snapshot.name_status
 
@@ -72,17 +72,19 @@ def complete_result(self, result) -> None:
                 )
                 return
 
-    ResearchFinalizer(
-        experiment_log=experiment_log,
-        note_update=note_update,
-        code_snapshot=snapshot,
-    ).launch_detached()
+    self.fire_and_forget(
+        ResearchFinalizer(
+            experiment_log=experiment_log,
+            note_update=note_update,
+            code_snapshot=snapshot,
+        )
+    )
 ```
 
 Examples use `self` intentionally. The receiver represents the active workflow
 or agent object. Class-backed subagents or subworkflows are configured by
 constructing the workflow object with typed fields, e.g.
-`ResearchFinalizer(...).launch_detached()` or
+`self.fire_and_forget(ResearchFinalizer(...))` or
 `workflow = ResearchFinalizer(...)`.
 Implementations may still delegate to a separate context object internally, but
 the published workflow should read like ordinary Python agent behavior.
@@ -150,13 +152,7 @@ class Operation(WorkflowRecord):
     guidance: ClassVar[str] = ""
 
     def run(self):
-        """Run the operation synchronously and return a structured result."""
-
-    def launch(self):
-        """Launch tracked asynchronous work and return its required job handle."""
-
-    def launch_detached(self) -> None:
-        """Launch fire-and-forget work without a handle; never wait or poll."""
+        """Start this tool or subagent synchronously and return its result."""
 
 
 class WorkflowTool(Operation):
@@ -223,6 +219,17 @@ class AgentWorkflow(Operation):
         descriptions.
         """
 
+    def launch(self, operation: Operation):
+        """Start a tool or named subagent asynchronously and return its tracked Job."""
+
+    def fire_and_forget(self, operation: Operation) -> None:
+        """Start asynchronously, discard its platform handle, and continue now.
+
+        Immediately follow the next Python statement. Never wait for, poll,
+        list, message, follow up with, or otherwise inspect this operation. No
+        later action or response may depend on its completion or result.
+        """
+
     def wait_all(self, jobs, timeout_seconds=None):
         """Wait for every job and return completion/progress results."""
 
@@ -237,6 +244,17 @@ class AgentWorkflow(Operation):
 
     def timeout(self, seconds):
         """Bound the enclosed operation with an explicit timeout policy."""
+
+
+class SubagentWorkflow(AgentWorkflow):
+    """A workflow that must run in a separately started subagent context.
+
+    The child follows the contract named by agent_name and receives the typed
+    constructor fields as its request. Preserve inherited history when the
+    platform supports it. If a native named role cannot inherit history, a
+    history fork must be explicitly directed to follow the named contract.
+    The caller must never execute this workflow's body.
+    """
 
 
 class UserFacingWorkflow(AgentWorkflow):
@@ -525,16 +543,15 @@ to it.
 
 ## Explicit Tool Calls
 
-Use a typed operation object's `run()`, `launch()`, or `launch_detached()`
-method when the workflow must execute a specific registered tool or command
-rather than ask the agent to satisfy an English action. Do not pass tool names
-as strings, loose keyword arguments, argv lists, or untyped dictionaries from
-workflow code:
+Use a typed operation object's `run()` method for synchronous execution. Use
+`self.launch(operation)` or `self.fire_and_forget(operation)` for asynchronous
+execution. Do not pass tool names as strings, loose keyword arguments, argv
+lists, or untyped dictionaries from workflow code:
 
 ```python
 note_update.run()
-experiment_log.launch_detached()
-BranchCommit(snapshot_dir=snapshot.snapshot_dir, background=True).launch_detached()
+self.fire_and_forget(experiment_log)
+self.fire_and_forget(BranchCommit(snapshot_dir=snapshot.snapshot_dir, background=True))
 ```
 
 A command-backed tool MUST subclass `ArgvTool`. Use `YAMLArgvTool` when the
@@ -599,7 +616,7 @@ use abstract helper calls such as `self.do(...)`, `self.wait_all(...)`, and
 `self.wait_any(...)` when those calls are defined by the workflow runtime or by
 surrounding instruction text. Tools, subagents, and subworkflows should appear
 as ordinary constructor-configured operation objects:
-`job: Job[SomeResult] = SomeWorkflow(config=config).launch()`.
+`job: Job[SomeResult] = self.launch(SomeWorkflow(config=config))`.
 
 ### Rendered Prose
 
@@ -645,8 +662,9 @@ Rule violations:
 If an operation genuinely has internal order, either split it into multiple
 workflow statements or call a declared tool/helper whose implementation owns
 that internal order. When a specific tool is required for correctness,
-construct the typed tool and call its `run()`, `launch()`, or
-`launch_detached()` method instead of describing the tool call in English.
+construct the typed tool and call its `run()` method or pass it to
+`self.launch(...)` / `self.fire_and_forget(...)` instead of describing the
+tool call in English.
 
 `self.do(...)` statements MUST NOT be adjacent in the same Python statement
 block. Adjacent opaque model-facing actions usually mean related work has been
@@ -671,20 +689,22 @@ snapshot = BranchSnapshot(
 status = snapshot.name_status
 ```
 
-Construct a workflow object and call `run()`, `launch()`, or
-`launch_detached()` for subagent invocations. Use typed tool objects for
-structured background tool handoffs:
+Construct a workflow object and call `run()` for synchronous subagent
+invocations. Pass it to `self.launch(...)` or `self.fire_and_forget(...)` for
+asynchronous invocation. Use typed tool objects for structured background tool
+handoffs:
 
 ```python
-finalizer_job: Job[ResearchFinalizerResult] = ResearchFinalizer(
-    experiment_log=experiment_log,
-    note_update=note_update,
-    code_snapshot=snapshot,
-).launch()
-commit_job: Job[BranchCommitResult] = BranchCommit(
-    snapshot_dir=snapshot.snapshot_dir,
-    background=True,
-).launch()
+finalizer_job: Job[ResearchFinalizerResult] = self.launch(
+    ResearchFinalizer(
+        experiment_log=experiment_log,
+        note_update=note_update,
+        code_snapshot=snapshot,
+    )
+)
+commit_job: Job[BranchCommitResult] = self.launch(
+    BranchCommit(snapshot_dir=snapshot.snapshot_dir, background=True)
+)
 ```
 
 An operation may emit an `OperationNotice` separately from its normal return
@@ -709,7 +729,7 @@ Workflow applicability MUST be represented with code-level conditionals:
 
 ```python
 if lesson_kind != "none":
-    NoteUpdater(note_update=note_update).launch_detached()
+    self.fire_and_forget(NoteUpdater(note_update=note_update))
 ```
 
 If deciding the condition requires model judgment, the workflow SHOULD bind the
@@ -752,7 +772,7 @@ response:
 
 ```python
 if lesson_kind != "none":
-    note_job: Job[NoteUpdaterResult] = NoteUpdater(note_update=note_update).launch()
+    note_job: Job[NoteUpdaterResult] = self.launch(NoteUpdater(note_update=note_update))
     note_status = self.wait_all([note_job])
     if note_status.failed:
         self.do(["record note-updater blocker"])
@@ -764,11 +784,13 @@ valid branch:
 ```python
 can_queue_finalizer: bool = self.evaluate("True when finalizer handoff can be queued independently.")
 if can_queue_finalizer:
-    ResearchFinalizer(
-        experiment_log=experiment_log,
-        note_update=note_update,
-        code_snapshot=snapshot,
-    ).launch_detached()
+    self.fire_and_forget(
+        ResearchFinalizer(
+            experiment_log=experiment_log,
+            note_update=note_update,
+            code_snapshot=snapshot,
+        )
+    )
 ```
 
 Generated instructions may use the words `SHOULD` and `MAY` when rendering these
@@ -794,29 +816,50 @@ snapshot = BranchSnapshot(
     paths=snapshot_paths,
     commit_message=snapshot_commit_message,
     checks=snapshot_checks,
-    after_commit=BranchSnapshotAfterCommit(experiment_log=experiment_log),
 ).run()
 status = snapshot.name_status
+
+commit = BranchCommit(snapshot_dir=snapshot.snapshot_dir, background=False).run()
+if commit.state == "committed" and commit.commit is not None:
+    experiment_log.code.branch = snapshot.branch
+    experiment_log.code.commit = commit.commit
+    experiment_log.run()
 ```
 
-Use detached background tool or subagent launch when the workflow only needs
-the request to be durably queued:
+Use `self.fire_and_forget(operation)` when the workflow only needs the request
+to be durably queued:
 
 ```python
-BranchCommit(snapshot_dir=snapshot.snapshot_dir, background=True).launch_detached()
-ResearchFinalizer(
-    experiment_log=experiment_log,
-    note_update=note_update,
-    code_snapshot=snapshot,
-).launch_detached()
+self.fire_and_forget(
+    BranchCommit(snapshot_dir=snapshot.snapshot_dir, background=True)
+)
+self.fire_and_forget(
+    ResearchFinalizer(
+        experiment_log=experiment_log,
+        note_update=note_update,
+        code_snapshot=snapshot,
+    )
+)
 ```
 
-`launch()` is tracked asynchronous work. Its direct return value MUST be
-assigned to an explicitly annotated `Job[...]` variable that later workflow
-code may wait on or cancel. `launch_detached()` is fire-and-forget work. It MUST
-be a bare expression, returns no handle, and the launching workflow MUST NOT
-wait on or poll it. A detached operation MUST independently record enough status
-information for later troubleshooting.
+`self.launch(operation)` starts tracked asynchronous work. Its direct return
+value MUST be assigned to an explicitly annotated `Job[...]` variable that
+later workflow code may wait on or cancel. `self.fire_and_forget(operation)`
+MUST be a bare expression. The launching workflow MUST discard the underlying
+platform handle and immediately execute the next Python statement. It MUST NOT
+wait for, poll, list, message, follow up with, or otherwise inspect that
+operation, and no later action or parent response may depend on its completion
+or result. The operation MUST independently record enough status information
+for later troubleshooting.
+
+A subagent contract MUST subclass `SubagentWorkflow`. Starting one through
+`run()`, `self.launch(...)`, or `self.fire_and_forget(...)` MUST use the
+platform's subagent mechanism. The child MUST follow the contract named by
+`agent_name` and receive the typed constructor fields as its invocation
+request. The launcher SHOULD preserve inherited history. If a native named
+role cannot inherit history, a history-forked child MUST be explicitly directed
+to follow the named contract. The caller MUST NOT execute the subagent's
+workflow body itself.
 
 Subagent requests MUST be typed at the workflow boundary. The subagent's prompt
 or contract may be English, but the parent workflow's decision to launch it,
@@ -949,8 +992,8 @@ Agentic Team SHOULD provide tests or linters for at least these properties:
   conditions from the workflow source.
 - Executable helpers enforce the deterministic invariants they replace.
 - Synchronous or asynchronous execution policy is represented by helper choice
-  such as `self.do(...)`, `operation.run()`, `operation.launch()`,
-  `operation.launch_detached()`, `self.wait_all(...)`, or
+  such as `self.do(...)`, `operation.run()`, `self.launch(operation)`,
+  `self.fire_and_forget(operation)`, `self.wait_all(...)`, or
   `self.wait_any(...)`, not by words in the work-item string.
 - Additional runtime primitives are declared in the base workflow contract and
   are generic workflow controls, not domain-specific hidden procedures.

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
 import os
 from pathlib import Path
 import re
@@ -277,7 +276,6 @@ def create_snapshot(request: dict[str, Any]) -> dict[str, Any]:
     if not name_status.strip():
         raise CommandError("requested paths have no changes to snapshot")
 
-    after_commit = request.get("after_commit") if isinstance(request.get("after_commit"), dict) else {}
     metadata = {
         "snapshot_id": snapshot_id,
         "created_at": now_iso(),
@@ -290,7 +288,6 @@ def create_snapshot(request: dict[str, Any]) -> dict[str, Any]:
         "commit_message": commit_message,
         "checks": checks,
         "check_timeout_seconds": check_timeout_seconds,
-        "after_commit": after_commit,
         "patch_path": str(patch_path),
         "name_status_path": str(name_status_path),
     }
@@ -442,71 +439,6 @@ def require_git_commit_identity(repo: Path) -> str:
     raise CommandError(guidance)
 
 
-def prepare_after_commit_experiment(metadata: dict[str, Any], commit_hash: str) -> dict[str, Any] | None:
-    after_commit = metadata.get("after_commit")
-    if not isinstance(after_commit, dict):
-        return None
-    request = after_commit.get("experiment_log")
-    if not isinstance(request, dict):
-        return None
-    finalized = dict(request)
-    finalized.setdefault("work_branch", metadata.get("work_branch"))
-    code = finalized.get("code")
-    if not isinstance(code, dict):
-        code = {}
-    if not code.get("branch"):
-        code["branch"] = metadata.get("branch")
-    if not code.get("commit"):
-        code["commit"] = commit_hash
-    finalized["code"] = code
-    return finalized
-
-
-def log_after_commit_experiment(
-    snapshot_dir: Path,
-    metadata: dict[str, Any],
-    request: dict[str, Any] | None,
-) -> dict[str, Any]:
-    if not request:
-        return {}
-
-    request_path = snapshot_dir / "experiment-log-request.yaml"
-    write_yaml(request_path, request)
-    command = ["experiment-log", "append", "--project-dir", str(metadata["project_dir"])]
-    log_path = snapshot_dir / "experiment-log.log"
-    result = subprocess.run(
-        command,
-        input=yaml.safe_dump(request, sort_keys=False, allow_unicode=False),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    output = result.stdout or ""
-    log_path.write_text(output, encoding="utf-8")
-    if result.returncode == 0:
-        output_lines = [line for line in output.splitlines() if line.strip()]
-        last_line = output_lines[-1] if output_lines else ""
-        try:
-            parsed = json.loads(last_line)
-            experiment_id = str(parsed.get("experiment_id") or "").strip()
-        except json.JSONDecodeError:
-            experiment_id = last_line
-        return {
-            "experiment_log_state": "logged",
-            "experiment_log_id": experiment_id,
-            "experiment_log_path": str(log_path),
-            "experiment_log_request_path": str(request_path),
-            "experiment_log_command": command,
-        }
-    return {
-        "experiment_log_state": "failed",
-        "experiment_log_error": output.strip() or f"experiment-log exited with status {result.returncode}",
-        "experiment_log_path": str(log_path),
-        "experiment_log_request_path": str(request_path),
-        "experiment_log_command": command,
-    }
-
-
 def commit_snapshot_foreground(snapshot_dir: Path) -> dict[str, Any]:
     metadata = safe_load_yaml(metadata_path(snapshot_dir))
     project_dir = Path(str(metadata["project_dir"]))
@@ -557,8 +489,6 @@ def commit_snapshot_foreground(snapshot_dir: Path) -> dict[str, Any]:
         git(project_dir, "update-ref", ref, new_commit, base_commit)
         if paths:
             git(project_dir, "reset", "-q", "HEAD", "--", *paths, check=False)
-        experiment_request = prepare_after_commit_experiment(metadata, new_commit)
-        experiment_log_result = log_after_commit_experiment(snapshot_dir, metadata, experiment_request)
         result = {
             "snapshot_id": metadata["snapshot_id"],
             "state": "committed",
@@ -569,12 +499,8 @@ def commit_snapshot_foreground(snapshot_dir: Path) -> dict[str, Any]:
             "check_log": str(check_log),
             "checks": check_results,
             "diff_stat": stat,
-            "experiment_request_path": (
-                experiment_log_result.get("experiment_log_request_path") if experiment_log_result else None
-            ),
             "finished_at": now_iso(),
         }
-        result.update(experiment_log_result)
         update_status(snapshot_dir, **result)
         return result
     except Exception as exc:

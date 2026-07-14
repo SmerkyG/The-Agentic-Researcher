@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 
 from agentic_workflows.contract import ArgvTool, CommandResult, Value, WorkflowRecord, YAMLArgvTool
-from agentic_workflows.research.experiment_log import ExperimentLogAppendTool
 
 
 class Snapshot(WorkflowRecord):
@@ -33,23 +32,16 @@ class GitStatusShortTool(ArgvTool[CommandResult]):
     argv_template: ClassVar[tuple[str, ...]] = ("git", "status", "--short")
 
 
-class BranchSnapshotAfterCommit(WorkflowRecord):
-    experiment_log: ExperimentLogAppendTool | None = None
-
-
 class BranchSnapshotTool(YAMLArgvTool[Snapshot]):
     argv_template: ClassVar[tuple[str, ...]] = ("branch-snapshot",)
     paths: list[str] = Value("Explicit code paths; no globs, directories, or dot")
     commit_message: str = Value("Focused commit message")
     checks: list[str] = Value("Focused check commands")
-    after_commit: BranchSnapshotAfterCommit | None = None
 
 
 class BranchCommitResult(WorkflowRecord):
     state: Literal["queued", "committed"]
     commit: str | None = None
-    experiment_log_state: Literal["logged", "failed"] | None = None
-    experiment_log_error: str | None = None
 
 
 class BranchCommitTool(YAMLArgvTool[BranchCommitResult]):

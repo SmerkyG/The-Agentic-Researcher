@@ -482,7 +482,7 @@ class Demo:
             title: str = Value("Experiment log title.")
 
         experiment_log: ExperimentLogAppend = self.fill(ExperimentLogAppend)
-        experiment_log.launch_detached()
+        self.fire_and_forget(experiment_log)
 ''',
         path="demo.py",
     )
@@ -822,7 +822,7 @@ def test_lint_source_accepts_subagent_and_tool_invocation_methods() -> None:
         """
 from typing import ClassVar
 
-class OtherRole(AgentWorkflow):
+class OtherRole(SubagentWorkflow):
     def workflow(self) -> None:
         self.do(["inspect review scope"])
 
@@ -833,9 +833,9 @@ class ToolRequest(YAMLArgvTool):
 class Role(AgentWorkflow):
     def workflow(self) -> None:
         OtherRole().run()
-        other_job: Job[None] = OtherRole().launch()
+        other_job: Job[None] = self.launch(OtherRole())
         ToolRequest(value="x").run()
-        ToolRequest(value="x").launch_detached()
+        self.fire_and_forget(ToolRequest(value="x"))
 """,
         path="demo.py",
     )
@@ -854,7 +854,7 @@ class ExperimentLogAppend(WorkflowTool):
 class Role(AgentWorkflow):
     def workflow(self) -> None:
         experiment_log: ExperimentLogAppend = self.fill(ExperimentLogAppend)
-        experiment_log.launch_detached()
+        self.fire_and_forget(experiment_log)
 """,
         path="demo.py",
     )
@@ -867,7 +867,7 @@ def test_lint_source_rejects_bare_tracked_launch() -> None:
         """
 class Role(AgentWorkflow):
     def workflow(self) -> None:
-        OtherRole().launch()
+        self.launch(OtherRole())
 """,
         path="demo.py",
     )
@@ -880,7 +880,7 @@ def test_lint_source_rejects_unannotated_tracked_launch() -> None:
         """
 class Role(AgentWorkflow):
     def workflow(self) -> None:
-        job = OtherRole().launch()
+        job = self.launch(OtherRole())
 """,
         path="demo.py",
     )
@@ -888,12 +888,38 @@ class Role(AgentWorkflow):
     assert [finding.code for finding in findings] == ["WF802"]
 
 
-def test_lint_source_rejects_assigned_detached_launch() -> None:
+def test_lint_source_rejects_assigned_fire_and_forget() -> None:
     findings = lint_source(
         """
 class Role(AgentWorkflow):
     def workflow(self) -> None:
-        job: Job[None] = OtherRole().launch_detached()
+        job: Job[None] = self.fire_and_forget(OtherRole())
+""",
+        path="demo.py",
+    )
+
+    assert [finding.code for finding in findings] == ["WF802"]
+
+
+def test_lint_source_rejects_operation_level_launch() -> None:
+    findings = lint_source(
+        """
+class Role(AgentWorkflow):
+    def workflow(self) -> None:
+        OtherRole().launch()
+""",
+        path="demo.py",
+    )
+
+    assert [finding.code for finding in findings] == ["WF802"]
+
+
+def test_lint_source_rejects_legacy_detached_launch() -> None:
+    findings = lint_source(
+        """
+class Role(AgentWorkflow):
+    def workflow(self) -> None:
+        OtherRole().launch_detached()
 """,
         path="demo.py",
     )

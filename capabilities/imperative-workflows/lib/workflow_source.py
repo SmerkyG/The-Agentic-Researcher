@@ -39,6 +39,7 @@ class WorkflowDefinition:
     block_start: int
     block_end: int
     kind: str
+    agent_kind: str | None
     interface_module: str | None
     interface_symbol: str | None
     receiver_module: str | None
@@ -128,6 +129,7 @@ def parse_workflow_definition(
         )
     if interface:
         kind = "agent"
+        agent_kind = frontmatter.get("kind")
         interface_module, interface_symbol = split_reference(
             interface,
             field="workflow_interface",
@@ -136,6 +138,7 @@ def parse_workflow_definition(
         receiver_module = receiver_symbol = None
     else:
         kind = "skill"
+        agent_kind = None
         receiver_module, receiver_symbol = split_reference(
             receiver or "",
             field="workflow_receiver",
@@ -158,6 +161,7 @@ def parse_workflow_definition(
         block_start=block.start(),
         block_end=block.end(),
         kind=kind,
+        agent_kind=agent_kind,
         interface_module=interface_module,
         interface_symbol=interface_symbol,
         receiver_module=receiver_module,
@@ -320,6 +324,27 @@ def _class_names(module: ModuleSource) -> set[str]:
     return {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
 
 
+def _base_name(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Subscript):
+        return _base_name(node.value)
+    return None
+
+
+def _class_base_names(module: ModuleSource, class_name: str) -> set[str]:
+    tree = ast.parse(module.code, filename=str(module.path))
+    class_node = next(
+        (node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name),
+        None,
+    )
+    if class_node is None:
+        return set()
+    return {name for base in class_node.bases if (name := _base_name(base)) is not None}
+
+
 def _function(module: ModuleSource, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     tree = ast.parse(module.code, filename=str(module.path))
     return next(
@@ -371,6 +396,19 @@ def validate_definition(
         if definition.interface_symbol not in _class_names(interface):
             raise WorkflowSourceError(
                 f"{interface.path}: interface class {definition.interface_symbol!r} was not found"
+            )
+        required_base = {
+            "main": "UserFacingWorkflow",
+            "subagent": "SubagentWorkflow",
+        }.get(definition.agent_kind or "")
+        if required_base is None:
+            raise WorkflowSourceError(
+                f"{definition.source_path}: agent workflow kind must be main or subagent"
+            )
+        if required_base not in _class_base_names(interface, definition.interface_symbol):
+            raise WorkflowSourceError(
+                f"{interface.path}: {definition.agent_kind} agent interface "
+                f"{definition.interface_symbol!r} must subclass {required_base}"
             )
         if definition.implementation_symbol not in _class_names(implementation):
             raise WorkflowSourceError(
@@ -424,8 +462,16 @@ def render_workflow(
             f"`{definition.interface_module}:{definition.interface_symbol}`."
         )
         dispatch_description = (
-            "`run()`, `launch()`, and `launch_detached()` dispatch tools or subagents; "
-            "they do not enter another workflow body in the current context."
+            "`operation.run()` starts a tool or subagent synchronously. "
+            "`self.launch(operation)` starts a tool or subagent asynchronously and tracks it. "
+            "`self.fire_and_forget(operation)` starts one asynchronously, discards the "
+            "platform handle, and immediately continues with the next Python statement; "
+            "never wait, poll, list, message, follow up with, or depend on that operation. "
+            "A `SubagentWorkflow` starts a separate subagent that follows the contract "
+            "named by its `agent_name` and receives its typed constructor fields. Preserve "
+            "inherited history when supported; if a native named role cannot inherit "
+            "history, explicitly direct the history-forked child to follow that named "
+            "contract. Never execute its workflow body in the current agent context."
         )
     else:
         entry_description = (
