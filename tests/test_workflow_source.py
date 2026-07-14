@@ -71,11 +71,13 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     assert "```python agentic-workflow" not in rendered
     assert "class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):" in rendered
     assert 'summary: str = Value("Compact topic hints, at most 80 characters")' in rendered
-    assert "class BranchCommitTool" in rendered
+    assert "class FinalizationApplyTool" in rendered
     assert "class ResearchFinalizerWorkflow(ResearchFinalizer):" in rendered
-    assert "self.experiment_log.code.branch = self.code_snapshot.branch" in rendered
-    assert "self.experiment_log.code.commit = commit_result.commit" in rendered
-    assert rendered.index("BranchCommitTool(") < rendered.index("self.experiment_log.run()")
+    assert "workspace: FinalizationWorkspace" in rendered
+    assert "experiment_log.code.branch = applied.code_branch" in rendered
+    assert "experiment_log.code.commit = applied.code_commit" in rendered
+    assert rendered.index("FinalizationReadyTool(") < rendered.index("ReportAppendTool(")
+    assert rendered.index("FinalizationApplyTool(") < rendered.index("experiment_log.run()")
     assert "experiment_log_state" not in rendered
     assert "BranchSnapshotAfterCommit" not in rendered
     assert "class NoteUpdaterWorkflow" not in rendered
@@ -88,6 +90,10 @@ def test_coordinator_launches_finalizer_without_tracking_or_waiting() -> None:
 
     assert "ResearchFinalizer(" in rendered
     assert "self.fire_and_forget(" in rendered
+    assert rendered.index("code_snapshot = BranchSnapshotTool(") < rendered.index("workspace: FinalizationWorkspace = FinalizationForkTool(")
+    assert rendered.index("workspace: FinalizationWorkspace = FinalizationForkTool(") < rendered.index("self.fire_and_forget(\n                ResearchFinalizer")
+    assert "ReportAppendTool(" not in rendered
+    assert "experiment_log: ExperimentLogAppendTool = self.fill" not in rendered
     assert "BranchSnapshotAfterCommit" not in rendered
     assert "after_commit=" not in rendered
     assert "finalizer: Job" not in rendered

@@ -211,7 +211,7 @@ my-project-at/
   kdtree-bounds/
     code/                           # another top-level agent worktree
     state/                          # matching work-state worktree
-  .runtime/                         # hidden project-local locks, snapshots, and helpers
+  .runtime/                         # hidden locks, snapshots, and COW finalization workspaces
 ```
 
 The local `project-state/`, `<work-name>/code/`, and `<work-name>/state/` directories are linked Git worktrees of the project repo. The state worktrees use orphan state branches rather than normal code branches. They are intentionally visible so reports, TODOs, figures, notes, and experiment logs are easy to find. The hidden `.runtime/` directory is launcher-managed project machinery.

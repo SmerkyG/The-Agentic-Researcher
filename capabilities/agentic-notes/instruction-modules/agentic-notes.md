@@ -22,8 +22,8 @@ After correcting a wrong assumption, failed workflow, missing setup step,
 undocumented tool behavior, or user correction, ask whether the lesson would
 help a future agent. If yes, route the lesson through the configured background
 finalization or `note-updater` flow; for research-coordinator result
-bookkeeping, `research-finalizer` owns that note triage after the report is
-updated. This is a required subagent handoff under the standing user request in
+bookkeeping, `research-finalizer` owns report generation and note triage in its
+isolated finalization workspace. This is a required subagent handoff under the standing user request in
 the subagent catalog when a note is warranted: try to spawn the relevant
 subagent, retry once if spawning fails, and alert the user if it still cannot
 be spawned. Do not replace it with a direct `agentic-notes` command from the

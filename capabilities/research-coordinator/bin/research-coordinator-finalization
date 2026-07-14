@@ -1,0 +1,480 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["PyYAML>=6.0"]
+# ///
+
+"""Create, order, integrate, and inspect isolated research finalizations."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import os
+from pathlib import Path, PurePosixPath
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Any
+
+import yaml
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
+sys.path.insert(0, str(REPO_ROOT / "capabilities" / "branch" / "lib"))
+
+from branch_git_common import (  # noqa: E402
+    git,
+    git_text,
+    now_iso,
+    require_git_commit_identity,
+    run_checks,
+    safe_load_yaml,
+    slugify,
+    write_yaml,
+)
+from command_common import CommandError, load_request, main, print_json, runtime_root  # noqa: E402
+
+
+TERMINAL_STATES = {"complete", "failed"}
+
+
+def explicit_path(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CommandError("state_assets must contain non-empty paths")
+    path = PurePosixPath(value)
+    if path.is_absolute() or path == PurePosixPath(".") or ".." in path.parts or ".git" in path.parts:
+        raise CommandError(f"unsafe finalization asset path: {value}")
+    if any(character in value for character in "*?["):
+        raise CommandError(f"finalization asset path must not contain a glob: {value}")
+    return path.as_posix()
+
+
+def run_git(repo: Path, *args: str, env: dict[str, str] | None = None, input_text: str | None = None) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=env,
+        input=input_text,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise CommandError(f"git {' '.join(args)} failed: {detail}")
+    return result.stdout.strip()
+
+
+def manifest_path(root: Path) -> Path:
+    return root / "manifest.yaml"
+
+
+def status_path(root: Path) -> Path:
+    return root / "status.yaml"
+
+
+def load_workspace(value: object) -> tuple[Path, dict[str, Any]]:
+    root = Path(str(value or "")).expanduser().resolve()
+    if not root.is_dir() or not manifest_path(root).is_file():
+        raise CommandError(f"finalization workspace does not exist: {root}")
+    return root, safe_load_yaml(manifest_path(root))
+
+
+def update_status(root: Path, **values: object) -> dict[str, Any]:
+    current = safe_load_yaml(status_path(root)) if status_path(root).exists() else {}
+    current.update(values)
+    current["updated_at"] = now_iso()
+    write_yaml(status_path(root), current)
+    return current
+
+
+def response(root: Path, manifest: dict[str, Any], **values: object) -> dict[str, object]:
+    return {
+        "id": manifest["id"],
+        "root": str(root),
+        "code_dir": str(root / "code"),
+        "state_dir": str(root / "state"),
+        "status_path": str(status_path(root)),
+        "code_snapshot_dir": manifest.get("code_snapshot_dir"),
+        "code_branch": manifest["code_branch"],
+        "code_base_commit": manifest["code_base_commit"],
+        "state_branch": manifest["state_branch"],
+        "state_base_commit": manifest["state_base_commit"],
+        **values,
+    }
+
+
+def remove_worktree(repo: Path, worktree: Path) -> None:
+    if not worktree.exists():
+        return
+    git(repo, "worktree", "remove", "--force", str(worktree), check=False)
+    if worktree.exists():
+        shutil.rmtree(worktree)
+    git(repo, "worktree", "prune", check=False)
+
+
+def copy_asset(source_root: Path, target_root: Path, relative: str) -> None:
+    source = source_root / relative
+    if not source.is_file():
+        raise CommandError(f"finalization asset is not a file: {relative}")
+    target = target_root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+
+
+def fork(request: dict[str, Any]) -> dict[str, object]:
+    project_dir = Path(str(request.get("project_dir") or os.environ.get("AR_PROJECT_DIR") or ".")).expanduser().resolve()
+    work_state_value = request.get("work_state_dir") or os.environ.get("AR_WORK_STATE_DIR")
+    if not work_state_value:
+        raise CommandError("work_state_dir or AR_WORK_STATE_DIR is required")
+    work_state_dir = Path(str(work_state_value)).expanduser().resolve()
+    if git_text(project_dir, "rev-parse", "--is-inside-work-tree") != "true":
+        raise CommandError(f"project directory is not a Git worktree: {project_dir}")
+    if git_text(work_state_dir, "rev-parse", "--is-inside-work-tree") != "true":
+        raise CommandError(f"work-state directory is not a Git worktree: {work_state_dir}")
+
+    code_snapshot_value = request.get("code_snapshot_dir")
+    code_snapshot_dir = Path(str(code_snapshot_value)).expanduser().resolve() if code_snapshot_value else None
+    if code_snapshot_dir is not None:
+        snapshot = safe_load_yaml(code_snapshot_dir / "metadata.yaml")
+        if Path(str(snapshot.get("project_dir") or "")).resolve() != project_dir:
+            raise CommandError("code snapshot belongs to a different project worktree")
+        code_branch = str(snapshot["branch"])
+        code_base_commit = str(snapshot["base_commit"])
+    else:
+        snapshot = None
+        code_branch = git_text(project_dir, "branch", "--show-current")
+        code_base_commit = git_text(project_dir, "rev-parse", "HEAD")
+    if not code_branch:
+        raise CommandError("finalization requires a named code branch")
+
+    state_branch = git_text(work_state_dir, "branch", "--show-current")
+    state_base_commit = git_text(work_state_dir, "rev-parse", "HEAD")
+    if not state_branch:
+        raise CommandError("finalization requires a named work-state branch")
+    state_assets = list(dict.fromkeys(explicit_path(value) for value in request.get("state_assets", [])))
+
+    sequence = time.time_ns()
+    finalization_id = f"{sequence}-{os.getpid()}-{slugify(code_branch)}"
+    root = runtime_root(project_dir) / "finalizations" / finalization_id
+    root.mkdir(parents=True)
+    code_dir = root / "code"
+    state_dir = root / "state"
+    assets_dir = root / "assets"
+
+    try:
+        git(project_dir, "worktree", "add", "--detach", str(code_dir), code_base_commit)
+        if snapshot is not None:
+            patch_path = Path(str(snapshot["patch_path"])).expanduser().resolve()
+            git(code_dir, "apply", "--binary", str(patch_path))
+        git(work_state_dir, "worktree", "add", "--detach", str(state_dir), state_base_commit)
+        for relative in state_assets:
+            copy_asset(work_state_dir, assets_dir, relative)
+            copy_asset(work_state_dir, state_dir, relative)
+    except Exception:
+        remove_worktree(project_dir, code_dir)
+        remove_worktree(work_state_dir, state_dir)
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+
+    manifest = {
+        "version": 1,
+        "id": finalization_id,
+        "sequence": sequence,
+        "created_at": now_iso(),
+        "project_dir": str(project_dir),
+        "work_state_dir": str(work_state_dir),
+        "work_branch": str(os.environ.get("AR_WORK_BRANCH") or code_branch),
+        "code_branch": code_branch,
+        "code_base_commit": code_base_commit,
+        "code_snapshot_dir": str(code_snapshot_dir) if code_snapshot_dir is not None else None,
+        "state_branch": state_branch,
+        "state_base_commit": state_base_commit,
+        "state_assets": state_assets,
+    }
+    write_yaml(manifest_path(root), manifest)
+    update_status(root, id=finalization_id, sequence=sequence, state="captured", created_at=manifest["created_at"])
+    return response(root, manifest, state="captured")
+
+
+def prior_workspaces(root: Path, manifest: dict[str, Any]) -> list[Path]:
+    result: list[tuple[int, Path]] = []
+    for candidate in root.parent.iterdir():
+        if candidate == root or not manifest_path(candidate).is_file() or not status_path(candidate).is_file():
+            continue
+        other = safe_load_yaml(manifest_path(candidate))
+        if other.get("work_branch") != manifest.get("work_branch"):
+            continue
+        sequence = int(other.get("sequence") or 0)
+        if sequence < int(manifest["sequence"]):
+            result.append((sequence, candidate))
+    return [candidate for _, candidate in sorted(result)]
+
+
+def ready(request: dict[str, Any]) -> dict[str, object]:
+    root, manifest = load_workspace(request.get("root"))
+    timeout_seconds = float(request.get("timeout_seconds", 1800))
+    if timeout_seconds <= 0:
+        raise CommandError("timeout_seconds must be positive")
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        blocking = [
+            candidate
+            for candidate in prior_workspaces(root, manifest)
+            if safe_load_yaml(status_path(candidate)).get("state") not in TERMINAL_STATES
+        ]
+        if not blocking:
+            break
+        if time.monotonic() >= deadline:
+            names = ", ".join(candidate.name for candidate in blocking)
+            raise CommandError(f"timed out waiting for earlier finalizations: {names}")
+        time.sleep(0.5)
+
+    work_state_dir = Path(str(manifest["work_state_dir"]))
+    state_dir = root / "state"
+    latest_state = git_text(work_state_dir, "rev-parse", f"refs/heads/{manifest['state_branch']}")
+    git(state_dir, "reset", "--hard", latest_state)
+    git(state_dir, "clean", "-fd")
+    for relative in manifest.get("state_assets", []):
+        copy_asset(root / "assets", state_dir, str(relative))
+    manifest["state_base_commit"] = latest_state
+    manifest["ready_at"] = now_iso()
+    write_yaml(manifest_path(root), manifest)
+    update_status(root, state="active", active_at=manifest["ready_at"])
+    return response(root, manifest, state="active")
+
+
+def copy_path(source_root: Path, target_root: Path, relative: str) -> None:
+    source = source_root / relative
+    target = target_root / relative
+    if source.is_file():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    elif target.exists():
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+
+
+def integrate_code(root: Path, manifest: dict[str, Any]) -> tuple[str, bool]:
+    snapshot_value = manifest.get("code_snapshot_dir")
+    project_dir = Path(str(manifest["project_dir"]))
+    branch = str(manifest["code_branch"])
+    if not snapshot_value:
+        return git_text(project_dir, "rev-parse", f"refs/heads/{branch}"), False
+
+    snapshot = safe_load_yaml(Path(str(snapshot_value)) / "metadata.yaml")
+    paths = [explicit_path(value) for value in snapshot.get("paths", [])]
+    checks = [str(value) for value in snapshot.get("checks", [])]
+    timeout = int(snapshot["check_timeout_seconds"]) if snapshot.get("check_timeout_seconds") else None
+    message = str(snapshot["commit_message"])
+    code_dir = root / "code"
+    lock_path = root.parent.parent / "locks" / f"code-{slugify(branch)}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        base = git_text(project_dir, "rev-parse", f"refs/heads/{branch}")
+        integrate_dir = root / "integrate-code"
+        remove_worktree(project_dir, integrate_dir)
+        git(project_dir, "worktree", "add", "--detach", str(integrate_dir), base)
+        try:
+            require_git_commit_identity(project_dir)
+            for relative in paths:
+                copy_path(code_dir, integrate_dir, relative)
+            git(integrate_dir, "add", "-A", "--", *paths)
+            if not git_text(integrate_dir, "diff", "--cached", "--name-only", "--", *paths):
+                return base, False
+            run_checks(
+                integrate_dir,
+                checks,
+                root / "code-checks.log",
+                snapshot_dir=root,
+                timeout_seconds=timeout,
+            )
+            git(integrate_dir, "commit", "-m", message)
+            commit = git_text(integrate_dir, "rev-parse", "HEAD")
+            run_git(project_dir, "update-ref", f"refs/heads/{branch}", commit, base)
+            git(project_dir, "reset", "-q", "HEAD", "--", *paths, check=False)
+            return commit, True
+        finally:
+            remove_worktree(project_dir, integrate_dir)
+
+
+def changed_state_paths(state_dir: Path) -> list[str]:
+    git(state_dir, "add", "-A")
+    output = git_text(state_dir, "diff", "--cached", "--name-only")
+    return [line for line in output.splitlines() if line]
+
+
+def has_origin(repo: Path) -> bool:
+    return git(repo, "remote", "get-url", "origin", check=False).returncode == 0
+
+
+def path_matches_commit(repo: Path, commit: str, relative: str) -> bool:
+    path = repo / relative
+    blob = git(repo, "rev-parse", f"{commit}:{relative}", check=False)
+    if not path.exists():
+        return blob.returncode != 0
+    if not path.is_file() or blob.returncode != 0:
+        return False
+    return git_text(repo, "hash-object", "--", relative) == blob.stdout.strip()
+
+
+def paths_match(left_root: Path, right_root: Path, relative: str) -> bool:
+    left = left_root / relative
+    right = right_root / relative
+    if not left.exists() or not right.exists():
+        return not left.exists() and not right.exists()
+    if not left.is_file() or not right.is_file():
+        return False
+    return left.read_bytes() == right.read_bytes()
+
+
+def integrate_state(root: Path, manifest: dict[str, Any], message: str) -> tuple[str, bool]:
+    work_state_dir = Path(str(manifest["work_state_dir"]))
+    state_dir = root / "state"
+    branch = str(manifest["state_branch"])
+    expected = str(manifest["state_base_commit"])
+    paths = changed_state_paths(state_dir)
+    lock_path = root.parent.parent / "locks" / f"work-state-{slugify(branch)}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        base = run_git(work_state_dir, "rev-parse", f"refs/heads/{branch}")
+        if base != expected:
+            overlap = [
+                path
+                for path in paths
+                if run_git(work_state_dir, "diff", "--name-only", expected, base, "--", path)
+            ]
+            if overlap:
+                raise CommandError("work-state changed during finalization: " + ", ".join(overlap))
+
+        if not paths:
+            return base, False
+        refresh_live = [
+            path
+            for path in paths
+            if path_matches_commit(work_state_dir, base, path) or paths_match(work_state_dir, state_dir, path)
+        ]
+        runtime = root.parent.parent
+        with tempfile.TemporaryDirectory(prefix="finalization-state-index-", dir=runtime) as temp_dir:
+            env = dict(os.environ, GIT_INDEX_FILE=str(Path(temp_dir) / "index"))
+            run_git(work_state_dir, "read-tree", base, env=env)
+            for relative in paths:
+                source = state_dir / relative
+                if source.is_file():
+                    object_id = run_git(work_state_dir, "hash-object", "-w", "--", str(source))
+                    mode = "100755" if source.stat().st_mode & 0o111 else "100644"
+                    run_git(
+                        work_state_dir,
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        f"{mode},{object_id},{relative}",
+                        env=env,
+                    )
+                else:
+                    run_git(work_state_dir, "update-index", "--force-remove", "--", relative, env=env)
+            tree = run_git(work_state_dir, "write-tree", env=env)
+        if tree == run_git(work_state_dir, "rev-parse", f"{base}^{{tree}}"):
+            return base, False
+        require_git_commit_identity(work_state_dir)
+        commit = run_git(work_state_dir, "commit-tree", tree, "-p", base, input_text=f"{message}\n")
+        run_git(work_state_dir, "update-ref", f"refs/heads/{branch}", commit, base)
+        if has_origin(work_state_dir):
+            run_git(work_state_dir, "push", "origin", f"{commit}:refs/heads/{branch}")
+        for relative in refresh_live:
+            copy_path(state_dir, work_state_dir, relative)
+        run_git(work_state_dir, "reset", "--mixed", commit)
+        return commit, True
+
+
+def apply(request: dict[str, Any]) -> dict[str, object]:
+    root, manifest = load_workspace(request.get("root"))
+    status = safe_load_yaml(status_path(root))
+    if status.get("state") != "active":
+        raise CommandError("finalization must be ready before it can be applied")
+    message = str(request.get("state_message") or "work-state: finalize research result").strip()
+    if not message:
+        raise CommandError("state_message must not be empty")
+    try:
+        code_commit, code_changed = integrate_code(root, manifest)
+        state_commit, state_changed = integrate_state(root, manifest, message)
+    except Exception as exc:
+        update_status(root, state="failed", error=str(exc), failed_at=now_iso())
+        raise
+    update_status(
+        root,
+        state="applied",
+        applied_at=now_iso(),
+        code_commit=code_commit,
+        code_changed=code_changed,
+        state_commit=state_commit,
+        state_changed=state_changed,
+    )
+    return response(
+        root,
+        manifest,
+        state="applied",
+        code_commit=code_commit,
+        code_changed=code_changed,
+        state_commit=state_commit,
+        state_changed=state_changed,
+    )
+
+
+def finish(request: dict[str, Any]) -> dict[str, object]:
+    root, manifest = load_workspace(request.get("root"))
+    state = str(request.get("state") or "complete")
+    if state not in TERMINAL_STATES:
+        raise CommandError("finish state must be complete or failed")
+    error = request.get("error")
+    if state == "complete" and safe_load_yaml(status_path(root)).get("state") != "applied":
+        raise CommandError("only an applied finalization can be completed")
+    values: dict[str, object] = {"state": state, "finished_at": now_iso()}
+    if error:
+        values["error"] = str(error)
+    status = update_status(root, **values)
+    if state == "complete":
+        remove_worktree(Path(str(manifest["project_dir"])), root / "code")
+        remove_worktree(Path(str(manifest["work_state_dir"])), root / "state")
+        shutil.rmtree(root / "assets", ignore_errors=True)
+    return response(root, manifest, state=state, error=status.get("error"))
+
+
+def show_status(request: dict[str, Any]) -> dict[str, object]:
+    root, manifest = load_workspace(request.get("root"))
+    return {**response(root, manifest), **safe_load_yaml(status_path(root))}
+
+
+def dispatch(command: str) -> None:
+    request = load_request()
+    functions = {
+        "fork": fork,
+        "ready": ready,
+        "apply": apply,
+        "finish": finish,
+        "status": show_status,
+    }
+    print_json({"command": f"research-coordinator-finalization {command}", **functions[command](request)})
+
+
+def cli() -> int:
+    parser = argparse.ArgumentParser(
+        prog="research-coordinator-finalization",
+        description="Manage isolated, ordered research finalization workspaces.",
+    )
+    parser.add_argument("command", choices=["fork", "ready", "apply", "finish", "status"])
+    args = parser.parse_args()
+    return main(lambda: dispatch(args.command))
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

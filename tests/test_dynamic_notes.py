@@ -18,9 +18,9 @@ AGENTIC_NOTES_INTERNAL = REPO_ROOT / "capabilities" / "agentic-notes" / "lib" / 
 AGENTIC_NOTES = REPO_ROOT / "capabilities" / "agentic-notes" / "bin" / "agentic-notes"
 EXPERIMENT_LOG = REPO_ROOT / "capabilities" / "experiment-log" / "bin" / "experiment-log"
 REPORT_APPEND = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-report-append"
-WORK_STATE_SNAPSHOT = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-work-state-snapshot"
-WORK_STATE_COMMIT = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-work-state-commit"
+FINALIZATION = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-finalization"
 INITIALIZE_RESEARCH_STATE = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-initialize-state"
+BRANCH_SNAPSHOT = REPO_ROOT / "capabilities" / "branch" / "bin" / "branch-snapshot"
 AGENTIC_TEAM = REPO_ROOT / "agentic-team"
 AGENTIC_WORKSPACE = REPO_ROOT / "scripts" / "bin" / "agentic-workspace"
 
@@ -112,40 +112,165 @@ def test_research_report_append_starts_page_after_line_limit(tmp_path: Path) -> 
     assert (state / "report_page2.md").read_text(encoding="utf-8") == "## New page\n"
 
 
-def test_work_state_snapshot_commit_does_not_replace_newer_live_edits(tmp_path: Path) -> None:
+def test_finalization_workspace_isolates_and_integrates_code_and_state(tmp_path: Path) -> None:
+    project = tmp_path / "project"
     state = tmp_path / "work-state"
+    run(["git", "init", str(project)])
     run(["git", "init", str(state)])
+    configure_git(project)
     configure_git(state)
-    report = state / "report_page1.md"
-    report.write_text("# Initial\n", encoding="utf-8")
+    (project / "result.py").write_text("value = 0\n", encoding="utf-8")
+    (state / "report_page1.md").write_text("# Research Log\n", encoding="utf-8")
+    (state / "condensed_report.md").write_text("# Condensed\n", encoding="utf-8")
+    (state / "TODO.md").write_text("- [ ] baseline\n", encoding="utf-8")
+    git(project, "add", "result.py")
+    git(project, "commit", "-m", "initial code")
+    git(state, "add", "report_page1.md", "condensed_report.md", "TODO.md")
+    git(state, "commit", "-m", "initial state")
+    code_branch = git(project, "branch", "--show-current").stdout.strip()
+
+    (project / "result.py").write_text("value = 1\n", encoding="utf-8")
+    image = state / "images" / "result.png"
+    image.parent.mkdir()
+    image.write_bytes(b"png")
+    env = {
+        **os.environ,
+        "AR_PROJECT_DIR": str(project),
+        "AR_WORK_STATE_DIR": str(state),
+        "AR_RUNTIME_ROOT": str(tmp_path / "runtime"),
+        "AR_WORK_BRANCH": code_branch,
+    }
+    snapshot = json.loads(
+        run(
+            [str(BRANCH_SNAPSHOT)],
+            cwd=project,
+            env=env,
+            input=yaml.safe_dump(
+                {
+                    "paths": ["result.py"],
+                    "commit_message": "research: record result",
+                    "checks": ["test \"$(cat result.py)\" = 'value = 1'"],
+                }
+            ),
+        ).stdout
+    )
+    forked = json.loads(
+        run(
+            [str(FINALIZATION), "fork"],
+            cwd=project,
+            env=env,
+            input=yaml.safe_dump(
+                {
+                    "code_snapshot_dir": snapshot["snapshot_dir"],
+                    "state_assets": ["images/result.png"],
+                }
+            ),
+        ).stdout
+    )
+    root = Path(forked["root"])
+    private_code = Path(forked["code_dir"])
+    private_state = Path(forked["state_dir"])
+    assert (private_code / "result.py").read_text(encoding="utf-8") == "value = 1\n"
+    assert (private_state / "images" / "result.png").read_bytes() == b"png"
+
+    (project / "result.py").write_text("value = 2\n", encoding="utf-8")
+    ready = json.loads(
+        run(
+            [str(FINALIZATION), "ready"],
+            env=env,
+            input=yaml.safe_dump({"root": str(root)}),
+        ).stdout
+    )
+    assert ready["state"] == "active"
+    run(
+        [str(REPORT_APPEND)],
+        input=yaml.safe_dump(
+            {"work_state_dir": str(private_state), "content": "## Completed result\n\nEvidence."}
+        ),
+    )
+    (private_state / "condensed_report.md").write_text("# Condensed\n\nCurrent result.\n", encoding="utf-8")
+    (private_state / "TODO.md").write_text("- [x] baseline\n", encoding="utf-8")
+    (state / "TODO.md").write_text("- [ ] newer live work\n", encoding="utf-8")
+
+    applied = json.loads(
+        run(
+            [str(FINALIZATION), "apply"],
+            env=env,
+            input=yaml.safe_dump({"root": str(root)}),
+        ).stdout
+    )
+    assert applied["state"] == "applied"
+    assert applied["code_changed"] is True
+    assert applied["state_changed"] is True
+    assert git(project, "show", "HEAD:result.py").stdout == "value = 1\n"
+    assert (project / "result.py").read_text(encoding="utf-8") == "value = 2\n"
+    assert "Completed result" in (state / "report_page1.md").read_text(encoding="utf-8")
+    assert (state / "condensed_report.md").read_text(encoding="utf-8").endswith("Current result.\n")
+    assert git(state, "show", "HEAD:TODO.md").stdout == "- [x] baseline\n"
+    assert (state / "TODO.md").read_text(encoding="utf-8") == "- [ ] newer live work\n"
+    assert git(state, "status", "--short").stdout == " M TODO.md\n"
+
+    finished = json.loads(
+        run(
+            [str(FINALIZATION), "finish"],
+            env=env,
+            input=yaml.safe_dump({"root": str(root), "state": "complete"}),
+        ).stdout
+    )
+    assert finished["state"] == "complete"
+    assert not private_code.exists()
+    assert not private_state.exists()
+    assert not (root / "assets").exists()
+    status = json.loads(
+        run(
+            [str(FINALIZATION), "status"],
+            env=env,
+            input=yaml.safe_dump({"root": str(root)}),
+        ).stdout
+    )
+    assert status["state"] == "complete"
+
+
+def test_later_finalization_refreshes_after_earlier_completion(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    state = tmp_path / "work-state"
+    run(["git", "init", str(project)])
+    run(["git", "init", str(state)])
+    configure_git(project)
+    configure_git(state)
+    (project / "README.md").write_text("project\n", encoding="utf-8")
+    (state / "report_page1.md").write_text("# Research Log\n", encoding="utf-8")
+    git(project, "add", "README.md")
+    git(project, "commit", "-m", "initial code")
     git(state, "add", "report_page1.md")
     git(state, "commit", "-m", "initial state")
+    code_branch = git(project, "branch", "--show-current").stdout.strip()
+    env = {
+        **os.environ,
+        "AR_PROJECT_DIR": str(project),
+        "AR_WORK_STATE_DIR": str(state),
+        "AR_RUNTIME_ROOT": str(tmp_path / "runtime"),
+        "AR_WORK_BRANCH": code_branch,
+    }
 
-    report.write_text("# Captured result\n", encoding="utf-8")
-    env = {**os.environ, "AR_RUNTIME_ROOT": str(tmp_path / "runtime")}
-    captured = run(
-        [str(WORK_STATE_SNAPSHOT)],
-        env=env,
-        input=yaml.safe_dump(
-            {"work_state_dir": str(state), "paths": ["report_page1.md"]}
-        ),
+    first = json.loads(run([str(FINALIZATION), "fork"], env=env, input="{}\n").stdout)
+    time.sleep(0.001)
+    second = json.loads(run([str(FINALIZATION), "fork"], env=env, input="{}\n").stdout)
+    run([str(FINALIZATION), "ready"], env=env, input=yaml.safe_dump({"root": first["root"]}))
+    run(
+        [str(REPORT_APPEND)],
+        input=yaml.safe_dump({"work_state_dir": first["state_dir"], "content": "## First"}),
     )
-    snapshot_dir = json.loads(captured.stdout)["snapshot_dir"]
-
-    report.write_text("# Newer uncommitted result\n", encoding="utf-8")
-    committed = run(
-        [str(WORK_STATE_COMMIT)],
+    run([str(FINALIZATION), "apply"], env=env, input=yaml.safe_dump({"root": first["root"]}))
+    run(
+        [str(FINALIZATION), "finish"],
         env=env,
-        input=yaml.safe_dump(
-            {"snapshot_dir": snapshot_dir, "message": "work-state: captured result"}
-        ),
+        input=yaml.safe_dump({"root": first["root"], "state": "complete"}),
     )
 
-    response = json.loads(committed.stdout)
-    assert response["changed"] is True
-    assert git(state, "show", "HEAD:report_page1.md").stdout == "# Captured result\n"
-    assert report.read_text(encoding="utf-8") == "# Newer uncommitted result\n"
-    assert git(state, "status", "--short").stdout == " M report_page1.md\n"
+    run([str(FINALIZATION), "ready"], env=env, input=yaml.safe_dump({"root": second["root"]}))
+    second_report = Path(second["state_dir"]) / "report_page1.md"
+    assert "## First" in second_report.read_text(encoding="utf-8")
 
 
 def test_initialize_research_state_creates_numbered_records(tmp_path: Path) -> None:
@@ -1169,7 +1294,10 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     assert "preserve inherited history when supported" in instruction_text
     assert "use the history fork and explicitly direct that child" in instruction_text
     assert "do not call `wait_agent`, `list_agents`, `send_message`, or `followup_task`" in instruction_text
-    assert "research-coordinator-report-append" in instruction_text
+    assert "research-coordinator-finalization" in instruction_text
+    assert "research-coordinator-report-append" not in instruction_text
+    finalizer_text = (project / ".codex" / "agents" / "research-finalizer.toml").read_text(encoding="utf-8")
+    assert "research-coordinator-report-append" in finalizer_text
     assert "$WORK_STATE_DIR/images/" in instruction_text
     assert (
         "do not skip report-ready PNG/PDF figures merely because they are binary files"

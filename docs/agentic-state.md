@@ -61,6 +61,7 @@ Project-local operational data lives under `$AR_RUNTIME_ROOT`, which defaults to
 $AR_RUNTIME_ROOT/
   commit-snapshots/                     # branch-snapshot metadata, patches, and logs
   commit-worktrees/                     # temporary branch-commit Git worktrees
+  finalizations/                        # ordered private code/state finalization workspaces
   workspace-mounts/                     # generated mount placeholders
   refresh-heartbeats/
   logs/

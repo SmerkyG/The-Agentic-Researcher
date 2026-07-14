@@ -572,8 +572,8 @@ tools do not know that imperative workflows exist.
 
 Repeated deterministic command sequences SHOULD be extracted into a capability
 bin command rather than spelled out as a chain of workflow-level tool calls. For
-example, research-coordinator work-state record commits should use a helper such
-as `research-coordinator-work-state-commit`, and branch integration Git plumbing
+example, isolated research result integration should use a helper such as
+`research-coordinator-finalization`, and branch integration Git plumbing
 should use a helper such as `research-coordinator-branch-integrate`. The
 workflow should show the semantic boundary; the helper should own the exact
 `git fetch`, `git add`, `git commit`, `git push`, merge, cherry-pick, and check
@@ -943,8 +943,9 @@ Agent-facing instructions may include workflow contracts in several forms:
 The rendered instructions may contain prose like:
 
 ```text
-If code changes exist, create a branch snapshot, inspect its name-status, and
-launch the research-finalizer with the returned snapshot path.
+If code changes exist, create a branch snapshot and inspect its name-status.
+Fork an isolated finalization workspace from the accepted snapshot and explicit
+report assets, then launch the research-finalizer with that workspace handle.
 ```
 
 That prose is a presentation target, not the source of truth. If the prose, the
@@ -1010,9 +1011,11 @@ Agentic Team SHOULD provide tests or linters for at least these properties:
 
 For example, the research finalization workflow should have tests proving:
 
-- work-state report and TODO updates happen before finalizer launch
-- code changes cause `branch-snapshot` before finalizer launch
-- snapshot inspection happens before any background commit or finalizer launch
-- the finalizer workflow cannot create its own branch snapshot
-- background commit/finalizer requests are not immediately polled unless a later
-  step explicitly needs their result
+- code changes cause `branch-snapshot` before finalization workspace creation
+- snapshot inspection happens before finalizer launch
+- the coordinator freezes explicit report assets before continuing
+- the finalizer authors reports and TODOs only in its private state worktree
+- finalizers refresh and integrate in capture order
+- code checks pass before private research records are integrated
+- durable finalization status survives the discarded child handle
+- the coordinator does not poll or wait for the detached finalizer

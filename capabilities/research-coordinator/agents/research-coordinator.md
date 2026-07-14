@@ -29,12 +29,12 @@ from __future__ import annotations
 from typing import Literal
 
 from agentic_workflows.contract import CommandResult
-from agentic_workflows.research.agentic_notes import AgenticNotesReadTopicTool, AgenticNotesUpdateTool
+from agentic_workflows.research.agentic_notes import AgenticNotesReadTopicTool
 from agentic_workflows.research.experiment_log import (
-    ExperimentLogAppendTool,
     ExperimentLogCorrectTool,
     ExperimentLogSummaryTool,
 )
+from agentic_workflows.research.finalization import FinalizationForkTool, FinalizationWorkspace
 from agentic_workflows.research.git import (
     BranchSnapshotTool,
     GitRecentLogTool,
@@ -45,12 +45,6 @@ from agentic_workflows.research.gpu import (
     LocalGpuCapacity,
     ReadEnvironmentVariableTool,
     discover_local_gpu_capacity,
-)
-from agentic_workflows.research.research_state import (
-    ReportAppendResult,
-    ReportAppendTool,
-    WorkStateSnapshot,
-    WorkStateSnapshotTool,
 )
 from agentic_workflows.research.research_coordinator import ResearchCoordinator
 from agentic_workflows.research.research_finalizer import ResearchFinalizer
@@ -114,23 +108,13 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
                 correction: ExperimentLogCorrectTool = self.fill(ExperimentLogCorrectTool)
                 correction.run()
 
-            report_section: str = self.evaluate(
-                "complete report section containing goal, hypothesis, method, implementation, results, analysis, verification, and next steps"
-            )
-            report_result: ReportAppendResult = ReportAppendTool(content=report_section).run()
-            self.do([
-                "rewrite condensed_report.md with the current synthesis",
-                "update TODO.md with completed, autonomous, blocked, and user-input work",
-            ])
-
-            experiment_log: ExperimentLogAppendTool = self.fill(ExperimentLogAppendTool)
-            snapshot: Snapshot | None = None
+            code_snapshot: Snapshot | None = None
             if self.evaluate("code files changed in this completed result"):
                 while True:
                     paths: list[str] = self.evaluate("explicit code snapshot paths")
                     message: str = self.evaluate("focused commit message")
                     checks: list[str] = self.evaluate("focused commit check commands")
-                    snapshot = BranchSnapshotTool(
+                    code_snapshot = BranchSnapshotTool(
                         paths=paths,
                         commit_message=message,
                         checks=checks,
@@ -146,25 +130,17 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
                     if decision == "stop":
                         return
 
-            note_update: AgenticNotesUpdateTool | None = None
-            if self.evaluate("this work produced a durable reusable lesson for future agents"):
-                filled_note_update: AgenticNotesUpdateTool = self.fill(AgenticNotesUpdateTool)
-                note_update = filled_note_update
-
-            state_paths: list[str] = self.evaluate(
-                "explicit changed work-state report, TODO, figure, and research-record paths"
+            state_assets: list[str] = self.evaluate(
+                "explicit work-state figure and report-asset paths created by this result",
+                guidance="Return an empty list when the result created no report assets.",
             )
-            work_state_snapshot: WorkStateSnapshot = WorkStateSnapshotTool(
-                paths=state_paths
+            workspace: FinalizationWorkspace = FinalizationForkTool(
+                code_snapshot_dir=code_snapshot.snapshot_dir if code_snapshot is not None else None,
+                state_assets=state_assets,
             ).run()
 
             self.fire_and_forget(
-                ResearchFinalizer(
-                    experiment_log=experiment_log,
-                    note_update=note_update,
-                    code_snapshot=snapshot,
-                    work_state_snapshot=work_state_snapshot,
-                )
+                ResearchFinalizer(workspace=workspace)
             )
 
             if self.evaluate("research continuation requires user input"):
@@ -296,7 +272,10 @@ ls "$WORK_STATE_DIR"/report_page*.md 2>/dev/null || true
 test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
 ```
 
-Update work-branch records by editing files in the work-state worktree. Do not place these files in the code worktree.
+The research finalizer updates these records in an isolated finalization
+worktree and integrates them in result order. Other explicit work-state edits
+belong in the visible work-state worktree. Never place these files in the code
+worktree.
 
 Use `branch-commit-cleanup` for old local snapshot metadata and temporary commit
 worktrees only after they are no longer needed for status checks or debugging.

@@ -71,7 +71,7 @@ Reflect on these additional dimensions:
 
 ### B. Experiment Log and Report Quality
 - Is the shared experiment log complete enough to reconstruct what was run?
-- Were completed meaningful experiments reported synchronously in work-state report pages, then routed through `research-finalizer` for experiment logging, note triage, and commit/push follow-up?
+- Were completed experiments frozen into isolated finalization workspaces, then reported, logged, and note-triaged by `research-finalizer` without blocking the coordinator?
 - Were corrections routed through the `experiment-corrector` subagent instead of manually altering old experiment fields?
 - Was `SUMMARY.md` append-maintained rather than regenerated or hand-edited?
 - Is `condensed_report.md` concise, current, and about one page rather than a growing chronology?

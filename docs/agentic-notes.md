@@ -110,8 +110,8 @@ that note since the last compaction.
 ## Updating Notes
 
 Working agents update notes through subagents rather than editing note files
-directly. Research-coordinator result bookkeeping routes through
-`research-finalizer` after the report is updated; standalone lessons route
+directly. Research-coordinator result reporting and bookkeeping route together
+through `research-finalizer`; standalone lessons route
 through `note-updater` and its rendered contract. The trigger is broader than
 mistakes: missing setup requirements, corrected assumptions, undocumented tool
 or platform behavior, project conventions, and user corrections should become
