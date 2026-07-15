@@ -202,7 +202,12 @@ class ArgvTool(WorkflowTool):
 
 
 class YAMLArgvTool(ArgvTool):
-    """Run exact argv with this operation's structured fields as YAML stdin."""
+    """Run exact argv with declared fields serialized as YAML stdin.
+
+    The operation owns serialization. Do not invent fields or hand-format YAML.
+    In agent-follow mode without native structured dispatch, encode the declared
+    field values as JSON stdin, which is valid YAML and safely quotes strings.
+    """
 
 
 class AgentWorkflow(Operation):
@@ -300,8 +305,10 @@ class SubagentWorkflow(AgentWorkflow):
     The child follows the contract named by agent_name and receives the typed
     constructor fields as its request. Preserve inherited history when the
     platform supports it. If a native named role cannot inherit history, a
-    history fork must be explicitly directed to follow the named contract.
-    The caller must never execute this workflow's body.
+    history fork must receive the exact rendered contract path from the caller
+    and be explicitly directed to follow it. The child reads that path directly
+    and must not search the filesystem or installation for its contract. The
+    caller must never execute this workflow's body.
     """
 
 

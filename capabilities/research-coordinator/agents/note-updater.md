@@ -17,10 +17,8 @@ from __future__ import annotations
 from typing import Literal
 
 from agentic_workflows.contract import CommandResult
-from agentic_workflows.research.agentic_notes import (
-    AgenticNotesReadTool,
-    AgenticNotesRewriteTool,
-)
+from agentic_workflows.research.agentic_notes_read import AgenticNotesReadTool
+from agentic_workflows.research.agentic_notes_rewrite import AgenticNotesRewriteTool
 from agentic_workflows.research.note_updater import NoteUpdater, NoteUpdaterResult
 
 

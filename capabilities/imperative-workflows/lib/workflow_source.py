@@ -470,8 +470,10 @@ def render_workflow(
             "A `SubagentWorkflow` starts a separate subagent that follows the contract "
             "named by its `agent_name` and receives its typed constructor fields. Preserve "
             "inherited history when supported; if a native named role cannot inherit "
-            "history, explicitly direct the history-forked child to follow that named "
-            "contract. Never execute its workflow body in the current agent context."
+            "history, pass the exact rendered contract path to the history-forked child "
+            "and direct it to follow that file. The child must read that exact path and "
+            "must not search for another contract. Never execute its workflow body in "
+            "the current agent context."
         )
     else:
         entry_description = (

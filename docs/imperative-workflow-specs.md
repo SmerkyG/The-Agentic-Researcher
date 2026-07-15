@@ -169,7 +169,12 @@ class ArgvTool(WorkflowTool):
 
 
 class YAMLArgvTool(ArgvTool):
-    """Run exact argv with this operation's structured fields as YAML stdin."""
+    """Run exact argv with declared fields serialized as YAML stdin.
+
+    The operation owns serialization. Do not invent fields or hand-format YAML.
+    In agent-follow mode without native structured dispatch, encode the declared
+    field values as JSON stdin, which is valid YAML and safely quotes strings.
+    """
 
 
 class AgentWorkflow(Operation):
@@ -252,8 +257,10 @@ class SubagentWorkflow(AgentWorkflow):
     The child follows the contract named by agent_name and receives the typed
     constructor fields as its request. Preserve inherited history when the
     platform supports it. If a native named role cannot inherit history, a
-    history fork must be explicitly directed to follow the named contract.
-    The caller must never execute this workflow's body.
+    history fork must receive the exact rendered contract path from the caller
+    and be explicitly directed to follow it. The child reads that path directly
+    and must not search the filesystem or installation for its contract. The
+    caller must never execute this workflow's body.
     """
 
 
@@ -561,6 +568,12 @@ dictionaries, ad hoc shell snippets, or prose. YAML examples may still be
 rendered for human-facing docs, but JSON Schema generated from the
 `WorkflowRecord` is the preferred agent-facing invocation contract.
 
+`YAMLArgvTool.run()` owns request serialization. Workflow-following agents MUST
+NOT invent request fields or interpolate raw values into hand-written YAML. If
+the CLI lacks native structured dispatch, invoke the exact argv and send the
+declared field values as JSON stdin; JSON is valid YAML and safely represents
+strings containing colons, newlines, quotes, and other YAML syntax.
+
 An imperative-workflow tool class is an agent-facing adapter, not part of the
 tool implementation. Executable commands and their runtime libraries MUST NOT
 import `agentic_workflows` or depend on `WorkflowRecord`, `Value`, workflow
@@ -857,8 +870,10 @@ A subagent contract MUST subclass `SubagentWorkflow`. Starting one through
 platform's subagent mechanism. The child MUST follow the contract named by
 `agent_name` and receive the typed constructor fields as its invocation
 request. The launcher SHOULD preserve inherited history. If a native named
-role cannot inherit history, a history-forked child MUST be explicitly directed
-to follow the named contract. The caller MUST NOT execute the subagent's
+role cannot inherit history, the caller MUST pass the exact rendered contract
+path to the history-forked child and explicitly direct it to follow that file.
+The child MUST read that exact path and MUST NOT search the filesystem or
+installation for another copy. The caller MUST NOT execute the subagent's
 workflow body itself.
 
 Subagent requests MUST be typed at the workflow boundary. The subagent's prompt
@@ -944,8 +959,9 @@ The rendered instructions may contain prose like:
 
 ```text
 If code changes exist, create a branch snapshot and inspect its name-status.
-Commit the accepted snapshot, capture explicit report assets in an ordered
-finalization ticket, then launch the research-finalizer with that ticket.
+Commit the accepted snapshot, capture explicit work-state-relative report
+asset paths in an ordered finalization ticket, then launch the
+research-finalizer with that ticket.
 ```
 
 That prose is a presentation target, not the source of truth. If the prose, the
@@ -1013,7 +1029,7 @@ For example, the research finalization workflow should have tests proving:
 
 - code changes cause `branch-snapshot` and synchronous `branch-commit` before finalization capture
 - snapshot inspection happens before finalizer launch
-- the coordinator freezes explicit report assets before continuing
+- the coordinator freezes explicit report assets using paths relative to the work-state directory before continuing
 - the finalizer authors reports and TODOs only in its temporary state worktree
 - finalizers create and publish state worktrees in capture order
 - code checks and the code commit complete before detached reporting begins

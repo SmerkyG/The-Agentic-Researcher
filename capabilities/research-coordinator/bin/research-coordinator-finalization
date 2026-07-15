@@ -3,7 +3,7 @@
 # dependencies = ["PyYAML>=6.0"]
 # ///
 
-"""Stage assets and serialize research-state finalizers."""
+"""Stage work-state-relative report assets and serialize research-state finalizers."""
 
 from __future__ import annotations
 
@@ -36,7 +36,9 @@ def explicit_path(value: object) -> str:
         raise CommandError("report_assets must contain non-empty paths")
     path = PurePosixPath(value)
     if path.is_absolute() or path == PurePosixPath(".") or ".." in path.parts or ".git" in path.parts:
-        raise CommandError(f"unsafe report asset path: {value}")
+        raise CommandError(
+            f"report asset path must be relative to the work-state directory without .git or ..: {value}"
+        )
     if any(character in value for character in "*?["):
         raise CommandError(f"report asset path must not contain a glob: {value}")
     return path.as_posix()

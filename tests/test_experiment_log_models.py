@@ -13,13 +13,15 @@ sys.path.insert(0, str(REPO_ROOT / "capabilities" / "experiment-log" / "package"
 sys.path.insert(0, str(REPO_ROOT / "capabilities" / "imperative-workflows" / "package"))
 
 from agentic_workflows.contract import WorkflowRecord  # noqa: E402
-from agentic_workflows.research.experiment_log import (  # noqa: E402
+from agentic_workflows.research.experiment_log_append import (  # noqa: E402
     ExperimentCode as WorkflowExperimentCode,
     ExperimentLogAppendResult as WorkflowAppendResult,
     ExperimentLogAppendTool,
+    ExperimentMetric as WorkflowExperimentMetric,
+)
+from agentic_workflows.research.experiment_log_correct import (  # noqa: E402
     ExperimentLogCorrectResult as WorkflowCorrectResult,
     ExperimentLogCorrectTool,
-    ExperimentMetric as WorkflowExperimentMetric,
 )
 from experiment_log_models import (  # noqa: E402
     ExperimentCode,

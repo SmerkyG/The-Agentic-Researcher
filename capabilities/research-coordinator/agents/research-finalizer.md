@@ -14,17 +14,17 @@ workflow_entry: ResearchFinalizerWorkflow
 ```python agentic-workflow
 from __future__ import annotations
 
-from agentic_workflows.research.agentic_notes import AgenticNotesUpdateTool
-from agentic_workflows.research.experiment_log import ExperimentLogAppendTool
-from agentic_workflows.research.finalization import (
+from agentic_workflows.research.agentic_notes_update import AgenticNotesUpdateTool
+from agentic_workflows.research.experiment_log_append import ExperimentLogAppendTool
+from agentic_workflows.research.finalization import FinalizationWorkspace
+from agentic_workflows.research.finalization_worker import (
     FinalizationFinishTool,
     FinalizationReadyTool,
     FinalizationStateCommitTool,
-    FinalizationWorkspace,
 )
 from agentic_workflows.research.note_updater import NoteUpdater, NoteUpdaterResult
+from agentic_workflows.research.report import ReportAppendTool
 from agentic_workflows.research.research_finalizer import ResearchFinalizer, ResearchFinalizerResult
-from agentic_workflows.research.research_state import ReportAppendTool
 
 
 class ResearchFinalizerWorkflow(ResearchFinalizer):

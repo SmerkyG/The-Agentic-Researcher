@@ -222,6 +222,11 @@ caller that imports only the public class does not receive the called agent's
 implementation module. Workflow metadata is stripped from platform-specific
 agent files.
 
+Dependency inclusion is module-level, not symbol-level. Keep modules aligned
+with operation ownership so a workflow sees only the capabilities it uses. In
+particular, separate read, mutation, and worker-only operations when different
+agents own them instead of collecting them in one convenience module.
+
 A modular skill uses the same tagged block but extends the current agent
 context instead of declaring a separately dispatched agent:
 

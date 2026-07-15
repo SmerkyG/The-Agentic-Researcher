@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 
 from agentic_workflows.contract import SubagentWorkflow, WorkflowRecord
-from agentic_workflows.research.agentic_notes import AgenticNotesUpdateTool
+from agentic_workflows.research.agentic_notes_update import AgenticNotesUpdateTool
 
 
 class NoteUpdaterResult(WorkflowRecord):

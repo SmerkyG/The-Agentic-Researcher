@@ -72,6 +72,8 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     assert "class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):" in rendered
     assert 'summary: str = Value("Compact topic hints, at most 80 characters")' in rendered
     assert "class FinalizationStateCommitTool" in rendered
+    assert "class ExperimentLogAppendTool" in rendered
+    assert "class AgenticNotesUpdateTool" in rendered
     assert "class ResearchFinalizerWorkflow(ResearchFinalizer):" in rendered
     assert "ticket: FinalizationTicket" in rendered
     assert "experiment_log.code.branch = workspace.code_branch" in rendered
@@ -81,6 +83,11 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     assert "experiment_log_state" not in rendered
     assert "BranchSnapshotAfterCommit" not in rendered
     assert "class NoteUpdaterWorkflow" not in rendered
+    assert "class ExperimentLogSummaryTool" not in rendered
+    assert "class ExperimentLogCorrectTool" not in rendered
+    assert "class AgenticNotesReadTopicTool" not in rendered
+    assert "class FinalizationCaptureTool" not in rendered
+    assert "class ResearchStateInitializeTool" not in rendered
 
 
 def test_coordinator_launches_finalizer_without_tracking_or_waiting() -> None:
@@ -95,6 +102,10 @@ def test_coordinator_launches_finalizer_without_tracking_or_waiting() -> None:
     assert rendered.index("ticket: FinalizationTicket = FinalizationCaptureTool(") < rendered.index("self.fire_and_forget(\n                ResearchFinalizer")
     assert "ReportAppendTool(" not in rendered
     assert "experiment_log: ExperimentLogAppendTool = self.fill" not in rendered
+    assert "class ExperimentLogAppendTool" not in rendered
+    assert "class AgenticNotesUpdateTool" not in rendered
+    assert "class FinalizationReadyTool" not in rendered
+    assert "relative to the work-state directory" in rendered
     assert "BranchSnapshotAfterCommit" not in rendered
     assert "after_commit=" not in rendered
     assert "finalizer: Job" not in rendered
@@ -103,7 +114,8 @@ def test_coordinator_launches_finalizer_without_tracking_or_waiting() -> None:
     assert "never wait, poll, list, message, follow up with, or depend on" in rendered
     assert "follows the contract named by its `agent_name`" in rendered
     assert "Preserve inherited history when supported" in rendered
-    assert "explicitly direct the history-forked child" in rendered
+    assert "pass the exact rendered contract path" in rendered
+    assert "must not search for another contract" in rendered
 
 
 def test_related_workflows_share_one_module_index(monkeypatch: pytest.MonkeyPatch) -> None:

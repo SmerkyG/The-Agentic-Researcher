@@ -29,12 +29,11 @@ from __future__ import annotations
 from typing import Literal
 
 from agentic_workflows.contract import CommandResult
-from agentic_workflows.research.agentic_notes import AgenticNotesReadTopicTool
-from agentic_workflows.research.experiment_log import (
-    ExperimentLogCorrectTool,
-    ExperimentLogSummaryTool,
-)
-from agentic_workflows.research.finalization import FinalizationCaptureTool, FinalizationTicket
+from agentic_workflows.research.agentic_notes_read import AgenticNotesReadTopicTool
+from agentic_workflows.research.experiment_log_correct import ExperimentLogCorrectTool
+from agentic_workflows.research.experiment_log_summary import ExperimentLogSummaryTool
+from agentic_workflows.research.finalization import FinalizationTicket
+from agentic_workflows.research.finalization_capture import FinalizationCaptureTool
 from agentic_workflows.research.git import (
     BranchCommitResult,
     BranchCommitTool,
@@ -140,8 +139,8 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
                     return
 
             report_assets: list[str] = self.evaluate(
-                "explicit work-state figure and report-asset paths created by this result",
-                guidance="Return an empty list when the result created no report assets.",
+                "explicit work-state-relative figure and report-asset paths created by this result",
+                guidance="Use paths relative to the work-state directory, such as images/result.png. Return an empty list when the result created no report assets.",
             )
             ticket: FinalizationTicket = FinalizationCaptureTool(
                 report_assets=report_assets,

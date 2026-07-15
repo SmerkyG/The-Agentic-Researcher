@@ -1,10 +1,10 @@
-"""Agent-facing adapters for the independent experiment-log command."""
+"""Append operation for the independent experiment-log command."""
 
 from __future__ import annotations
 
 from typing import ClassVar, Literal
 
-from agentic_workflows.contract import ArgvTool, CommandResult, Value, WorkflowRecord, YAMLArgvTool
+from agentic_workflows.contract import Value, WorkflowRecord, YAMLArgvTool
 
 
 class ExperimentCode(WorkflowRecord):
@@ -19,16 +19,6 @@ class ExperimentMetric(WorkflowRecord):
 
 class ExperimentLogAppendResult(WorkflowRecord):
     experiment_id: str
-
-
-class ExperimentLogCorrectResult(WorkflowRecord):
-    correction_id: str
-
-
-class ExperimentLogSummaryTool(ArgvTool[CommandResult]):
-    """Read the active work-branch experiment summary."""
-
-    argv_template: ClassVar[tuple[str, ...]] = ("experiment-log", "summary")
 
 
 class ExperimentLogAppendTool(YAMLArgvTool[ExperimentLogAppendResult]):
@@ -53,13 +43,3 @@ not edit experiment-log state manually and never force-push.
     artifacts: list[str] = Value("Artifact paths or URLs", default_factory=list)
     work_branch: str | None = Value("Explicit work branch, or current branch", default=None)
     notes: str | None = Value("Concise interpretation and caveats", default=None)
-
-
-class ExperimentLogCorrectTool(YAMLArgvTool[ExperimentLogCorrectResult]):
-    """Append a correction without rewriting an existing experiment."""
-
-    argv_template: ClassVar[tuple[str, ...]] = ("experiment-log", "correct")
-
-    experiment_id: str = Value("Qualified experiment ID to correct")
-    summary: str = Value("One-line correction summary")
-    correction: str = Value("Corrected interpretation or value")
