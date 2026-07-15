@@ -61,7 +61,7 @@ Project-local operational data lives under `$AR_RUNTIME_ROOT`, which defaults to
 $AR_RUNTIME_ROOT/
   commit-snapshots/                     # branch-snapshot metadata, patches, and logs
   commit-worktrees/                     # temporary branch-commit Git worktrees
-  finalizations/                        # ordered private code/state finalization workspaces
+  finalizations/                        # ordered finalizer tickets, staged assets, and state worktrees
   workspace-mounts/                     # generated mount placeholders
   refresh-heartbeats/
   logs/
@@ -104,6 +104,12 @@ dry_run: false
 older_than_days: 7
 YAML
 ```
+
+`branch-temporary-worktree create` makes a detached linked worktree from a named
+source worktree's current commit. `publish` creates one commit and advances the
+captured source branch only when it still points to the captured base commit;
+`drop` removes the linked worktree. This is the generic isolation primitive used
+by ordered research-state finalization.
 
 ## State Worktrees and Branches
 

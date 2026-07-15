@@ -21,6 +21,7 @@ REPORT_APPEND = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "r
 FINALIZATION = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-finalization"
 INITIALIZE_RESEARCH_STATE = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-initialize-state"
 BRANCH_SNAPSHOT = REPO_ROOT / "capabilities" / "branch" / "bin" / "branch-snapshot"
+TEMPORARY_WORKTREE = REPO_ROOT / "capabilities" / "branch" / "bin" / "branch-temporary-worktree"
 AGENTIC_TEAM = REPO_ROOT / "agentic-team"
 AGENTIC_WORKSPACE = REPO_ROOT / "scripts" / "bin" / "agentic-workspace"
 
@@ -112,7 +113,95 @@ def test_research_report_append_starts_page_after_line_limit(tmp_path: Path) -> 
     assert (state / "report_page2.md").read_text(encoding="utf-8") == "## New page\n"
 
 
-def test_finalization_workspace_isolates_and_integrates_code_and_state(tmp_path: Path) -> None:
+def test_temporary_worktree_publishes_without_overwriting_newer_visible_edits(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    run(["git", "init", str(repo)])
+    configure_git(repo)
+    (repo / "report.md").write_text("# Report\n", encoding="utf-8")
+    (repo / "TODO.md").write_text("- [ ] baseline\n", encoding="utf-8")
+    git(repo, "add", "report.md", "TODO.md")
+    git(repo, "commit", "-m", "initial")
+    private = tmp_path / "private"
+
+    created = json.loads(
+        run(
+            [str(TEMPORARY_WORKTREE), "create"],
+            input=yaml.safe_dump({"source_worktree": str(repo), "worktree": str(private)}),
+        ).stdout
+    )
+    (private / "report.md").write_text("# Report\n\nResult.\n", encoding="utf-8")
+    (private / "TODO.md").write_text("- [x] baseline\n", encoding="utf-8")
+    (repo / "TODO.md").write_text("- [ ] newer visible work\n", encoding="utf-8")
+
+    published = json.loads(
+        run(
+            [str(TEMPORARY_WORKTREE), "publish"],
+            input=yaml.safe_dump({**created, "message": "record result"}),
+        ).stdout
+    )
+    assert published["changed"] is True
+    assert "Result." in (repo / "report.md").read_text(encoding="utf-8")
+    assert git(repo, "show", "HEAD:TODO.md").stdout == "- [x] baseline\n"
+    assert (repo / "TODO.md").read_text(encoding="utf-8") == "- [ ] newer visible work\n"
+
+    run(
+        [str(TEMPORARY_WORKTREE), "drop"],
+        input=yaml.safe_dump({"source_worktree": str(repo), "worktree": str(private)}),
+    )
+    assert not private.exists()
+
+
+def test_temporary_worktree_rejects_a_moved_target_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    run(["git", "init", str(repo)])
+    configure_git(repo)
+    (repo / "value.txt").write_text("base\n", encoding="utf-8")
+    git(repo, "add", "value.txt")
+    git(repo, "commit", "-m", "initial")
+    private = tmp_path / "private"
+    created = json.loads(
+        run(
+            [str(TEMPORARY_WORKTREE), "create"],
+            input=yaml.safe_dump({"source_worktree": str(repo), "worktree": str(private)}),
+        ).stdout
+    )
+    (private / "value.txt").write_text("private\n", encoding="utf-8")
+    (repo / "other.txt").write_text("other\n", encoding="utf-8")
+    git(repo, "add", "other.txt")
+    git(repo, "commit", "-m", "advance branch")
+
+    result = run(
+        [str(TEMPORARY_WORKTREE), "publish"],
+        input=yaml.safe_dump({**created, "message": "private change"}),
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "target branch moved" in result.stderr
+    assert (private / "value.txt").read_text(encoding="utf-8") == "private\n"
+
+
+def test_temporary_worktree_drop_refuses_unregistered_directory(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    run(["git", "init", str(repo)])
+    configure_git(repo)
+    (repo / "README.md").write_text("repo\n", encoding="utf-8")
+    git(repo, "add", "README.md")
+    git(repo, "commit", "-m", "initial")
+    ordinary_directory = tmp_path / "ordinary"
+    ordinary_directory.mkdir()
+    (ordinary_directory / "keep.txt").write_text("keep\n", encoding="utf-8")
+
+    result = run(
+        [str(TEMPORARY_WORKTREE), "drop"],
+        input=yaml.safe_dump({"source_worktree": str(repo), "worktree": str(ordinary_directory)}),
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "refusing to remove unregistered worktree path" in result.stderr
+    assert (ordinary_directory / "keep.txt").read_text(encoding="utf-8") == "keep\n"
+
+
+def test_finalization_stages_assets_and_publishes_state_for_committed_code(tmp_path: Path) -> None:
     project = tmp_path / "project"
     state = tmp_path / "work-state"
     run(["git", "init", str(project)])
@@ -130,6 +219,9 @@ def test_finalization_workspace_isolates_and_integrates_code_and_state(tmp_path:
     code_branch = git(project, "branch", "--show-current").stdout.strip()
 
     (project / "result.py").write_text("value = 1\n", encoding="utf-8")
+    git(project, "add", "result.py")
+    git(project, "commit", "-m", "research: record result")
+    code_commit = git(project, "rev-parse", "HEAD").stdout.strip()
     image = state / "images" / "result.png"
     image.parent.mkdir()
     image.write_bytes(b"png")
@@ -140,39 +232,17 @@ def test_finalization_workspace_isolates_and_integrates_code_and_state(tmp_path:
         "AR_RUNTIME_ROOT": str(tmp_path / "runtime"),
         "AR_WORK_BRANCH": code_branch,
     }
-    snapshot = json.loads(
+    captured = json.loads(
         run(
-            [str(BRANCH_SNAPSHOT)],
+            [str(FINALIZATION), "capture"],
             cwd=project,
             env=env,
-            input=yaml.safe_dump(
-                {
-                    "paths": ["result.py"],
-                    "commit_message": "research: record result",
-                    "checks": ["test \"$(cat result.py)\" = 'value = 1'"],
-                }
-            ),
+            input=yaml.safe_dump({"report_assets": ["images/result.png"]}),
         ).stdout
     )
-    forked = json.loads(
-        run(
-            [str(FINALIZATION), "fork"],
-            cwd=project,
-            env=env,
-            input=yaml.safe_dump(
-                {
-                    "code_snapshot_dir": snapshot["snapshot_dir"],
-                    "state_assets": ["images/result.png"],
-                }
-            ),
-        ).stdout
-    )
-    root = Path(forked["root"])
-    private_code = Path(forked["code_dir"])
-    private_state = Path(forked["state_dir"])
-    assert (private_code / "result.py").read_text(encoding="utf-8") == "value = 1\n"
-    assert (private_state / "images" / "result.png").read_bytes() == b"png"
-
+    root = Path(captured["root"])
+    assert captured["code_commit"] == code_commit
+    assert not (root / "state").exists()
     (project / "result.py").write_text("value = 2\n", encoding="utf-8")
     ready = json.loads(
         run(
@@ -182,6 +252,8 @@ def test_finalization_workspace_isolates_and_integrates_code_and_state(tmp_path:
         ).stdout
     )
     assert ready["state"] == "active"
+    private_state = Path(ready["state_dir"])
+    assert (private_state / "images" / "result.png").read_bytes() == b"png"
     run(
         [str(REPORT_APPEND)],
         input=yaml.safe_dump(
@@ -192,16 +264,15 @@ def test_finalization_workspace_isolates_and_integrates_code_and_state(tmp_path:
     (private_state / "TODO.md").write_text("- [x] baseline\n", encoding="utf-8")
     (state / "TODO.md").write_text("- [ ] newer live work\n", encoding="utf-8")
 
-    applied = json.loads(
+    committed = json.loads(
         run(
-            [str(FINALIZATION), "apply"],
+            [str(FINALIZATION), "commit"],
             env=env,
             input=yaml.safe_dump({"root": str(root)}),
         ).stdout
     )
-    assert applied["state"] == "applied"
-    assert applied["code_changed"] is True
-    assert applied["state_changed"] is True
+    assert committed["state"] == "committed"
+    assert committed["state_changed"] is True
     assert git(project, "show", "HEAD:result.py").stdout == "value = 1\n"
     assert (project / "result.py").read_text(encoding="utf-8") == "value = 2\n"
     assert "Completed result" in (state / "report_page1.md").read_text(encoding="utf-8")
@@ -218,7 +289,6 @@ def test_finalization_workspace_isolates_and_integrates_code_and_state(tmp_path:
         ).stdout
     )
     assert finished["state"] == "complete"
-    assert not private_code.exists()
     assert not private_state.exists()
     assert not (root / "assets").exists()
     status = json.loads(
@@ -253,23 +323,27 @@ def test_later_finalization_refreshes_after_earlier_completion(tmp_path: Path) -
         "AR_WORK_BRANCH": code_branch,
     }
 
-    first = json.loads(run([str(FINALIZATION), "fork"], env=env, input="{}\n").stdout)
+    first = json.loads(run([str(FINALIZATION), "capture"], env=env, input="{}\n").stdout)
     time.sleep(0.001)
-    second = json.loads(run([str(FINALIZATION), "fork"], env=env, input="{}\n").stdout)
-    run([str(FINALIZATION), "ready"], env=env, input=yaml.safe_dump({"root": first["root"]}))
+    second = json.loads(run([str(FINALIZATION), "capture"], env=env, input="{}\n").stdout)
+    first_ready = json.loads(
+        run([str(FINALIZATION), "ready"], env=env, input=yaml.safe_dump({"root": first["root"]})).stdout
+    )
     run(
         [str(REPORT_APPEND)],
-        input=yaml.safe_dump({"work_state_dir": first["state_dir"], "content": "## First"}),
+        input=yaml.safe_dump({"work_state_dir": first_ready["state_dir"], "content": "## First"}),
     )
-    run([str(FINALIZATION), "apply"], env=env, input=yaml.safe_dump({"root": first["root"]}))
+    run([str(FINALIZATION), "commit"], env=env, input=yaml.safe_dump({"root": first["root"]}))
     run(
         [str(FINALIZATION), "finish"],
         env=env,
         input=yaml.safe_dump({"root": first["root"], "state": "complete"}),
     )
 
-    run([str(FINALIZATION), "ready"], env=env, input=yaml.safe_dump({"root": second["root"]}))
-    second_report = Path(second["state_dir"]) / "report_page1.md"
+    second_ready = json.loads(
+        run([str(FINALIZATION), "ready"], env=env, input=yaml.safe_dump({"root": second["root"]})).stdout
+    )
+    second_report = Path(second_ready["state_dir"]) / "report_page1.md"
     assert "## First" in second_report.read_text(encoding="utf-8")
 
 

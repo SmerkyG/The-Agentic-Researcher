@@ -34,8 +34,10 @@ from agentic_workflows.research.experiment_log import (
     ExperimentLogCorrectTool,
     ExperimentLogSummaryTool,
 )
-from agentic_workflows.research.finalization import FinalizationForkTool, FinalizationWorkspace
+from agentic_workflows.research.finalization import FinalizationCaptureTool, FinalizationTicket
 from agentic_workflows.research.git import (
+    BranchCommitResult,
+    BranchCommitTool,
     BranchSnapshotTool,
     GitRecentLogTool,
     GitStatusShortTool,
@@ -108,13 +110,12 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
                 correction: ExperimentLogCorrectTool = self.fill(ExperimentLogCorrectTool)
                 correction.run()
 
-            code_snapshot: Snapshot | None = None
             if self.evaluate("code files changed in this completed result"):
                 while True:
                     paths: list[str] = self.evaluate("explicit code snapshot paths")
                     message: str = self.evaluate("focused commit message")
                     checks: list[str] = self.evaluate("focused commit check commands")
-                    code_snapshot = BranchSnapshotTool(
+                    code_snapshot: Snapshot = BranchSnapshotTool(
                         paths=paths,
                         commit_message=message,
                         checks=checks,
@@ -130,17 +131,24 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
                     if decision == "stop":
                         return
 
-            state_assets: list[str] = self.evaluate(
+                code_commit: BranchCommitResult = BranchCommitTool(
+                    snapshot_dir=code_snapshot.snapshot_dir,
+                    background=False,
+                ).run()
+                if code_commit.state != "committed" or code_commit.commit is None:
+                    self.do(["report that the completed code result could not be committed"])
+                    return
+
+            report_assets: list[str] = self.evaluate(
                 "explicit work-state figure and report-asset paths created by this result",
                 guidance="Return an empty list when the result created no report assets.",
             )
-            workspace: FinalizationWorkspace = FinalizationForkTool(
-                code_snapshot_dir=code_snapshot.snapshot_dir if code_snapshot is not None else None,
-                state_assets=state_assets,
+            ticket: FinalizationTicket = FinalizationCaptureTool(
+                report_assets=report_assets,
             ).run()
 
             self.fire_and_forget(
-                ResearchFinalizer(workspace=workspace)
+                ResearchFinalizer(ticket=ticket)
             )
 
             if self.evaluate("research continuation requires user input"):
@@ -272,10 +280,9 @@ ls "$WORK_STATE_DIR"/report_page*.md 2>/dev/null || true
 test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
 ```
 
-The research finalizer updates these records in an isolated finalization
-worktree and integrates them in result order. Other explicit work-state edits
-belong in the visible work-state worktree. Never place these files in the code
-worktree.
+The research finalizer updates these records in a temporary state worktree and
+publishes them in result order. Other explicit work-state edits belong in the
+visible work-state worktree. Never place these files in the code worktree.
 
 Use `branch-commit-cleanup` for old local snapshot metadata and temporary commit
 worktrees only after they are no longer needed for status checks or debugging.

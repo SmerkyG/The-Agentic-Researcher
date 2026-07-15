@@ -944,8 +944,8 @@ The rendered instructions may contain prose like:
 
 ```text
 If code changes exist, create a branch snapshot and inspect its name-status.
-Fork an isolated finalization workspace from the accepted snapshot and explicit
-report assets, then launch the research-finalizer with that workspace handle.
+Commit the accepted snapshot, capture explicit report assets in an ordered
+finalization ticket, then launch the research-finalizer with that ticket.
 ```
 
 That prose is a presentation target, not the source of truth. If the prose, the
@@ -1011,11 +1011,11 @@ Agentic Team SHOULD provide tests or linters for at least these properties:
 
 For example, the research finalization workflow should have tests proving:
 
-- code changes cause `branch-snapshot` before finalization workspace creation
+- code changes cause `branch-snapshot` and synchronous `branch-commit` before finalization capture
 - snapshot inspection happens before finalizer launch
 - the coordinator freezes explicit report assets before continuing
-- the finalizer authors reports and TODOs only in its private state worktree
-- finalizers refresh and integrate in capture order
-- code checks pass before private research records are integrated
+- the finalizer authors reports and TODOs only in its temporary state worktree
+- finalizers create and publish state worktrees in capture order
+- code checks and the code commit complete before detached reporting begins
 - durable finalization status survives the discarded child handle
 - the coordinator does not poll or wait for the detached finalizer

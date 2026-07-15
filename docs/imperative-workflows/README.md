@@ -28,11 +28,11 @@ direct the history-forked child to follow the named contract. Its body must
 never run in the calling agent's context.
 
 Detached workflows must not discover their inputs from mutable caller
-worktrees. Freeze those inputs synchronously into an immutable or copy-on-write
-workspace, pass its typed handle to the subagent, and let deterministic helpers
-integrate the private result. When multiple detached workflows update one
-branch, their private workspaces must be applied in capture order and expose
-durable status independent of the discarded child handle.
+worktrees. Commit durable code inputs before launch, freeze any remaining
+explicit assets, and pass typed commit and ticket identities to the subagent.
+When multiple detached workflows update one branch, serialize temporary
+worktree publication in capture order and expose durable status independent of
+the discarded child handle.
 
 Deterministic helper behavior is authoritative, followed by workflow code,
 then declarative Markdown guidance. Agent-definition YAML frontmatter is

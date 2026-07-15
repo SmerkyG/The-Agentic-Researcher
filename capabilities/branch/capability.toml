@@ -1,2 +1,2 @@
-description = "Provide snapshot-based branch commit and cleanup tools."
+description = "Provide snapshot commits and temporary Git worktree tools."
 requires = []

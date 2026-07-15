@@ -211,7 +211,7 @@ my-project-at/
   kdtree-bounds/
     code/                           # another top-level agent worktree
     state/                          # matching work-state worktree
-  .runtime/                         # hidden locks, snapshots, and COW finalization workspaces
+  .runtime/                         # hidden locks, snapshots, and temporary finalizer worktrees
 ```
 
 The local `project-state/`, `<work-name>/code/`, and `<work-name>/state/` directories are linked Git worktrees of the project repo. The state worktrees use orphan state branches rather than normal code branches. They are intentionally visible so reports, TODOs, figures, notes, and experiment logs are easy to find. The hidden `.runtime/` directory is launcher-managed project machinery.
@@ -351,7 +351,7 @@ Capabilities own agent and tool implementations, skills, commands, launcher hook
 
 - `agentic-notes` owns the `agent-notes/` data model, initializes and refreshes org/project/work-branch note state from its launcher hooks, renders Agentic Notes guidance plus dynamic always-injected and on-demand note listings, provides `agentic-notes read-note`, `agentic-notes update-note`, and `agentic-notes rewrite-note`, runs the background notes refresh loop, and emits lightweight steering notices when refreshed note topics change during a running session.
 - `experiment-log` owns the active work-branch `experiment-log/` data model, renders active experiment-log guidance, and provides `experiment-log append`, `experiment-log correct`, and `experiment-log summary`. The experiment log is capability-owned and may be absent until the workflow records an experiment.
-- `branch` provides snapshot-based branch commit, status, and cleanup tools shared by main-agent capabilities.
+- `branch` provides snapshot commits plus generic `branch-temporary-worktree create`, `publish`, and `drop` operations shared by main-agent capabilities.
 - `imperative-workflows` renders and validates Python-shaped agent and skill workflows.
 - `research-coordinator` provides the research coordinator agent family and research-state workflow.
 
