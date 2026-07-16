@@ -37,6 +37,8 @@ class BranchSnapshotTool(YAMLArgvTool[Snapshot]):
     paths: list[str] = Value("Explicit code paths; no globs, directories, or dot")
     commit_message: str = Value("Focused commit message")
     checks: list[str] = Value("Focused check commands")
+    project_dir: str = "."
+    work_branch: str | None = None
 
 
 class BranchCommitResult(WorkflowRecord):

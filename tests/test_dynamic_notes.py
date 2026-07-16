@@ -1355,20 +1355,22 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     assert "## Imperative Workflow" in instruction_text
     assert "Follow `ResearchCoordinatorWorkflow`" in instruction_text
     assert "### Workflow Modules" in instruction_text
-    assert "class AgentWorkflow(Operation[ResultT], Generic[ResultT]):" in instruction_text
+    assert "class ExecutableWorkflow(YAMLArgvTool[ResultT], Workflow[ResultT], Generic[ResultT]):" in instruction_text
+    assert "class AgentWorkflow(Workflow[ResultT], Generic[ResultT]):" in instruction_text
     assert "def _schema_for_annotation" not in instruction_text
-    assert "from dataclasses import" not in instruction_text
     assert "class ResearchCoordinator(UserFacingWorkflow[None]):" in instruction_text
     assert "def launch(self, operation: Operation[StartedResultT]) -> Job[StartedResultT]:" in instruction_text
     assert "def fire_and_forget(self, operation: Operation[Any]) -> None:" in instruction_text
     normalized_instructions = " ".join(instruction_text.split())
     assert "discard its platform handle, and continue now" in normalized_instructions
-    assert "Never wait for, poll, list, message, follow up with" in normalized_instructions
+    assert "never wait, poll, list, message, follow up with" in normalized_instructions.casefold()
     assert "follows the contract named by `agent_name`" in instruction_text
     assert "preserve inherited history when supported" in instruction_text
     assert "use the history fork and explicitly direct that child" in instruction_text
     assert "do not call `wait_agent`, `list_agents`, `send_message`, or `followup_task`" in instruction_text
-    assert "research-coordinator-finalization" in instruction_text
+    assert "imperative-workflows-run" in instruction_text
+    assert "workflow_implementation" in instruction_text
+    assert "research-coordinator-finalization" not in instruction_text
     assert "research-coordinator-report-append" not in instruction_text
     finalizer_text = (project / ".codex" / "agents" / "research-finalizer.toml").read_text(encoding="utf-8")
     assert "research-coordinator-report-append" in finalizer_text

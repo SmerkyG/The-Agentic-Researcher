@@ -65,6 +65,47 @@ class StatusTool(ArgvTool):
     assert findings == []
 
 
+def test_lint_source_accepts_executable_workflow_tool_composition() -> None:
+    findings = lint_source(
+        """
+class Result(WorkflowRecord):
+    value: str = Value("Result value")
+
+class Tool(YAMLArgvTool[Result]):
+    argv_template: ClassVar[tuple[str, ...]] = ("demo",)
+    value: str = Value("Tool value")
+
+class Group(ExecutableWorkflow[Result]):
+    workflow_implementation: ClassVar[str] = "demo_impl:GroupWorkflow"
+    value: str = Value("Group value")
+
+
+class GroupWorkflow(Group, ExecutableWorkflowImplementation[Group]):
+    def workflow(self) -> Result:
+        return Tool(value=self.value).run()
+""",
+        path="demo.py",
+    )
+
+    assert findings == []
+
+
+def test_lint_source_rejects_model_primitive_in_executable_workflow() -> None:
+    findings = lint_source(
+        """
+class Group(ExecutableWorkflow[None]):
+    workflow_implementation: ClassVar[str] = "demo_impl:GroupWorkflow"
+
+class GroupWorkflow(Group, ExecutableWorkflowImplementation[Group]):
+    def workflow(self) -> None:
+        self.do(["update report"])
+""",
+        path="demo.py",
+    )
+
+    assert any(finding.code == "WF503" for finding in findings)
+
+
 def test_lint_source_accepts_adjacent_evaluations() -> None:
     findings = lint_source(
         """

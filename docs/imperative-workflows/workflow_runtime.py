@@ -210,7 +210,45 @@ class YAMLArgvTool(ArgvTool):
     """
 
 
-class AgentWorkflow(Operation):
+class Workflow(Operation):
+    """Shared orchestration vocabulary for executable and agent workflows."""
+
+    def workflow(self) -> Any:
+        raise NotImplementedError
+
+    def launch(self, operation: Operation) -> Job:
+        raise NotImplementedError
+
+    def fire_and_forget(self, operation: Operation) -> None:
+        raise NotImplementedError
+
+    def wait(self, job: Job, timeout_seconds: float | None = None) -> Any:
+        raise NotImplementedError
+
+    def wait_all(self, jobs, timeout_seconds=None) -> Any:
+        raise NotImplementedError
+
+    def wait_any(self, jobs, timeout_seconds=None) -> Any:
+        raise NotImplementedError
+
+    def cancel(self, job) -> None:
+        raise NotImplementedError
+
+
+class ExecutableWorkflow(YAMLArgvTool, Workflow):
+    """Model-free Python composition of tools and nested executable workflows."""
+
+    workflow_implementation: ClassVar[str]
+
+    def argv(self) -> list[str]:
+        return ["imperative-workflows-run", f"{type(self).__module__}:{type(self).__qualname__}"]
+
+
+class ExecutableWorkflowImplementation:
+    """Marker mixed into a private implementation of an executable contract."""
+
+
+class AgentWorkflow(Workflow):
     """
     Agent-followed workflow vocabulary.
 
@@ -303,12 +341,14 @@ class SubagentWorkflow(AgentWorkflow):
     """A workflow that must run in a separately started subagent context.
 
     The child follows the contract named by agent_name and receives the typed
-    constructor fields as its request. Preserve inherited history when the
-    platform supports it. If a native named role cannot inherit history, a
-    history fork must receive the exact rendered contract path from the caller
-    and be explicitly directed to follow it. The child reads that path directly
-    and must not search the filesystem or installation for its contract. The
-    caller must never execute this workflow's body.
+    constructor fields as its request. The caller resolves agent_name through
+    the Available Subagents catalog and uses its matching Contract path; it
+    must not search the filesystem or installation for an agent contract.
+    Preserve inherited history when the platform supports it. If a native named
+    role cannot inherit history, a history fork must receive that exact rendered
+    contract path and be explicitly directed to follow it. The child reads that
+    path directly and must not search for another contract. The caller must
+    never execute this workflow's body.
     """
 
 

@@ -15,7 +15,8 @@ concurrency.
 - Keep ordering, conditions, loops, concurrency, and failure handling visible to
   static review and tests.
 - Embed the workflow source for the agent to follow, while extracting
-  deterministic steps into executable tools where practical.
+  deterministic steps into executable operation workflows or tools where
+  practical.
 - Avoid maintaining a second, drifting English-language version of the same
   flow.
 - Preserve enough English for model-facing task prompts, but keep that English
@@ -113,6 +114,13 @@ classes, helper methods, or named phases. A human should be able to read the
 workflow top to bottom and understand the intent and recipe without jumping
 elsewhere, except when crossing a real tool, subagent, or durable data-contract
 boundary.
+
+Deterministic multi-tool regions SHOULD be extracted into an
+`ExecutableWorkflow` before creating a new monolithic helper command. An
+executable workflow preserves ordinary Python dataflow while allowing a generic
+runtime to dispatch its child tools without model turns. See
+`docs/executable-operation-workflows.md` for its execution boundary and the
+recommended migration path.
 
 ## Interpreter Interface
 
@@ -255,12 +263,14 @@ class SubagentWorkflow(AgentWorkflow):
     """A workflow that must run in a separately started subagent context.
 
     The child follows the contract named by agent_name and receives the typed
-    constructor fields as its request. Preserve inherited history when the
-    platform supports it. If a native named role cannot inherit history, a
-    history fork must receive the exact rendered contract path from the caller
-    and be explicitly directed to follow it. The child reads that path directly
-    and must not search the filesystem or installation for its contract. The
-    caller must never execute this workflow's body.
+    constructor fields as its request. The caller resolves agent_name through
+    the Available Subagents catalog and uses its matching Contract path; it
+    must not search the filesystem or installation for an agent contract.
+    Preserve inherited history when the platform supports it. If a native named
+    role cannot inherit history, a history fork must receive that exact rendered
+    contract path and be explicitly directed to follow it. The child reads that
+    path directly and must not search for another contract. The caller must
+    never execute this workflow's body.
     """
 
 

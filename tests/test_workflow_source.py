@@ -97,9 +97,14 @@ def test_coordinator_launches_finalizer_without_tracking_or_waiting() -> None:
 
     assert "ResearchFinalizer(" in rendered
     assert "self.fire_and_forget(" in rendered
-    assert rendered.index("code_snapshot: Snapshot = BranchSnapshotTool(") < rendered.index("code_commit: BranchCommitResult = BranchCommitTool(")
-    assert rendered.index("code_commit: BranchCommitResult = BranchCommitTool(") < rendered.index("ticket: FinalizationTicket = FinalizationCaptureTool(")
-    assert rendered.index("ticket: FinalizationTicket = FinalizationCaptureTool(") < rendered.index("self.fire_and_forget(\n                ResearchFinalizer")
+    assert "class FinalizationStart(ExecutableWorkflow[FinalizationTicket]):" in rendered
+    assert "FinalizationStartWorkflow" in rendered
+    assert "class FinalizationStartWorkflow(" not in rendered
+    assert "snapshot: Snapshot = BranchSnapshotTool(" not in rendered
+    assert "commit: BranchCommitResult = BranchCommitTool(" not in rendered
+    assert "return FinalizationCaptureTool(" not in rendered
+    assert rendered.index("ticket: FinalizationTicket = FinalizationStart(") < rendered.index("self.fire_and_forget(\n                ResearchFinalizer")
+    assert "the snapshot name-status contains unexpected files" not in rendered
     assert "ReportAppendTool(" not in rendered
     assert "experiment_log: ExperimentLogAppendTool = self.fill" not in rendered
     assert "class ExperimentLogAppendTool" not in rendered
@@ -112,9 +117,15 @@ def test_coordinator_launches_finalizer_without_tracking_or_waiting() -> None:
     assert "discards the platform handle" in rendered
     assert "immediately continues with the next Python statement" in rendered
     assert "never wait, poll, list, message, follow up with, or depend on" in rendered
+    assert "For `ExecutableWorkflow.run()`, execute the exact argv returned by `argv()`" in rendered
+    assert "Do not run `--help`" in rendered
+    assert "before attempting that declared invocation" in rendered
     assert "follows the contract named by its `agent_name`" in rendered
+    assert "Resolve `agent_name` through the `Available Subagents` catalog" in rendered
+    assert "use the matching `Contract:` path" in rendered
+    assert "do not search the filesystem or installation for an agent contract" in rendered
     assert "Preserve inherited history when supported" in rendered
-    assert "pass the exact rendered contract path" in rendered
+    assert "pass that exact rendered contract path" in rendered
     assert "must not search for another contract" in rendered
 
 

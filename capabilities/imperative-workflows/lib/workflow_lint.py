@@ -79,6 +79,7 @@ ALLOWED_SELF_METHODS = {
     "launch",
     "lock",
     "timeout",
+    "wait",
     "wait_all",
     "wait_any",
 }
@@ -201,6 +202,8 @@ def _call_name(node: ast.AST) -> str | None:
         return node.attr
     if isinstance(node, ast.Call):
         return _call_name(node.func)
+    if isinstance(node, ast.Subscript):
+        return _call_name(node.value)
     return None
 
 
@@ -287,7 +290,7 @@ def _is_schema_field(node: ast.AnnAssign, schema_names: set[str]) -> bool:
 
 def _is_workflow_record(node: ast.ClassDef) -> bool:
     return any(
-        _call_name(base) in {"WorkflowRecord", "WorkflowTool", "YAMLArgvTool", "ArgvTool"}
+        _call_name(base) in {"WorkflowRecord", "WorkflowTool", "YAMLArgvTool", "ArgvTool", "ExecutableWorkflow"}
         for base in node.bases
     )
 
@@ -297,6 +300,24 @@ def _is_agent_workflow(node: ast.ClassDef) -> bool:
         _call_name(base) in {"AgentWorkflow", "SubagentWorkflow", "UserFacingWorkflow"}
         for base in node.bases
     )
+
+
+def _is_executable_workflow(node: ast.ClassDef) -> bool:
+    return any(
+        _call_name(base) in {"ExecutableWorkflow", "ExecutableWorkflowImplementation"}
+        for base in node.bases
+    )
+
+
+def _declares_executable_implementation(node: ast.ClassDef) -> bool:
+    for item in node.body:
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+            if item.target.id == "workflow_implementation":
+                return True
+        if isinstance(item, ast.Assign):
+            if any(isinstance(target, ast.Name) and target.id == "workflow_implementation" for target in item.targets):
+                return True
+    return False
 
 
 def _is_user_facing_workflow(node: ast.ClassDef) -> bool:
@@ -339,6 +360,7 @@ class WorkflowVisitor(ast.NodeVisitor):
         self.schema_classes = set(schema_fields)
         self.findings: list[Finding] = []
         self._agent_workflow_depth = 0
+        self._executable_workflow_depth = 0
         self._user_facing_workflow_depth = 0
         self._workflow_method_stack: list[set[str]] = []
 
@@ -346,9 +368,19 @@ class WorkflowVisitor(ast.NodeVisitor):
         self._check_workflow_entrypoint(node)
         self._check_workflow_config_fields(node)
         is_agent_workflow = _is_agent_workflow(node)
+        is_executable_workflow = _is_executable_workflow(node)
         is_user_facing_workflow = _is_user_facing_workflow(node)
         if is_agent_workflow:
             self._agent_workflow_depth += 1
+            self._workflow_method_stack.append(
+                {
+                    item.name
+                    for item in node.body
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                }
+            )
+        if is_executable_workflow:
+            self._executable_workflow_depth += 1
             self._workflow_method_stack.append(
                 {
                     item.name
@@ -366,9 +398,12 @@ class WorkflowVisitor(ast.NodeVisitor):
             if is_agent_workflow:
                 self._workflow_method_stack.pop()
                 self._agent_workflow_depth -= 1
+            if is_executable_workflow:
+                self._workflow_method_stack.pop()
+                self._executable_workflow_depth -= 1
 
     def visit_Call(self, node: ast.Call) -> None:
-        if self._agent_workflow_depth > 0 and self._is_self_method_call(node):
+        if (self._agent_workflow_depth > 0 or self._executable_workflow_depth > 0) and self._is_self_method_call(node):
             self._check_self_method_call(node)
         if isinstance(node.func, ast.Attribute) and node.func.attr == "do":
             self._check_do_call(node)
@@ -463,9 +498,9 @@ class WorkflowVisitor(ast.NodeVisitor):
         )
 
     def _check_workflow_entrypoint(self, node: ast.ClassDef) -> None:
-        if node.name in {"AgentWorkflow", "UserFacingWorkflow"}:
+        if node.name in {"AgentWorkflow", "UserFacingWorkflow", "ExecutableWorkflow"}:
             return
-        if not _is_agent_workflow(node):
+        if not (_is_agent_workflow(node) or _is_executable_workflow(node)):
             return
         workflow_methods = [
             item for item in node.body
@@ -475,13 +510,15 @@ class WorkflowVisitor(ast.NodeVisitor):
             for item in workflow_methods:
                 self._check_workflow_signature(item)
             return
+        if _is_executable_workflow(node) and _declares_executable_implementation(node):
+            return
         self.findings.append(
             Finding(
                 path=self.path,
                 line=node.lineno,
                 col=node.col_offset,
                 code="WF401",
-                message="AgentWorkflow implementation subclasses must define workflow as their entrypoint",
+                message="workflow implementation subclasses must define workflow as their entrypoint",
             )
         )
 
@@ -495,7 +532,7 @@ class WorkflowVisitor(ast.NodeVisitor):
                     col=node.col_offset,
                     code="WF402",
                     message=(
-                        "AgentWorkflow workflow signatures must take only self; "
+                        "workflow signatures must take only self; "
                         "put launch configuration in typed constructor fields"
                     ),
                 )
@@ -542,7 +579,9 @@ class WorkflowVisitor(ast.NodeVisitor):
             )
 
     def _check_workflow_config_fields(self, node: ast.ClassDef) -> None:
-        if node.name in {"AgentWorkflow", "UserFacingWorkflow"} or not _is_agent_workflow(node):
+        if node.name in {"AgentWorkflow", "UserFacingWorkflow", "ExecutableWorkflow"} or not (
+            _is_agent_workflow(node) or _is_executable_workflow(node)
+        ):
             return
         for item in node.body:
             if not isinstance(item, ast.AnnAssign) or not isinstance(item.target, ast.Name):
@@ -656,6 +695,28 @@ class WorkflowVisitor(ast.NodeVisitor):
 
     def _check_self_method_call(self, node: ast.Call) -> None:
         if not isinstance(node.func, ast.Attribute):
+            return
+        if self._executable_workflow_depth > 0 and node.func.attr in {
+            "ask_user",
+            "do",
+            "evaluate",
+            "fill",
+            "fire_and_forget",
+            "lock",
+            "timeout",
+        }:
+            self.findings.append(
+                Finding(
+                    path=self.path,
+                    line=node.lineno,
+                    col=node.col_offset,
+                    code="WF503",
+                    message=(
+                        f"self.{node.func.attr}(...) is unavailable in ExecutableWorkflow; "
+                        "use typed inputs and tools, or keep this step in an AgentWorkflow"
+                    ),
+                )
+            )
             return
         if node.func.attr == "ask_user":
             if self._user_facing_workflow_depth > 0:

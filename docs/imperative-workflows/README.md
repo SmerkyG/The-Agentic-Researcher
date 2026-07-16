@@ -9,6 +9,10 @@ The generated instructions include the minimal public contract and workflow
 source. Contract docstrings define model-operation semantics. They do not add
 workflow steps.
 
+See [Executable Operation Workflows](../executable-operation-workflows.md) for
+the model-free tool-composition runtime and the intended authoring migration
+path from inline agent workflows to executable or parallel operation groups.
+
 Top-level agents and subagents include their transitive workflow modules because
 they start new contexts. Skills run inside an existing main-agent context and
 include only their own workflow module. If a skill imports a definition that is
@@ -32,11 +36,14 @@ to start a tool or subagent asynchronously, discard its platform handle, and
 immediately execute the next statement. The caller must never wait, poll, list,
 message, follow up with, or depend on that operation. A `SubagentWorkflow`
 starts a separate child that follows the contract named by `agent_name` and
-receives its typed constructor fields. Preserve inherited history when the
-platform supports it. If a native named role cannot inherit history, explicitly
-pass the exact rendered contract path to the history-forked child and direct it
-to follow that file. The child reads that path directly and must not search for
-another contract. Its body must never run in the calling agent's context.
+receives its typed constructor fields. Resolve `agent_name` through the
+`Available Subagents` catalog and use its matching `Contract:` path; do not
+search the filesystem or installation for an agent contract. Preserve inherited
+history when the platform supports it. If a native named role cannot inherit
+history, explicitly pass that exact rendered contract path to the history-forked
+child and direct it to follow that file. The child reads that path directly and
+must not search for another contract. Its body must never run in the calling
+agent's context.
 
 Detached workflows must not discover their inputs from mutable caller
 worktrees. Commit durable code inputs before launch, freeze any remaining

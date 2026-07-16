@@ -33,14 +33,10 @@ from agentic_workflows.research.agentic_notes_read import AgenticNotesReadTopicT
 from agentic_workflows.research.experiment_log_correct import ExperimentLogCorrectTool
 from agentic_workflows.research.experiment_log_summary import ExperimentLogSummaryTool
 from agentic_workflows.research.finalization import FinalizationTicket
-from agentic_workflows.research.finalization_capture import FinalizationCaptureTool
+from agentic_workflows.research.finalization_start import FinalizationStart
 from agentic_workflows.research.git import (
-    BranchCommitResult,
-    BranchCommitTool,
-    BranchSnapshotTool,
     GitRecentLogTool,
     GitStatusShortTool,
-    Snapshot,
 )
 from agentic_workflows.research.gpu import (
     LocalGpuCapacity,
@@ -86,6 +82,9 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
 
     def workflow(self) -> None:
         self.check_gpu()
+        self.work_body()
+
+    def work_body(self) -> None:
         while True:
             experiment: str = self.evaluate(
                 "next experiment from the plan, report, or TODO",
@@ -109,40 +108,25 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
                 correction: ExperimentLogCorrectTool = self.fill(ExperimentLogCorrectTool)
                 correction.run()
 
+            code_paths: list[str] = []
+            commit_message: str | None = None
+            checks: list[str] = []
             if self.evaluate("code files changed in this completed result"):
-                while True:
-                    paths: list[str] = self.evaluate("explicit code snapshot paths")
-                    message: str = self.evaluate("focused commit message")
-                    checks: list[str] = self.evaluate("focused commit check commands")
-                    code_snapshot: Snapshot = BranchSnapshotTool(
-                        paths=paths,
-                        commit_message=message,
-                        checks=checks,
-                    ).run()
-                    if not self.evaluate("the snapshot name-status contains unexpected files"):
-                        break
-                    decision: str = self.ask_user(
-                        "Describe the unexpected files and ask whether to revise, accept, or stop.",
-                        choices=["revise", "accept", "stop"],
-                    )
-                    if decision == "accept":
-                        break
-                    if decision == "stop":
-                        return
-
-                code_commit: BranchCommitResult = BranchCommitTool(
-                    snapshot_dir=code_snapshot.snapshot_dir,
-                    background=False,
-                ).run()
-                if code_commit.state != "committed" or code_commit.commit is None:
-                    self.do(["report that the completed code result could not be committed"])
-                    return
+                evaluated_code_paths: list[str] = self.evaluate("explicit code snapshot paths")
+                evaluated_commit_message: str = self.evaluate("focused commit message")
+                evaluated_checks: list[str] = self.evaluate("focused commit check commands")
+                code_paths = evaluated_code_paths
+                commit_message = evaluated_commit_message
+                checks = evaluated_checks
 
             report_assets: list[str] = self.evaluate(
                 "explicit work-state-relative figure and report-asset paths created by this result",
                 guidance="Use paths relative to the work-state directory, such as images/result.png. Return an empty list when the result created no report assets.",
             )
-            ticket: FinalizationTicket = FinalizationCaptureTool(
+            ticket: FinalizationTicket = FinalizationStart(
+                code_paths=code_paths,
+                commit_message=commit_message,
+                checks=checks,
                 report_assets=report_assets,
             ).run()
 
@@ -150,15 +134,17 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
                 ResearchFinalizer(ticket=ticket)
             )
 
-            if self.evaluate("research continuation requires user input"):
-                direction: str = self.ask_user(
-                    "describe the blocker or choice and ask for the specific input required to continue"
-                )
-                if self.evaluate("the user asked to stop"):
-                    return
-                continue
-            if not self.evaluate("actionable autonomous work remains"):
-                return
+            if self.evaluate("no actionable autonomous work remains"):
+                if self.evaluate("given the latest results, is there more productive work or experiments you could do?"):
+                    if self.evaluate("research continuation requires user input"):
+                        direction: str = self.ask_user(
+                            "describe the blocker or choice and ask for the specific input required to continue"
+                        )
+                else:
+                    self.do(["Emit a summary of the current research results and final analysis to the user."])
+                    self.ask_user("Is there a new track of experiments you would like me to begin?")
+
+            continue
 ```
 
 ## Research Modules
