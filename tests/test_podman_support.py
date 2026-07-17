@@ -461,7 +461,15 @@ def test_launcher_native_runs_host_cli__without_container(
     assert expected_artifacts.is_dir()
     cli__log_text = cli__log.read_text()
     assert f"cwd:{workspace}" in cli__log_text
-    assert "args:--model gpt-test" in cli__log_text
+    assert "--model gpt-test" in cli__log_text
+    assert "mcp_servers.agentic_workflows.command=" in cli__log_text
+    assert "imperative-workflows-mcp" in cli__log_text
+    assert "mcp_servers.agentic_workflows.env_vars=" in cli__log_text
+    assert '"AR_WORKFLOW_PATH"' in cli__log_text
+    assert '"AR_RUNTIME_ROOT"' in cli__log_text
+    assert '"AR_WORK_STATE_DIR"' in cli__log_text
+    assert '"AR_ARTIFACTS_DIR"' in cli__log_text
+    assert "mcp_servers.agentic_workflows.required=true" in cli__log_text
     assert "uv_cache:\n" in cli__log_text
     assert "uv_python:\n" in cli__log_text
     assert "uv_tools:\n" in cli__log_text
@@ -479,7 +487,12 @@ def test_launcher_native_runs_host_cli__without_container(
     assert 'name = "research-finalizer"' in codex_agent_text
     assert 'model_reasoning_effort = "low"' in codex_agent_text
     assert "developer_instructions" in codex_agent_text
-    assert "Follow `ResearchFinalizerWorkflow`" in codex_agent_text
+    assert "Call the `start_workflow` tool" in codex_agent_text
+    assert (
+        "agentic_workflows.research.workflows.research_finalizer:ResearchFinalizerWorkflow"
+        in codex_agent_text
+    )
+    assert "Do not invoke `imperative-workflows-callback` through a shell" in codex_agent_text
     assert not (workspace / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
     codex_hook = workspace / ".codex" / "hooks" / "agentic-team-compaction.py"
     assert codex_hook.exists()
@@ -710,7 +723,10 @@ def test_launcher_resume_followed_by_existing_directory_sets_workspace(
     assert result.returncode == 0
     assert f"Workspace:      {workspace}" in result.stdout
     cli_args_line = next(line for line in result.stdout.splitlines() if "CLI args:" in line)
-    assert cli_args_line == "  CLI args:       resume"
+    assert "mcp_servers.agentic_workflows.command=" in cli_args_line
+    assert "mcp_servers.agentic_workflows.env_vars=" in cli_args_line
+    assert '"AR_WORKFLOW_PATH"' in cli_args_line
+    assert cli_args_line.endswith(" resume")
 
 
 def test_launcher_codex_continue_translates_to_resume_last(
@@ -736,7 +752,10 @@ def test_launcher_codex_continue_translates_to_resume_last(
 
     assert result.returncode == 0
     cli_args_line = next(line for line in result.stdout.splitlines() if "CLI args:" in line)
-    assert cli_args_line == "  CLI args:       resume --last"
+    assert "mcp_servers.agentic_workflows.command=" in cli_args_line
+    assert "mcp_servers.agentic_workflows.env_vars=" in cli_args_line
+    assert '"AR_WORKFLOW_PATH"' in cli_args_line
+    assert cli_args_line.endswith(" resume --last")
 
 
 def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
@@ -866,7 +885,11 @@ def test_native_cluster_run_backend_renders_project_skill(
     finalizer_agent = workspace / ".codex" / "agents" / "research-finalizer.toml"
     assert finalizer_agent.exists()
     assert 'model_reasoning_effort = "low"' in finalizer_agent.read_text()
-    assert "Follow `ResearchFinalizerWorkflow`" in finalizer_agent.read_text()
+    assert "Call the `start_workflow` tool" in finalizer_agent.read_text()
+    assert (
+        "agentic_workflows.research.workflows.research_finalizer:ResearchFinalizerWorkflow"
+        in finalizer_agent.read_text()
+    )
 
 
 def test_gpu_backend_flag_is_removed(base_env: dict[str, str], tmp_path: Path) -> None:

@@ -139,9 +139,64 @@ EOF
     fi
 }
 
+cli_codex_workflow_mcp_env_vars_json() {
+    local pair name entry first=true
+    local -a names=()
+    local -A seen=()
+
+    while IFS= read -r pair; do
+        [[ -n "$pair" ]] || continue
+        name="${pair%%=*}"
+        [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        [[ -z "${seen[$name]:-}" ]] || continue
+        seen[$name]=1
+        names+=("$name")
+    done < <(ar_runtime_env_pairs)
+
+    for name in \
+        "${STORAGE_NAMES[@]}" \
+        UV_LINK_MODE \
+        GIT_SSH_COMMAND \
+        SSH_AUTH_SOCK \
+        https_proxy \
+        http_proxy \
+        HTTPS_PROXY \
+        HTTP_PROXY \
+        NO_PROXY \
+        no_proxy
+    do
+        [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        [[ -z "${seen[$name]:-}" ]] || continue
+        seen[$name]=1
+        names+=("$name")
+    done
+
+    if [[ -n "${AR_EXTRA_ENV:-}" ]]; then
+        local IFS='|'
+        for entry in $AR_EXTRA_ENV; do
+            name="${entry%%=*}"
+            [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+            [[ -z "${seen[$name]:-}" ]] || continue
+            seen[$name]=1
+            names+=("$name")
+        done
+    fi
+
+    printf '['
+    for name in "${names[@]}"; do
+        if [[ "$first" == "true" ]]; then
+            first=false
+        else
+            printf ','
+        fi
+        json_string "$name"
+    done
+    printf ']'
+}
+
 cli_codex_translate_cli_args() {
     local translated=()
-    local i arg next
+    local i arg next workflow_root workflow_runtime mcp_command mcp_env_vars
 
     for ((i=0; i<${#CLI_ARGS[@]}; i++)); do
         arg="${CLI_ARGS[$i]}"
@@ -168,6 +223,20 @@ cli_codex_translate_cli_args() {
     fi
     if [[ "$YOLO_MODE" == "true" ]]; then
         CLI_ARGS+=("--dangerously-bypass-approvals-and-sandbox")
+    fi
+    if capability_enabled imperative-workflows && \
+        workflow_root="$(capability_root imperative-workflows)"; then
+        workflow_runtime="$(capability_runtime_root imperative-workflows "$workflow_root")"
+        mcp_command="$workflow_runtime/bin/imperative-workflows-mcp"
+        mcp_env_vars="$(cli_codex_workflow_mcp_env_vars_json)"
+        CLI_ARGS+=(
+            --config "mcp_servers.agentic_workflows.command=$(json_string "$mcp_command")"
+            --config "mcp_servers.agentic_workflows.env_vars=$mcp_env_vars"
+            --config 'mcp_servers.agentic_workflows.required=true'
+            --config 'mcp_servers.agentic_workflows.startup_timeout_sec=60'
+            --config 'mcp_servers.agentic_workflows.tool_timeout_sec=3600'
+            --config 'mcp_servers.agentic_workflows.enabled_tools=["start_workflow","resume_workflow","workflow_status","cancel_workflow"]'
+        )
     fi
     CLI_ARGS+=("${translated[@]}")
 }

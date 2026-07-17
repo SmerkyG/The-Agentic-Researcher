@@ -122,6 +122,28 @@ def test_executor_rejects_agent_workflows() -> None:
             executor.run(UnsupportedAgent())
 
 
+def test_command_result_reports_missing_command_without_aborting_workflow() -> None:
+    class MissingCommand(ArgvTool[CommandResult]):
+        argv_template = ("definitely-not-an-agentic-team-command",)
+
+    with OperationExecutor() as executor:
+        result = executor.run(MissingCommand())
+
+    assert result.returncode == 127
+    assert "No such file or directory" in result.stderr
+
+
+def test_command_result_preserves_nonzero_status_for_python_control_flow() -> None:
+    class FalseCommand(ArgvTool[CommandResult]):
+        argv_template = ("sh", "-c", "printf failure >&2; exit 3")
+
+    with OperationExecutor() as executor:
+        result = executor.run(FalseCommand())
+
+    assert result.returncode == 3
+    assert result.stderr == "failure"
+
+
 def test_executable_workflow_argv_uses_generic_runner() -> None:
     operation = SequentialNumbers(command="number-command", value=1)
 
@@ -219,3 +241,31 @@ def test_composed_finalization_snapshots_commits_and_captures(tmp_path: Path) ->
         stdout=subprocess.PIPE,
         check=True,
     ).stdout.strip() == "test: composed finalization"
+
+    committed_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=project,
+        text=True,
+        stdout=subprocess.PIPE,
+        check=True,
+    ).stdout.strip()
+    replay = subprocess.run(
+        [
+            str(EXECUTABLE),
+            "agentic_workflows.research.finalization_start:FinalizationStart",
+        ],
+        input=yaml.safe_dump(request, sort_keys=False),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    assert replay.returncode == 0, replay.stderr
+    assert json.loads(replay.stdout)["code_commit"] == committed_head
+    assert subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=project,
+        text=True,
+        stdout=subprocess.PIPE,
+        check=True,
+    ).stdout.strip() == committed_head

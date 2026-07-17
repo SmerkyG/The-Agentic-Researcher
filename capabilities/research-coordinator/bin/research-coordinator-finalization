@@ -8,12 +8,15 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import os
 from pathlib import Path, PurePosixPath
 import shutil
 import sys
 import time
 from typing import Any
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
@@ -77,6 +80,11 @@ def response(root: Path, manifest: dict[str, Any], **values: object) -> dict[str
         "state_branch": manifest["state_branch"],
         **values,
     }
+
+
+def ticket_response(root: Path, manifest: dict[str, Any]) -> dict[str, object]:
+    status = safe_load_yaml(status_path(root))
+    return response(root, manifest, state=str(status.get("state") or "captured"))
 
 
 def copy_asset(source_root: Path, target_root: Path, relative: str) -> None:
@@ -215,7 +223,15 @@ def finish(request: dict[str, Any]) -> dict[str, object]:
     state = str(request.get("state") or "complete")
     if state not in TERMINAL_STATES:
         raise CommandError("finish state must be complete or failed")
-    if state == "complete" and safe_load_yaml(status_path(root)).get("state") != "committed":
+    current = str(safe_load_yaml(status_path(root)).get("state") or "")
+    if current in TERMINAL_STATES:
+        if current != state:
+            raise CommandError(f"finalization is already terminal with state {current}")
+        if state == "complete":
+            remove_temporary_worktree(Path(str(manifest["work_state_dir"])), root / "state")
+            shutil.rmtree(root / "assets", ignore_errors=True)
+        return response(root, manifest, state=current)
+    if state == "complete" and current != "committed":
         raise CommandError("only a committed finalization can be completed")
     values: dict[str, object] = {"state": state, "finished_at": now_iso()}
     if request.get("error"):
@@ -227,6 +243,86 @@ def finish(request: dict[str, Any]) -> dict[str, object]:
     return response(root, manifest, state=state, error=status.get("error"))
 
 
+def parse_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def matching_experiment_is_logged(manifest: dict[str, Any]) -> bool:
+    """Recognize a post-capture experiment record for this frozen code commit."""
+
+    state_dir = Path(str(manifest["work_state_dir"]))
+    state_branch = str(manifest["state_branch"])
+    paths = git_text(
+        state_dir,
+        "ls-tree",
+        "-r",
+        "--name-only",
+        state_branch,
+        "--",
+        "experiment-log/experiments",
+    ).splitlines()
+    captured_at = parse_time(manifest.get("created_at"))
+    for relative in paths:
+        if not relative.endswith((".yaml", ".yml")):
+            continue
+        raw = git_text(state_dir, "show", f"{state_branch}:{relative}")
+        value = yaml.safe_load(raw)
+        if not isinstance(value, dict):
+            continue
+        code = value.get("code")
+        if not isinstance(code, dict) or code.get("commit") != manifest.get("code_commit"):
+            continue
+        if value.get("work_branch") != manifest.get("work_branch"):
+            continue
+        logged_at = parse_time(value.get("created_at"))
+        if captured_at is None or logged_at is None or logged_at >= captured_at:
+            return True
+    return False
+
+
+def reconcile(request: dict[str, Any]) -> dict[str, object]:
+    """Complete only tickets whose state and experiment record are already durable."""
+
+    project_dir = Path(
+        str(request.get("project_dir") or os.environ.get("AR_PROJECT_DIR") or ".")
+    ).expanduser().resolve()
+    branch = str(
+        request.get("work_branch")
+        or os.environ.get("AR_WORK_BRANCH")
+        or git_text(project_dir, "branch", "--show-current")
+    )
+    roots_dir = runtime_root(project_dir) / "finalizations"
+    recovered: list[dict[str, object]] = []
+    unresolved: list[dict[str, object]] = []
+    if not roots_dir.is_dir():
+        return {"recovered": recovered, "unresolved": unresolved}
+
+    candidates: list[tuple[int, Path, dict[str, Any]]] = []
+    for root in roots_dir.iterdir():
+        if not manifest_path(root).is_file() or not status_path(root).is_file():
+            continue
+        manifest = safe_load_yaml(manifest_path(root))
+        if manifest.get("work_branch") != branch:
+            continue
+        candidates.append((int(manifest.get("sequence") or 0), root, manifest))
+
+    for _sequence, root, manifest in sorted(candidates):
+        state = str(safe_load_yaml(status_path(root)).get("state") or "")
+        if state in TERMINAL_STATES:
+            continue
+        if state == "committed" and matching_experiment_is_logged(manifest):
+            finish({"root": str(root), "state": "complete"})
+            recovered.append(ticket_response(root, manifest))
+        else:
+            unresolved.append(ticket_response(root, manifest))
+    return {"recovered": recovered, "unresolved": unresolved}
+
+
 def show_status(request: dict[str, Any]) -> dict[str, object]:
     root, manifest = load_ticket(request.get("root"))
     return {**response(root, manifest), **safe_load_yaml(status_path(root))}
@@ -234,13 +330,23 @@ def show_status(request: dict[str, Any]) -> dict[str, object]:
 
 def dispatch(command: str) -> None:
     request = load_request()
-    functions = {"capture": capture, "ready": ready, "commit": commit, "finish": finish, "status": show_status}
+    functions = {
+        "capture": capture,
+        "ready": ready,
+        "commit": commit,
+        "finish": finish,
+        "status": show_status,
+        "reconcile": reconcile,
+    }
     print_json({"command": f"research-coordinator-finalization {command}", **functions[command](request)})
 
 
 def cli() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["capture", "ready", "commit", "finish", "status"])
+    parser.add_argument(
+        "command",
+        choices=["capture", "ready", "commit", "finish", "status", "reconcile"],
+    )
     args = parser.parse_args()
     return main(lambda: dispatch(args.command))
 

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import types
 from typing import Sequence
 
 
@@ -525,6 +526,165 @@ def render_workflow(
     )
 
 
+def _callback_protocol_block(
+    implementation: str,
+    *,
+    heading: str,
+    introduction: str,
+) -> str:
+    return f"""## {heading}
+
+{introduction}
+
+Call the `start_workflow` tool from the `agentic_workflows` MCP server with:
+
+- `implementation`: `{implementation}`
+- `inputs`: the exact typed constructor inputs supplied by the caller, or `{{}}`
+
+Use the exact typed constructor inputs supplied by the caller; use `{{}}` when
+none were supplied. Do not invoke `imperative-workflows-callback` through a shell,
+open an interactive process or TTY, run `--help`, inspect or search for the
+implementation, or manually reproduce its Python control flow. The persistent
+worker owns Python ordering, branches, loops, tool calls, waits, and
+returned-operation lifecycles.
+
+Process every JSON event returned by `start_workflow` or `resume_workflow`
+immediately:
+
+- If an MCP tool call is interrupted or its outcome is unknown, call
+  `workflow_status` with the run ID. If it reports `waiting_resume`, process its
+  complete `pending_event`; do not replay the previously submitted boundary.
+- If `workflow_status` reports `executing`, do not submit another callback.
+  Check status again after doing useful independent work or a brief wait.
+
+- `agent_request`: follow its complete `instructions` in order, using native
+  tools where requested. Return every declared assignment, including context
+  variables, in one JSON object matching `response_schema`. Then call the
+  `resume_workflow` MCP tool with the event's exact `run_id`, `boundary_id`, and
+  `payload={{"assignments": {{...}}}}`, and process the next event. If
+  `validation_error` is present, correct the assignments and resume again.
+- `subagent_admission`: start the named subagent with exactly `inputs`. Resume
+  through `resume_workflow` with
+  `payload={{"accepted": true, "handle": "<native handle>"}}` only after the
+  launcher accepts the request; otherwise use `accepted` false and an error. Do
+  not wait for the admitted subagent's completion unless a later workflow
+  boundary explicitly requests its result.
+- `subagent_run`: start the named subagent with exactly `inputs`, wait for its
+  typed result, and resume with `payload={{"result": ...}}`; on failure resume
+  with an `error` string.
+- `ask_user`: ask the supplied question and end the turn. When the user answers,
+  call `resume_workflow` with `payload={{"answer": "..."}}`, then continue
+  processing.
+- `request_error`: the workflow is still alive. Correct the structured tool
+  arguments and retry only the pending boundary identified by the event. Never
+  invent an empty payload for an agent request.
+- `complete`: return its result to the caller and end the workflow.
+- `failed`: report the error and the run ID; do not invent a fallback flow.
+- `cancelled`: report cancellation and end the workflow.
+
+An `agent_request` is a single aggregate agent boundary, not necessarily a
+single raw inference. Finish its declared work before resuming. Never stop at a
+summary merely because one response turn is ending: only `ask_user`, `complete`,
+`failed`, or `cancelled` is a terminal event for the current turn.
+"""
+
+
+def render_callback_workflow(source_path: Path) -> str:
+    """Render compact instructions for a callback-capable Codex session."""
+
+    definition = parse_workflow_definition(source_path)
+    if definition.kind != "agent":
+        return render_workflow(source_path)
+    implementation = (
+        f"{definition.implementation_module}:{definition.implementation_symbol}"
+    )
+    workflow_block = _callback_protocol_block(
+        implementation,
+        heading="Callback-Managed Imperative Workflow",
+        introduction=(
+            "After receiving the first user or parent-agent request normally, start this\n"
+            "workflow exactly once through the structured MCP tool below."
+        ),
+    )
+    return (
+        definition.body[: definition.block_start]
+        + workflow_block
+        + definition.body[definition.block_end :]
+    )
+
+
+def _receiver_agent_definition(
+    definition: WorkflowDefinition,
+    *,
+    package_roots: Sequence[Path],
+) -> WorkflowDefinition:
+    assert definition.receiver_module is not None
+    assert definition.receiver_symbol is not None
+    receiver = f"{definition.receiver_module}:{definition.receiver_symbol}"
+    matches: list[WorkflowDefinition] = []
+    seen: set[Path] = set()
+    for package_root in package_roots:
+        bundle_root = Path(package_root).resolve().parent
+        for source_path in (bundle_root / "agents").glob("*.md"):
+            resolved = source_path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            try:
+                candidate = parse_workflow_definition(
+                    resolved,
+                    bundle_root=bundle_root,
+                )
+            except WorkflowSourceError:
+                continue
+            interface = (
+                f"{candidate.interface_module}:{candidate.interface_symbol}"
+                if candidate.kind == "agent"
+                else ""
+            )
+            if interface == receiver:
+                matches.append(candidate)
+    if len(matches) != 1:
+        raise WorkflowSourceError(
+            f"{definition.source_path}: expected one callback agent for receiver "
+            f"{receiver}, found {len(matches)}"
+        )
+    return matches[0]
+
+
+def render_callback_skill(
+    source_path: Path,
+    *,
+    package_roots: Sequence[Path],
+) -> str:
+    """Render a Codex skill as activation of its receiver callback workflow."""
+
+    definition = parse_workflow_definition(source_path)
+    if definition.kind != "skill":
+        return render_callback_workflow(source_path)
+    receiver = _receiver_agent_definition(
+        definition,
+        package_roots=package_roots,
+    )
+    implementation = (
+        f"{receiver.implementation_module}:{receiver.implementation_symbol}"
+    )
+    workflow_block = _callback_protocol_block(
+        implementation,
+        heading="Callback-Managed Skill",
+        introduction=(
+            "This skill activates the current agent's registered workflow. Do not execute\n"
+            "the removed Python body directly. If no callback run is active for this user\n"
+            "request, start it through the structured MCP tool below."
+        ),
+    )
+    return (
+        definition.body[: definition.block_start]
+        + workflow_block
+        + definition.body[definition.block_end :]
+    )
+
+
 class WorkflowRenderer:
     """Render related workflow sources while indexing their modules once."""
 
@@ -548,6 +708,105 @@ class WorkflowRenderer:
             package_roots=self.package_roots,
             modules=modules,
         )
+
+    def render_callback(self, source_path: Path) -> str:
+        """Render an agent source for the persistent callback CLI."""
+
+        return render_callback_workflow(source_path)
+
+    def render_callback_skill(self, source_path: Path) -> str:
+        """Render a skill as activation of its receiver agent's callback worker."""
+
+        return render_callback_skill(
+            source_path,
+            package_roots=self.package_roots,
+        )
+
+
+def find_workflow_definition(
+    implementation: str,
+    *,
+    package_roots: Sequence[Path],
+) -> WorkflowDefinition:
+    """Find one Markdown workflow by its registered implementation reference."""
+
+    matches: list[WorkflowDefinition] = []
+    seen: set[Path] = set()
+    for package_root in package_roots:
+        bundle_root = Path(package_root).resolve().parent
+        candidates = [*(bundle_root / "agents").glob("*.md")]
+        candidates.extend((bundle_root / "skills").glob("*/SKILL.md"))
+        for source_path in candidates:
+            resolved = source_path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            try:
+                definition = parse_workflow_definition(
+                    resolved,
+                    bundle_root=bundle_root,
+                )
+            except WorkflowSourceError:
+                continue
+            reference = (
+                f"{definition.implementation_module}:"
+                f"{definition.implementation_symbol}"
+            )
+            if reference == implementation:
+                matches.append(definition)
+    if not matches:
+        searched_roots = ", ".join(str(Path(root).resolve()) for root in package_roots)
+        if not searched_roots:
+            searched_roots = "(none)"
+        raise WorkflowSourceError(
+            f"registered workflow implementation was not found: {implementation}; "
+            f"searched package roots: {searched_roots}. Ensure AR_WORKFLOW_PATH is "
+            "forwarded to the workflow process."
+        )
+    if len(matches) > 1:
+        paths = ", ".join(str(item.source_path) for item in matches)
+        raise WorkflowSourceError(
+            f"workflow implementation {implementation!r} is provided by multiple sources: {paths}"
+        )
+    return matches[0]
+
+
+def load_agent_implementation(
+    implementation: str,
+    *,
+    package_roots: Sequence[Path],
+) -> type[object]:
+    """Load one registered Markdown agent implementation into this process."""
+
+    definition = find_workflow_definition(
+        implementation,
+        package_roots=package_roots,
+    )
+    if definition.kind != "agent":
+        raise WorkflowSourceError(f"callback execution requires an agent workflow: {implementation}")
+    modules = index_modules(
+        definition.bundle_root,
+        definition.source_path,
+        package_roots=package_roots,
+    )
+    validate_definition(definition, modules)
+    source = modules[definition.implementation_module]
+
+    module = types.ModuleType(source.name)
+    module.__file__ = str(source.path)
+    module.__package__ = source.name.rpartition(".")[0]
+    sys.modules[source.name] = module
+    try:
+        exec(compile(source.code, str(source.path), "exec"), module.__dict__)
+        value: object = module
+        for component in definition.implementation_symbol.split("."):
+            value = getattr(value, component)
+    except Exception:
+        sys.modules.pop(source.name, None)
+        raise
+    if not isinstance(value, type):
+        raise WorkflowSourceError(f"workflow implementation is not a class: {implementation}")
+    return value
 
 
 def manifest(

@@ -9,7 +9,7 @@ import importlib
 import json
 import subprocess
 import types
-from typing import Any, TypeVar, Union, get_args, get_origin, get_type_hints
+from typing import Any, Literal, TypeVar, Union, get_args, get_origin, get_type_hints
 
 import yaml
 
@@ -60,14 +60,22 @@ def record_data(value: object) -> object:
     return value
 
 
-def _decode(annotation: object, value: object) -> object:
+def decode_value(annotation: object, value: object) -> object:
+    """Decode one JSON-compatible value according to a workflow annotation."""
+
     if annotation in {Any, object}:
         return value
     origin = get_origin(annotation)
     args = get_args(annotation)
+    if origin is Literal:
+        if value not in args:
+            raise ValueError(f"expected one of {args!r}, got {value!r}")
+        return value
     if origin in {list, tuple}:
+        if not isinstance(value, (list, tuple)):
+            raise TypeError(f"expected an array, got {type(value).__name__}")
         item_type = args[0] if args else Any
-        decoded = [_decode(item_type, item) for item in list(value or [])]
+        decoded = [decode_value(item_type, item) for item in value]
         return tuple(decoded) if origin is tuple else decoded
     if origin in {Union, types.UnionType}:
         if value is None and type(None) in args:
@@ -76,7 +84,13 @@ def _decode(annotation: object, value: object) -> object:
             if candidate is type(None):
                 continue
             try:
-                return _decode(candidate, value)
+                if (
+                    isinstance(candidate, type)
+                    and issubclass(candidate, WorkflowRecord)
+                    and isinstance(value, dict)
+                ):
+                    return record_from_data(candidate, value, reject_unknown=True)
+                return decode_value(candidate, value)
             except (TypeError, ValueError):
                 continue
         return value
@@ -84,8 +98,19 @@ def _decode(annotation: object, value: object) -> object:
         if not isinstance(value, dict):
             raise TypeError(f"{annotation.__name__} requires an object result")
         return record_from_data(annotation, value)
-    if annotation in {str, int, float, bool} and not isinstance(value, annotation):
-        return annotation(value)
+    if annotation is type(None):
+        if value is not None:
+            raise TypeError(f"expected null, got {type(value).__name__}")
+        return None
+    if annotation in {str, int, float, bool}:
+        valid = isinstance(value, annotation)
+        if annotation in {int, float} and isinstance(value, bool):
+            valid = False
+        if annotation is float and isinstance(value, int) and not isinstance(value, bool):
+            return float(value)
+        if not valid:
+            raise TypeError(f"expected {annotation.__name__}, got {type(value).__name__}")
+        return value
     return value
 
 
@@ -105,7 +130,7 @@ def record_from_data(
         raise TypeError(f"unexpected {record_type.__name__} fields: {', '.join(unknown)}")
     hints = get_type_hints(record_type)
     values = {
-        item.name: _decode(hints.get(item.name, item.type), data[item.name])
+            item.name: decode_value(hints.get(item.name, item.type), data[item.name])
         for item in fields(record_type)
         if item.name in data
     }
@@ -215,27 +240,38 @@ class OperationExecutor:
         input_text = None
         if isinstance(operation, YAMLArgvTool):
             input_text = yaml.safe_dump(record_data(operation), sort_keys=False, allow_unicode=False)
-        result = subprocess.run(
-            operation.argv(),
-            input=input_text,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+        result_type = operation_result_type(type(operation))
+        try:
+            result = subprocess.run(
+                operation.argv(),
+                input=input_text,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as error:
+            if result_type is CommandResult:
+                return CommandResult(returncode=127, stderr=str(error))
+            raise OperationExecutionError(
+                f"could not execute {' '.join(operation.argv())}: {error}"
+            ) from error
+        if result_type is CommandResult:
+            return CommandResult(
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
             raise OperationExecutionError(f"{' '.join(operation.argv())} failed: {detail}")
 
-        result_type = operation_result_type(type(operation))
-        if result_type is CommandResult:
-            return CommandResult(returncode=result.returncode, stdout=result.stdout, stderr=result.stderr)
         try:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError as error:
             raise OperationExecutionError(
                 f"{' '.join(operation.argv())} returned non-JSON output: {result.stdout.strip()}"
             ) from error
-        return _decode(result_type, payload)
+        return decode_value(result_type, payload)
 
     def launch(self, operation: Operation[Any]) -> Job[Any]:
         if isinstance(operation, AgentWorkflow):

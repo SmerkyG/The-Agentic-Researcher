@@ -29,3 +29,10 @@ class FinalizationWorkspace(FinalizationTicket):
 class FinalizationStateCommitResult(FinalizationWorkspace):
     state_commit: str
     state_changed: bool
+
+
+class FinalizationReconcileResult(WorkflowRecord):
+    """Safe startup repairs plus remaining nonterminal tickets."""
+
+    recovered: list[FinalizationTicket]
+    unresolved: list[FinalizationTicket]

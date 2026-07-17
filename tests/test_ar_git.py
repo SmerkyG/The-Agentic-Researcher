@@ -137,6 +137,41 @@ def test_commit_snapshot_uses_temp_index_and_advances_work_branch(tmp_path: Path
     assert "after_commit" not in metadata
 
 
+def test_commit_snapshot_does_not_leak_tool_virtualenv_into_checks(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    env = os.environ.copy()
+    env["AR_STATE_ROOT"] = str(tmp_path / "state")
+    env["AR_WORK_BRANCH"] = "kernel-search"
+    env["PATH"] = f"{BIN_DIR}:{env['PATH']}"
+    env["VIRTUAL_ENV"] = str(tmp_path / "unrelated-tool-environment")
+    (repo / "README.md").write_text("check environment\n", encoding="utf-8")
+
+    snapshot = json.loads(
+        run_agent_command(
+            "branch-snapshot",
+            {
+                "project_dir": str(repo),
+                "work_branch": "kernel-search",
+                "paths": ["README.md"],
+                "commit_message": "test: isolate check environment",
+                "checks": ['test -z "$VIRTUAL_ENV"'],
+            },
+            env=env,
+        ).stdout
+    )
+
+    committed = json.loads(
+        run_agent_command(
+            "branch-commit",
+            {"snapshot_dir": snapshot["snapshot_dir"], "background": False},
+            env=env,
+        ).stdout
+    )
+
+    assert committed["state"] == "committed"
+    assert committed["checks"][0]["returncode"] == 0
+
+
 def test_background_commit_reports_running_check_and_streams_log(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     env = os.environ.copy()

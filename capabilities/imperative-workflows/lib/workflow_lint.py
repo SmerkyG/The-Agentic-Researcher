@@ -71,13 +71,17 @@ TERM_PATTERNS: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
 }
 ALLOWED_SCHEMA_SCALARS = {"bool", "int", "float", "str"}
 ALLOWED_SELF_METHODS = {
+    "admit",
+    "agent_request",
     "cancel",
+    "detach",
     "do",
     "evaluate",
     "fill",
     "fire_and_forget",
     "launch",
     "lock",
+    "observe",
     "timeout",
     "wait",
     "wait_all",

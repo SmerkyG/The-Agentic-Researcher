@@ -8,5 +8,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "mcp>=1.25,<2",
     "pytest>=8.0",
 ]

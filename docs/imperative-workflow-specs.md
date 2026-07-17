@@ -9,6 +9,10 @@ strings inside that code describe atomic work items or tool requests only. They
 are not allowed to encode ordering, branching, retry policy, blocking policy, or
 concurrency.
 
+For the executable Codex boundary model built on this specification, including
+ordered `agent_request()` declarations and the JSON callback protocol, see
+[Callback-Managed Agent Workflows](callback-managed-agent-workflows.md).
+
 ## Goals
 
 - Make agent workflows readable as normal imperative programs.
@@ -1044,4 +1048,7 @@ For example, the research finalization workflow should have tests proving:
 - finalizers create and publish state worktrees in capture order
 - code checks and the code commit complete before detached reporting begins
 - durable finalization status survives the discarded child handle
+- replaying already-committed `code_paths` is a clean no-op rather than a snapshot failure
+- required state and experiment-log publication reaches terminal status before optional note work
+- startup reconciliation completes only tickets whose matching durable experiment record can be proven
 - the coordinator does not poll or wait for the detached finalizer

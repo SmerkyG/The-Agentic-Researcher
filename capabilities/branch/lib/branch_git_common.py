@@ -347,6 +347,13 @@ def run_checks(
     timeout_seconds: int | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
+    check_env = os.environ.copy()
+    # branch-commit is itself a uv inline script. Its VIRTUAL_ENV names the
+    # command's small implementation environment, not the checked project's
+    # environment. Do not leak it into commands executed in the project
+    # worktree: nested `uv run` otherwise emits a misleading mismatch warning,
+    # while `--active` would target the wrong environment entirely.
+    check_env.pop("VIRTUAL_ENV", None)
     with log_path.open("w", encoding="utf-8", buffering=1) as log:
         for index, command in enumerate(checks, start=1):
             started = now_iso()
@@ -365,6 +372,7 @@ def run_checks(
                 cwd=worktree,
                 shell=True,
                 text=True,
+                env=check_env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,

@@ -196,6 +196,28 @@ class AgentWorkflow(Workflow[ResultT], Generic[ResultT]):
         """Fill one typed record from current scope and field descriptions."""
         ...
 
+    def agent_request(self, name: str | None = None) -> Any:
+        """Declare one aggregate model boundary with ordered declarative nodes.
+
+        The returned context manager accepts ``observe``, ``step``, ``var``,
+        ``field``, and nested ``guidance`` declarations.  It submits the whole
+        request only after successful block exit.  Values declared with
+        ``field`` are then available as attributes on the context-manager value.
+        """
+        return _current_executor().agent_request(name=name)
+
+    def observe(self, **values: object) -> None:
+        """Retain external operation results for the next agent request."""
+        _current_executor().observe(**values)
+
+    def admit(self, operation: Operation[StartedResultT]) -> Job[StartedResultT]:
+        """Obtain receiver-side acceptance for an asynchronously launched operation."""
+        return _current_executor().admit(operation)
+
+    def detach(self, job: Job[Any]) -> None:
+        """Transfer lifecycle ownership of an admitted operation to the launcher."""
+        _current_executor().detach(job)
+
     def lock(self, name: str) -> Any:
         """Serialize the enclosed critical section for the named scope."""
         ...
@@ -229,4 +251,4 @@ class UserFacingWorkflow(AgentWorkflow[ResultT], Generic[ResultT]):
         Subagents must not ask the user. Describe the blocker or choice, why
         autonomous work cannot decide it, and the needed answer.
         """
-        ...
+        return _current_executor().ask_user(question, **kwargs)

@@ -28,12 +28,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from agentic_workflows.contract import CommandResult
+from agentic_workflows.contract import CommandResult, Job, Value, WorkflowRecord
+from agentic_workflows.fill_spec import field, guidance, observe, step, var
 from agentic_workflows.research.agentic_notes_read import AgenticNotesReadTopicTool
 from agentic_workflows.research.experiment_log_correct import ExperimentLogCorrectTool
 from agentic_workflows.research.experiment_log_summary import ExperimentLogSummaryTool
 from agentic_workflows.research.finalization import FinalizationTicket
 from agentic_workflows.research.finalization_start import FinalizationStart
+from agentic_workflows.research.finalization_reconcile import FinalizationReconcileTool
 from agentic_workflows.research.git import (
     GitRecentLogTool,
     GitStatusShortTool,
@@ -45,10 +47,48 @@ from agentic_workflows.research.gpu import (
 )
 from agentic_workflows.research.research_coordinator import ResearchCoordinator
 from agentic_workflows.research.research_finalizer import ResearchFinalizer
+from agentic_workflows.research.research_state import ResearchStateInitializeTool
+
+
+class ContinueResearch(WorkflowRecord):
+    next_step: str = Value("Next productive autonomous experiment or analysis")
+
+
+class AskUser(WorkflowRecord):
+    question: str = Value(
+        "Specific blocker or consequential choice and the exact user input needed"
+    )
+
+
+class ResearchComplete(WorkflowRecord):
+    summary: str = Value("Concise synthesis of the completed research track")
+
+
+class UseExistingResearchState(WorkflowRecord):
+    reason: str = Value("Evidence that an active research plan already exists")
+
+
+class InitializeResearchState(WorkflowRecord):
+    plan: str = Value("Complete proposed research plan derived from the user's request")
+    already_approved: bool = Value(
+        "True only when the user explicitly supplied or approved this complete plan"
+    )
+    approval_question: str = Value(
+        "Specific request to approve the plan or describe required changes"
+    )
+
+
+class ApprovePlan(WorkflowRecord):
+    confirmation: str = Value("Why the user's response approves the displayed plan")
+
+
+class RevisePlan(WorkflowRecord):
+    plan: str = Value("Revised complete plan incorporating the user's requested changes")
+    approval_question: str = Value("Specific request to approve this revision or change it")
 
 
 class ResearchCoordinatorWorkflow(ResearchCoordinator):
-    """Top-level autonomous research coordinator."""
+    """Coordinator whose model boundaries are aggregate declarative requests."""
 
     def on_startup(self) -> None:
         self.read_in_on_state()
@@ -57,94 +97,227 @@ class ResearchCoordinatorWorkflow(ResearchCoordinator):
         self.read_in_on_state()
 
     def read_in_on_state(self) -> None:
-        ExperimentLogSummaryTool().run()
-        self.do(
-            ["read the active research plan, TODO.md, condensed_report.md, latest report page, and relevant older pages"],
-            guidance="Skip missing records and read figures when relevant.",
+        reconciliation = FinalizationReconcileTool(project_dir=".").run()
+        summary_job: Job[CommandResult] = self.launch(ExperimentLogSummaryTool())
+        log_job: Job[CommandResult] = self.launch(GitRecentLogTool(count=20))
+        status_job: Job[CommandResult] = self.launch(GitStatusShortTool())
+        summary, recent_log, status = self.wait_all(
+            [summary_job, log_job, status_job]
         )
-        relevant_topics: list[str] = self.evaluate("relevant on-demand Agentic Notes topics")
-        for topic in relevant_topics:
-            AgenticNotesReadTopicTool(topic=topic).run()
-        GitRecentLogTool(count=20).run()
-        GitStatusShortTool().run()
-        best_result: str = self.evaluate("best active-work result and its source, or unknown")
-        last_experiment: str = self.evaluate("most recent experiment or analysis and its source, or none")
-        next_step: str = self.evaluate("immediate autonomous step implied by loaded state")
+
+        with self.agent_request() as initial_state:
+            observe(
+                finalization_reconciliation=reconciliation,
+                experiment_summary=summary,
+                recent_code_history=recent_log,
+                worktree_status=status,
+            )
+            step(
+                "Read the active research plan, TODO.md, condensed_report.md, latest "
+                "report page, and relevant older pages. Skip missing records and "
+                "inspect figures when relevant."
+            )
+            field(
+                "relevant_note_topics",
+                list[str],
+                "relevant on-demand Agentic Notes topics",
+                guidance="Request only topics that can affect the immediate research direction.",
+            )
+            field(
+                "state_action",
+                UseExistingResearchState | InitializeResearchState,
+                "whether to use the existing active plan or initialize missing research state",
+            )
+
+        match initial_state.state_action:
+            case UseExistingResearchState():
+                pass
+            case InitializeResearchState(
+                plan=plan,
+                already_approved=already_approved,
+                approval_question=approval_question,
+            ):
+                while not already_approved:
+                    self.ask_user(plan + "\n\n" + approval_question)
+                    with self.agent_request() as review:
+                        field(
+                            "decision",
+                            ApprovePlan | RevisePlan,
+                            "whether the user approved the displayed plan or requested changes",
+                        )
+                    match review.decision:
+                        case ApprovePlan():
+                            already_approved = True
+                        case RevisePlan(
+                            plan=revised_plan,
+                            approval_question=revised_question,
+                        ):
+                            plan = revised_plan
+                            approval_question = revised_question
+                initialized: CommandResult = ResearchStateInitializeTool(plan=plan).run()
+                if initialized.returncode != 0:
+                    raise RuntimeError(
+                        "research state initialization failed: "
+                        + (initialized.stderr or initialized.stdout).strip()
+                    )
+
+        note_jobs: list[Job[CommandResult]] = []
+        for topic in initial_state.relevant_note_topics:
+            note_job: Job[CommandResult] = self.launch(
+                AgenticNotesReadTopicTool(topic=topic)
+            )
+            note_jobs.append(note_job)
+        self.observe(rendered_notes=self.wait_all(note_jobs))
 
     def check_gpu(self) -> None:
         local_capacity: LocalGpuCapacity = discover_local_gpu_capacity()
-        backend: CommandResult = ReadEnvironmentVariableTool(name="AR_JOB_BACKEND", default="none").run()
-        if (backend.stdout.strip() or "none") != "none":
-            self.do(["read the configured backend skill", "run its status or list command"])
-            backend_capacity: Literal["available", "unavailable", "unknown"] = self.evaluate(
-                "remote GPU capacity classification from backend status"
-            )
+        backend: CommandResult = ReadEnvironmentVariableTool(
+            name="AR_JOB_BACKEND",
+            default="none",
+        ).run()
+        backend_name = backend.stdout.strip() or "none"
+        self.observe(
+            local_gpu_capacity=local_capacity,
+            configured_job_backend=backend_name,
+        )
+        if backend_name != "none":
+            with self.agent_request():
+                step("Read the configured backend skill and run its status or list command.")
+                var(
+                    "backend_evidence",
+                    str,
+                    "concise backend-status evidence for the classification",
+                )
+                var(
+                    "backend_capacity",
+                    Literal["available", "unavailable", "unknown"],
+                    "remote GPU capacity classification from backend status",
+                )
 
     def workflow(self) -> None:
         self.check_gpu()
-        self.work_body()
 
-    def work_body(self) -> None:
         while True:
-            experiment: str = self.evaluate(
-                "next experiment from the plan, report, or TODO",
-                guidance="Prefer a cheap experiment changing exactly one variable.",
-            )
-            hypothesis: str = self.evaluate("testable hypothesis for the experiment")
-            changed_variable: str = self.evaluate("single experimental variable to change")
-            commands: list[str] = self.evaluate("tiered experiment and verification commands")
-            metric: str = self.evaluate("metric, direction, baseline, and minimum decision scale")
-            self.do(
-                [
-                    "implement the focused experiment",
-                    "run debugging, signal, and full-decision evaluation tiers",
-                    "verify nontrivial mathematical or algorithmic claims",
-                    "analyze the result honestly",
-                ],
-                guidance="Do not draw conclusions from debugging scale or wait idly during long jobs.",
-            )
+            with self.agent_request() as iteration:
+                with guidance("Prefer a cheap experiment changing exactly one variable."):
+                    var(
+                        "experiment",
+                        str,
+                        "next focused experiment from the plan, report, TODO, or latest result",
+                    )
+                    var("hypothesis", str, "testable hypothesis for `experiment`")
+                    var(
+                        "changed_variable",
+                        str,
+                        "the single experimental variable to change in `experiment`",
+                    )
+                    var("metric", str, "decision metric for `experiment`")
+                    var("direction", str, "desired direction for `metric`")
+                    var("baseline", str, "baseline for `metric`")
+                    var(
+                        "minimum_decision_scale",
+                        str,
+                        "minimum scale needed for a decision about `experiment`",
+                    )
+                    var(
+                        "commands",
+                        list[str],
+                        "tiered debugging, signal, full-decision, and verification commands",
+                    )
 
-            if self.evaluate("a previously logged experiment now needs an append-only correction"):
-                correction: ExperimentLogCorrectTool = self.fill(ExperimentLogCorrectTool)
-                correction.run()
+                with guidance(
+                    "Use retained agent context and the active workspace. Complete the "
+                    "research work before returning assignments."
+                ):
+                    with guidance(
+                        "Debugging results are for fixing the implementation, not drawing "
+                        "conclusions. Do useful independent work instead of waiting idly "
+                        "during long jobs."
+                    ):
+                        step("Implement `experiment`, changing only `changed_variable`.")
+                        with guidance("GPU based tiers expected to take more than 10 seconds should be done in parallel."
+                            " If one fails, cancel the rest."
+                        ):
+                            step("Run the debugging, signal, and full-decision tiers in `commands`.")
+                            step("Fix implementation failures and rerun until genuine results exist.")
+                        step("Run the verification work in `commands` for nontrivial claims.")
 
-            code_paths: list[str] = []
-            commit_message: str | None = None
-            checks: list[str] = []
-            if self.evaluate("code files changed in this completed result"):
-                evaluated_code_paths: list[str] = self.evaluate("explicit code snapshot paths")
-                evaluated_commit_message: str = self.evaluate("focused commit message")
-                evaluated_checks: list[str] = self.evaluate("focused commit check commands")
-                code_paths = evaluated_code_paths
-                commit_message = evaluated_commit_message
-                checks = evaluated_checks
+                    var(
+                        "evidence",
+                        list[str],
+                        "concrete measurements, artifact paths, and verification results",
+                        guidance=(
+                            "Include only evidence actually obtained during the preceding steps."
+                        ),
+                    )
+                    var(
+                        "verification_grade",
+                        Literal["verified", "partially-verified", "unverified"],
+                        "verification grade justified by `evidence`",
+                    )
+                    var(
+                        "report",
+                        str,
+                        "analysis of `evidence` against `hypothesis`, `baseline`, `metric`, "
+                        "`direction`, and `minimum_decision_scale`",
+                        guidance="Report regressions and negative results honestly.",
+                    )
+                    var(
+                        "summary",
+                        str,
+                        "honest decision-grade conclusion supported by `evidence`",
+                        guidance=(
+                            "Describe genuinely completed work; never substitute expected results."
+                        ),
+                    )
 
-            report_assets: list[str] = self.evaluate(
-                "explicit work-state-relative figure and report-asset paths created by this result",
-                guidance="Use paths relative to the work-state directory, such as images/result.png. Return an empty list when the result created no report assets.",
-            )
-            ticket: FinalizationTicket = FinalizationStart(
-                code_paths=code_paths,
-                commit_message=commit_message,
-                checks=checks,
-                report_assets=report_assets,
-            ).run()
+                    field(
+                        "correction",
+                        ExperimentLogCorrectTool | None,
+                        "append-only correction for a previously logged experiment, or null",
+                        guidance="Never rewrite an existing experiment record.",
+                    )
+                    field(
+                        "finalization",
+                        FinalizationStart,
+                        guidance=(
+                            "Use explicit code paths, a focused commit message, non-redundant "
+                            "immutable-snapshot checks, and work-state-relative report asset paths. "
+                            "For standard-library-only Python checks use `uv run --no-project "
+                            "python ...`; use ordinary `uv run` only when project dependencies "
+                            "are required."
+                        ),
+                    )
+                    field(
+                        "continuation",
+                        ContinueResearch | AskUser | ResearchComplete,
+                        "what to do after handing off finalization",
+                        guidance=(
+                            "Re-analyze the result for productive autonomous work before choosing "
+                            "ResearchComplete. Choose AskUser only for a genuine blocker or "
+                            "consequential choice."
+                        ),
+                    )
 
-            self.fire_and_forget(
-                ResearchFinalizer(ticket=ticket)
-            )
+            if iteration.correction is not None:
+                iteration.correction.run()
 
-            if self.evaluate("no actionable autonomous work remains"):
-                if self.evaluate("given the latest results, is there more productive work or experiments you could do?"):
-                    if self.evaluate("research continuation requires user input"):
-                        direction: str = self.ask_user(
-                            "describe the blocker or choice and ask for the specific input required to continue"
-                        )
-                else:
-                    self.do(["Emit a summary of the current research results and final analysis to the user."])
-                    self.ask_user("Is there a new track of experiments you would like me to begin?")
+            ticket: FinalizationTicket = iteration.finalization.run()
+            accepted_finalizer = self.admit(ResearchFinalizer(ticket=ticket))
+            self.detach(accepted_finalizer)
 
-            continue
+            match iteration.continuation:
+                case ContinueResearch():
+                    continue
+                case AskUser(question=question):
+                    self.ask_user(question)
+                    continue
+                case ResearchComplete(summary=summary):
+                    self.ask_user(
+                        summary
+                        + "\n\nWhat new track of experiments would you like me to begin?"
+                    )
+                    continue
 ```
 
 ## Research Modules

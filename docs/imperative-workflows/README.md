@@ -1,9 +1,16 @@
 # Imperative Agent Workflows
 
 An imperative workflow is valid Python that may be followed directly by an
-agent or executed by a conforming runtime. Follow the selected workflow class
-statement by statement; ordinary Python ordering, scope, branches, loops,
-calls, and return values are authoritative.
+agent or executed by a conforming runtime. Ordinary Python ordering, scope,
+branches, loops, calls, and return values are authoritative.
+
+Codex agent definitions now use the initial persistent callback runtime: Codex
+receives the first request normally, then a local worker executes Python and
+yields only aggregate agent, user-input, and native-subagent boundaries. See
+[Callback-Managed Agent Workflows](../callback-managed-agent-workflows.md) for
+the protocol, declarative `agent_request()` syntax, current limitations, and
+migration path. Codex skills activate their receiver's callback workflow;
+non-Codex CLIs retain direct agent-follow rendering.
 
 The generated instructions include the minimal public contract and workflow
 source. Contract docstrings define model-operation semantics. They do not add

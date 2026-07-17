@@ -300,6 +300,100 @@ def test_finalization_stages_assets_and_publishes_state_for_committed_code(tmp_p
     )
     assert status["state"] == "complete"
 
+    repeated = json.loads(
+        run(
+            [str(FINALIZATION), "finish"],
+            env=env,
+            input=yaml.safe_dump({"root": str(root), "state": "complete"}),
+        ).stdout
+    )
+    assert repeated["state"] == "complete"
+
+
+def test_finalization_reconcile_completes_logged_committed_ticket(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    state = tmp_path / "work-state"
+    run(["git", "init", str(project)])
+    run(["git", "init", str(state)])
+    configure_git(project)
+    configure_git(state)
+    (project / "result.py").write_text("value = 1\n", encoding="utf-8")
+    (state / "report_page1.md").write_text("# Research Log\n", encoding="utf-8")
+    git(project, "add", "result.py")
+    git(project, "commit", "-m", "initial code")
+    git(state, "add", "report_page1.md")
+    git(state, "commit", "-m", "initial state")
+    code_branch = git(project, "branch", "--show-current").stdout.strip()
+    code_commit = git(project, "rev-parse", "HEAD").stdout.strip()
+    env = {
+        **os.environ,
+        "AR_PROJECT_DIR": str(project),
+        "AR_WORK_STATE_DIR": str(state),
+        "AR_RUNTIME_ROOT": str(tmp_path / "runtime"),
+        "AR_WORK_BRANCH": code_branch,
+    }
+
+    captured = json.loads(
+        run([str(FINALIZATION), "capture"], env=env, input="{}\n").stdout
+    )
+    root = Path(captured["root"])
+    ready = json.loads(
+        run(
+            [str(FINALIZATION), "ready"],
+            env=env,
+            input=yaml.safe_dump({"root": str(root)}),
+        ).stdout
+    )
+    run(
+        [str(REPORT_APPEND)],
+        input=yaml.safe_dump(
+            {"work_state_dir": ready["state_dir"], "content": "## Result"}
+        ),
+    )
+    run(
+        [str(FINALIZATION), "commit"],
+        env=env,
+        input=yaml.safe_dump({"root": str(root)}),
+    )
+
+    experiment = state / "experiment-log" / "experiments" / "E0001_result.yaml"
+    experiment.parent.mkdir(parents=True)
+    experiment.write_text(
+        yaml.safe_dump(
+            {
+                "experiment_id": "E0001_result",
+                "work_branch": code_branch,
+                "created_at": "9999-01-01T00:00:00Z",
+                "code": {"branch": code_branch, "commit": code_commit},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    git(state, "add", "experiment-log/experiments/E0001_result.yaml")
+    git(state, "commit", "-m", "experiment: log result")
+
+    reconciled = json.loads(
+        run(
+            [str(FINALIZATION), "reconcile"],
+            env=env,
+            input=yaml.safe_dump(
+                {"project_dir": str(project), "work_branch": code_branch}
+            ),
+        ).stdout
+    )
+    assert [ticket["id"] for ticket in reconciled["recovered"]] == [captured["id"]]
+    assert reconciled["unresolved"] == []
+    assert not Path(ready["state_dir"]).exists()
+    status = json.loads(
+        run(
+            [str(FINALIZATION), "status"],
+            env=env,
+            input=yaml.safe_dump({"root": str(root)}),
+        ).stdout
+    )
+    assert status["state"] == "complete"
+
 
 def test_later_finalization_refreshes_after_earlier_completion(tmp_path: Path) -> None:
     project = tmp_path / "project"
@@ -1352,28 +1446,29 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     assert "## Agentic State" in instruction_text
     assert "agentic/work-state/kernel-search" in instruction_text
     assert 'WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"' in instruction_text
-    assert "## Imperative Workflow" in instruction_text
-    assert "Follow `ResearchCoordinatorWorkflow`" in instruction_text
-    assert "### Workflow Modules" in instruction_text
-    assert "class ExecutableWorkflow(YAMLArgvTool[ResultT], Workflow[ResultT], Generic[ResultT]):" in instruction_text
-    assert "class AgentWorkflow(Workflow[ResultT], Generic[ResultT]):" in instruction_text
-    assert "def _schema_for_annotation" not in instruction_text
-    assert "class ResearchCoordinator(UserFacingWorkflow[None]):" in instruction_text
-    assert "def launch(self, operation: Operation[StartedResultT]) -> Job[StartedResultT]:" in instruction_text
-    assert "def fire_and_forget(self, operation: Operation[Any]) -> None:" in instruction_text
+    assert "## Callback-Managed Imperative Workflow" in instruction_text
+    assert "Call the `start_workflow` tool" in instruction_text
+    assert (
+        "agentic_workflows.research.workflows.research_coordinator:ResearchCoordinatorWorkflow"
+        in instruction_text
+    )
+    assert "Do not invoke `imperative-workflows-callback` through a shell" in instruction_text
+    assert "### Workflow Modules" not in instruction_text
+    assert "class ResearchCoordinatorWorkflow" not in instruction_text
     normalized_instructions = " ".join(instruction_text.split())
-    assert "discard its platform handle, and continue now" in normalized_instructions
-    assert "never wait, poll, list, message, follow up with" in normalized_instructions.casefold()
-    assert "follows the contract named by `agent_name`" in instruction_text
-    assert "preserve inherited history when supported" in instruction_text
-    assert "use the history fork and explicitly direct that child" in instruction_text
-    assert "do not call `wait_agent`, `list_agents`, `send_message`, or `followup_task`" in instruction_text
-    assert "imperative-workflows-run" in instruction_text
-    assert "workflow_implementation" in instruction_text
+    assert "persistent worker owns Python ordering" in normalized_instructions
+    assert "only `ask_user`, `complete`, `failed`, or `cancelled` is a terminal event" in normalized_instructions
+    assert "run `--help`" in instruction_text
+    assert "subagent_admission" in instruction_text
     assert "research-coordinator-finalization" not in instruction_text
     assert "research-coordinator-report-append" not in instruction_text
     finalizer_text = (project / ".codex" / "agents" / "research-finalizer.toml").read_text(encoding="utf-8")
-    assert "research-coordinator-report-append" in finalizer_text
+    assert "## Callback-Managed Imperative Workflow" in finalizer_text
+    assert "Call the `start_workflow` tool" in finalizer_text
+    assert (
+        "agentic_workflows.research.workflows.research_finalizer:ResearchFinalizerWorkflow"
+        in finalizer_text
+    )
     assert "$WORK_STATE_DIR/images/" in instruction_text
     assert (
         "do not skip report-ready PNG/PDF figures merely because they are binary files"
@@ -2529,11 +2624,13 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert research_skill.exists()
     research_skill_text = research_skill.read_text(encoding="utf-8")
     assert "name: do_research" in research_skill_text
-    assert "def do_research(self: ResearchCoordinator) -> None:" in research_skill_text
-    assert "extends the current workflow context" in research_skill_text
-    assert "`$AR_WORKFLOW_PATH`" in research_skill_text
-    assert "agentic_workflows.contract" not in research_skill_text
-    assert "class ResearchStateInitializeTool" not in research_skill_text
+    assert "## Callback-Managed Skill" in research_skill_text
+    assert "Call the `start_workflow` tool" in research_skill_text
+    assert (
+        "agentic_workflows.research.workflows.research_coordinator:ResearchCoordinatorWorkflow"
+        in research_skill_text
+    )
+    assert "def do_research" not in research_skill_text
     assert "workflow_receiver:" not in research_skill_text
     assert "```python agentic-workflow" not in research_skill_text
     assert not (project / ".agents" / "skills" / "note_usage" / "SKILL.md").exists()
@@ -2821,11 +2918,13 @@ def test_launcher_renders_modular_main_agent_and_subagent(tmp_path: Path) -> Non
     helper_text = (project / ".codex" / "agents" / "modular-helper.toml").read_text(
         encoding="utf-8"
     )
-    assert "class ModularMainWorkflow(ModularMain):" in instruction_text
-    assert "class ModularHelper(SubagentWorkflow):" in instruction_text
-    assert 'Value("helper request summary")' in instruction_text
+    assert "Call the `start_workflow` tool" in instruction_text
+    assert "demo.workflows.main:ModularMainWorkflow" in instruction_text
+    assert "## Callback-Managed Imperative Workflow" in instruction_text
     assert "class ModularHelperWorkflow" not in instruction_text
-    assert "class ModularHelperWorkflow(ModularHelper):" in helper_text
+    assert "Call the `start_workflow` tool" in helper_text
+    assert "demo.workflows.helper:ModularHelperWorkflow" in helper_text
+    assert "class ModularHelperWorkflow" not in helper_text
     assert "workflow_interface:" not in instruction_text
     assert "workflow_module:" not in helper_text
     assert "```python agentic-workflow" not in instruction_text

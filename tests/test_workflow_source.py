@@ -24,6 +24,7 @@ sys.path.insert(0, str(WORKFLOW_LIB))
 from workflow_source import (  # noqa: E402
     WorkflowRenderer,
     WorkflowSourceError,
+    find_workflow_definition,
     manifest,
     parse_workflow_definition,
     render_workflow,
@@ -76,10 +77,11 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     assert "class AgenticNotesUpdateTool" in rendered
     assert "class ResearchFinalizerWorkflow(ResearchFinalizer):" in rendered
     assert "ticket: FinalizationTicket" in rendered
-    assert "experiment_log.code.branch = workspace.code_branch" in rendered
-    assert "experiment_log.code.commit = workspace.code_commit" in rendered
+    assert "records.experiment_log.code.branch = workspace.code_branch" in rendered
+    assert "records.experiment_log.code.commit = workspace.code_commit" in rendered
     assert rendered.index("FinalizationReadyTool(") < rendered.index("ReportAppendTool(")
-    assert rendered.index("FinalizationStateCommitTool(") < rendered.index("experiment_log.run()")
+    assert rendered.index("FinalizationStateCommitTool(") < rendered.index("records.experiment_log.run()")
+    assert rendered.index("FinalizationFinishTool(") < rendered.index("NoteUpdater(")
     assert "experiment_log_state" not in rendered
     assert "BranchSnapshotAfterCommit" not in rendered
     assert "class NoteUpdaterWorkflow" not in rendered
@@ -90,20 +92,23 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     assert "class ResearchStateInitializeTool" not in rendered
 
 
-def test_coordinator_launches_finalizer_without_tracking_or_waiting() -> None:
+def test_coordinator_admits_and_detaches_finalizer_without_waiting() -> None:
     source = WORKFLOW_ROOT / "capabilities" / "research-coordinator" / "agents" / "research-coordinator.md"
 
     rendered = render_workflow(source, package_roots=PACKAGE_ROOTS)
 
     assert "ResearchFinalizer(" in rendered
-    assert "self.fire_and_forget(" in rendered
+    assert "self.admit(ResearchFinalizer(ticket=ticket))" in rendered
+    assert "self.detach(accepted_finalizer)" in rendered
     assert "class FinalizationStart(ExecutableWorkflow[FinalizationTicket]):" in rendered
     assert "FinalizationStartWorkflow" in rendered
     assert "class FinalizationStartWorkflow(" not in rendered
     assert "snapshot: Snapshot = BranchSnapshotTool(" not in rendered
     assert "commit: BranchCommitResult = BranchCommitTool(" not in rendered
     assert "return FinalizationCaptureTool(" not in rendered
-    assert rendered.index("ticket: FinalizationTicket = FinalizationStart(") < rendered.index("self.fire_and_forget(\n                ResearchFinalizer")
+    assert rendered.index("ticket: FinalizationTicket = iteration.finalization.run()") < rendered.index(
+        "self.admit(ResearchFinalizer(ticket=ticket))"
+    )
     assert "the snapshot name-status contains unexpected files" not in rendered
     assert "ReportAppendTool(" not in rendered
     assert "experiment_log: ExperimentLogAppendTool = self.fill" not in rendered
@@ -111,9 +116,12 @@ def test_coordinator_launches_finalizer_without_tracking_or_waiting() -> None:
     assert "class AgenticNotesUpdateTool" not in rendered
     assert "class FinalizationReadyTool" not in rendered
     assert "relative to the work-state directory" in rendered
+    assert "uv run --no-project python ..." in rendered
+    assert "Use ordinary `uv run` only when the check imports project dependencies" in rendered
+    assert "Do not add a separate `py_compile` check" in rendered
     assert "BranchSnapshotAfterCommit" not in rendered
     assert "after_commit=" not in rendered
-    assert "finalizer: Job" not in rendered
+    assert "self.wait(accepted_finalizer" not in rendered
     assert "discards the platform handle" in rendered
     assert "immediately continues with the next Python statement" in rendered
     assert "never wait, poll, list, message, follow up with, or depend on" in rendered
@@ -146,6 +154,21 @@ def test_related_workflows_share_one_module_index(monkeypatch: pytest.MonkeyPatc
     renderer.render(agents / "research-finalizer.md")
 
     assert calls == 1
+
+
+def test_missing_registered_workflow_reports_searched_registry_roots(tmp_path: Path) -> None:
+    package_root = tmp_path / "capability" / "package"
+    package_root.mkdir(parents=True)
+
+    with pytest.raises(WorkflowSourceError) as captured:
+        find_workflow_definition(
+            "demo.workflows.missing:MissingWorkflow",
+            package_roots=[package_root],
+        )
+
+    message = str(captured.value)
+    assert str(package_root) in message
+    assert "Ensure AR_WORKFLOW_PATH is forwarded" in message
 
 
 def test_modular_source_requires_exactly_one_tagged_block(tmp_path: Path) -> None:
