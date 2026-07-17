@@ -307,21 +307,7 @@ def _is_agent_workflow(node: ast.ClassDef) -> bool:
 
 
 def _is_executable_workflow(node: ast.ClassDef) -> bool:
-    return any(
-        _call_name(base) in {"ExecutableWorkflow", "ExecutableWorkflowImplementation"}
-        for base in node.bases
-    )
-
-
-def _declares_executable_implementation(node: ast.ClassDef) -> bool:
-    for item in node.body:
-        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-            if item.target.id == "workflow_implementation":
-                return True
-        if isinstance(item, ast.Assign):
-            if any(isinstance(target, ast.Name) and target.id == "workflow_implementation" for target in item.targets):
-                return True
-    return False
+    return any(_call_name(base) == "ExecutableWorkflow" for base in node.bases)
 
 
 def _is_user_facing_workflow(node: ast.ClassDef) -> bool:
@@ -514,15 +500,13 @@ class WorkflowVisitor(ast.NodeVisitor):
             for item in workflow_methods:
                 self._check_workflow_signature(item)
             return
-        if _is_executable_workflow(node) and _declares_executable_implementation(node):
-            return
         self.findings.append(
             Finding(
                 path=self.path,
                 line=node.lineno,
                 col=node.col_offset,
                 code="WF401",
-                message="workflow implementation subclasses must define workflow as their entrypoint",
+                message="workflow classes must define workflow as their entrypoint",
             )
         )
 

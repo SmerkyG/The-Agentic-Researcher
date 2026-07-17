@@ -101,11 +101,10 @@ def test_coordinator_admits_and_detaches_finalizer_without_waiting() -> None:
     assert "self.admit(ResearchFinalizer(ticket=ticket))" in rendered
     assert "self.detach(accepted_finalizer)" in rendered
     assert "class FinalizationStart(ExecutableWorkflow[FinalizationTicket]):" in rendered
-    assert "FinalizationStartWorkflow" in rendered
-    assert "class FinalizationStartWorkflow(" not in rendered
-    assert "snapshot: Snapshot = BranchSnapshotTool(" not in rendered
-    assert "commit: BranchCommitResult = BranchCommitTool(" not in rendered
-    assert "return FinalizationCaptureTool(" not in rendered
+    assert "FinalizationStartWorkflow" not in rendered
+    assert "snapshot: Snapshot = BranchSnapshotTool(" in rendered
+    assert "commit: BranchCommitResult = BranchCommitTool(" in rendered
+    assert "return FinalizationCaptureTool(" in rendered
     assert rendered.index("ticket: FinalizationTicket = iteration.finalization.run()") < rendered.index(
         "self.admit(ResearchFinalizer(ticket=ticket))"
     )

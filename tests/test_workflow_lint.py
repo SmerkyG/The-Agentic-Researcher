@@ -76,11 +76,7 @@ class Tool(YAMLArgvTool[Result]):
     value: str = Value("Tool value")
 
 class Group(ExecutableWorkflow[Result]):
-    workflow_implementation: ClassVar[str] = "demo_impl:GroupWorkflow"
     value: str = Value("Group value")
-
-
-class GroupWorkflow(Group, ExecutableWorkflowImplementation[Group]):
     def workflow(self) -> Result:
         return Tool(value=self.value).run()
 """,
@@ -94,9 +90,6 @@ def test_lint_source_rejects_model_primitive_in_executable_workflow() -> None:
     findings = lint_source(
         """
 class Group(ExecutableWorkflow[None]):
-    workflow_implementation: ClassVar[str] = "demo_impl:GroupWorkflow"
-
-class GroupWorkflow(Group, ExecutableWorkflowImplementation[Group]):
     def workflow(self) -> None:
         self.do(["update report"])
 """,

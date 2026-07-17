@@ -9,7 +9,6 @@ from typing import Any, ClassVar, Generic, Sequence, TypeVar
 
 ResultT = TypeVar("ResultT")
 StartedResultT = TypeVar("StartedResultT")
-ContractT = TypeVar("ContractT")
 
 
 def _current_executor() -> Any:
@@ -148,15 +147,9 @@ class ExecutableWorkflow(YAMLArgvTool[ResultT], Workflow[ResultT], Generic[Resul
     SubagentWorkflow operations until a subagent-capable executor is available.
     """
 
-    workflow_implementation: ClassVar[str]
-
     def argv(self) -> list[str]:
         symbol = f"{type(self).__module__}:{type(self).__qualname__}"
         return ["imperative-workflows-run", symbol]
-
-
-class ExecutableWorkflowImplementation(Generic[ContractT]):
-    """Marker mixed into a private implementation of an executable contract."""
 
 
 class AgentWorkflow(Workflow[ResultT], Generic[ResultT]):

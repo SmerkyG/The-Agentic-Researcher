@@ -5,7 +5,6 @@ from __future__ import annotations
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait as futures_wait
 from contextvars import ContextVar, Token
 from dataclasses import fields, is_dataclass
-import importlib
 import json
 import subprocess
 import types
@@ -168,27 +167,6 @@ def operation_result_type(operation_type: type[Operation[Any]]) -> object:
     return visit(operation_type, {}) or Any
 
 
-def executable_implementation_type(
-    contract_type: type[ExecutableWorkflow[Any]],
-) -> type[ExecutableWorkflow[Any]]:
-    """Resolve and validate the private implementation declared by a public contract."""
-
-    reference = getattr(contract_type, "workflow_implementation", "")
-    if not isinstance(reference, str) or ":" not in reference:
-        raise OperationExecutionError(
-            f"{contract_type.__module__}:{contract_type.__qualname__} must declare workflow_implementation"
-        )
-    module_name, symbol_name = reference.split(":", 1)
-    value: object = importlib.import_module(module_name)
-    for component in symbol_name.split("."):
-        value = getattr(value, component)
-    if not isinstance(value, type) or not issubclass(value, contract_type):
-        raise OperationExecutionError(
-            f"executable implementation must subclass its public contract: {reference}"
-        )
-    return value
-
-
 class OperationExecutor:
     """Execute tools and nested executable workflows without model involvement."""
 
@@ -221,17 +199,7 @@ class OperationExecutor:
                 "the generic executable-workflow CLI cannot run or launch agent workflows"
             )
         if isinstance(operation, ExecutableWorkflow):
-            implementation_type = executable_implementation_type(type(operation))
-            implementation = (
-                operation
-                if type(operation) is implementation_type
-                else record_from_data(
-                    implementation_type,
-                    record_data(operation),
-                    reject_unknown=True,
-                )
-            )
-            return implementation.workflow()
+            return operation.workflow()
         if isinstance(operation, ArgvTool):
             return self._run_argv(operation)
         raise OperationExecutionError(f"unsupported operation type: {type(operation).__module__}:{type(operation).__qualname__}")

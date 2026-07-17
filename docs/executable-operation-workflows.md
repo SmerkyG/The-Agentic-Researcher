@@ -10,26 +10,18 @@ results, and exceptions. Its body may call command-backed tools and nested
 executable workflows. It must not call model primitives such as `do`,
 `evaluate`, `fill`, or `ask_user`.
 
-Executable workflow contracts and implementations must be top-level symbols in
-importable package modules available through `$AR_WORKFLOW_PATH`. Do not define
-them only inside an agent Markdown workflow block. Callers import only the
-public contract; the generic CLI resolves its `workflow_implementation` after
-dispatch, so rendering the caller does not expose the orchestration body.
+Executable workflows must be top-level classes in importable package modules
+available through `$AR_WORKFLOW_PATH`. Their typed fields and `workflow()` body
+live together in that class. Do not define them only inside an agent Markdown
+workflow block: the generic CLI imports the class and executes its body.
 
 ```python
 class PublishResult(ExecutableWorkflow[PublishTicket]):
-    workflow_implementation = "project.publish_result_workflow:PublishResultWorkflow"
     paths: list[str]
     message: str
     checks: list[str]
     assets: list[str]
-```
 
-```python
-class PublishResultWorkflow(
-    PublishResult,
-    ExecutableWorkflowImplementation[PublishResult],
-):
     def workflow(self) -> PublishTicket:
         snapshot: Snapshot = BranchSnapshotTool(
             paths=self.paths,
@@ -47,7 +39,7 @@ To an agent, the class is one `YAMLArgvTool`: its argv is
 `imperative-workflows-run module:Class`, and its declared fields are serialized
 as YAML stdin. The declared argv is authoritative: the caller attempts it
 directly, without first running `--help`, searching for another command,
-inspecting the private implementation, or manually decomposing the workflow.
+inspecting the implementation, or manually decomposing the workflow.
 Usage and command-resolution diagnostics are appropriate only after that exact
 invocation fails. The generic executor imports the class and dispatches each
 child tool. Child results are reconstructed as their declared `WorkflowRecord`
@@ -64,10 +56,9 @@ of the agent only after behavior is established.
 2. Identify a contiguous region whose remaining inputs and decisions are
    explicit. Model-derived values should be computed before the boundary and
    passed through typed constructor fields.
-3. Define a data-only `ExecutableWorkflow` contract and move that region, with
-   the same Python ordering, into its private
-   `ExecutableWorkflowImplementation`. Replace the inline statements with one
-   public-contract `.run()` call.
+3. Define one `ExecutableWorkflow` class with typed constructor fields and move
+   that region, with the same Python ordering, into its `workflow()` method.
+   Replace the inline statements with one `.run()` call.
 4. Compose additional executable workflows when a deterministic region has a
    useful independent contract. Do not extract one-line wrappers merely to name
    phases.

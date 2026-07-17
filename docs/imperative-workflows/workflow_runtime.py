@@ -238,14 +238,8 @@ class Workflow(Operation):
 class ExecutableWorkflow(YAMLArgvTool, Workflow):
     """Model-free Python composition of tools and nested executable workflows."""
 
-    workflow_implementation: ClassVar[str]
-
     def argv(self) -> list[str]:
         return ["imperative-workflows-run", f"{type(self).__module__}:{type(self).__qualname__}"]
-
-
-class ExecutableWorkflowImplementation:
-    """Marker mixed into a private implementation of an executable contract."""
 
 
 class AgentWorkflow(Workflow):

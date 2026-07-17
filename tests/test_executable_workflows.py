@@ -23,7 +23,6 @@ from agentic_workflows.contract import (  # noqa: E402
     ArgvTool,
     CommandResult,
     ExecutableWorkflow,
-    ExecutableWorkflowImplementation,
     Job,
     Value,
     WorkflowRecord,
@@ -49,29 +48,17 @@ class NumberTool(YAMLArgvTool[Number]):
 
 
 class SequentialNumbers(ExecutableWorkflow[Number]):
-    workflow_implementation = f"{__name__}:SequentialNumbersWorkflow"
     command: str = Value("Test command")
     value: int = Value("Starting value")
 
-
-class SequentialNumbersWorkflow(
-    SequentialNumbers,
-    ExecutableWorkflowImplementation[SequentialNumbers],
-):
     def workflow(self) -> Number:
         first: Number = NumberTool(command=self.command, value=self.value).run()
         return NumberTool(command=self.command, value=first.value).run()
 
 
 class ParallelNumbers(ExecutableWorkflow[Number]):
-    workflow_implementation = f"{__name__}:ParallelNumbersWorkflow"
     command: str = Value("Test command")
 
-
-class ParallelNumbersWorkflow(
-    ParallelNumbers,
-    ExecutableWorkflowImplementation[ParallelNumbers],
-):
     def workflow(self) -> Number:
         first_job: Job[Number] = self.launch(NumberTool(command=self.command, value=2))
         second_job: Job[Number] = self.launch(NumberTool(command=self.command, value=5))
@@ -160,8 +147,6 @@ def test_cli_imports_and_executes_registered_workflow(tmp_path: Path) -> None:
         "class PrintTool(ArgvTool[CommandResult]):\n"
         "    argv_template = ('printf', 'hello')\n"
         "class DemoWorkflow(ExecutableWorkflow[CommandResult]):\n"
-        "    workflow_implementation = 'demo_workflow:DemoWorkflowImplementation'\n"
-        "class DemoWorkflowImplementation(DemoWorkflow):\n"
         "    def workflow(self) -> CommandResult:\n"
         "        return PrintTool().run()\n",
         encoding="utf-8",
