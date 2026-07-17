@@ -26,11 +26,12 @@ class FinalizationStart(ExecutableWorkflow[FinalizationTicket]):
         default_factory=list,
     )
     commit_message: str | None = Value(
-        "Focused commit message required when code_paths is nonempty",
+        "Focused commit message required when code_paths is nonempty; null otherwise",
         default=None,
     )
     checks: list[str] = Value(
-        "Focused, non-redundant commands run against the immutable code snapshot",
+        "Focused, non-redundant commands run against the immutable code snapshot; "
+        "empty when code_paths is empty",
         guidance=(
             "For Python checks that use only the standard library, use `uv run --no-project "
             "python ...` so the temporary worktree does not provision every project dependency. "

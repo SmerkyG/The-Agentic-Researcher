@@ -269,3 +269,23 @@ def test_composed_finalization_snapshots_commits_and_captures(tmp_path: Path) ->
         stdout=subprocess.PIPE,
         check=True,
     ).stdout.strip() == committed_head
+
+    no_code_request = {
+        **request,
+        "code_paths": [],
+        "commit_message": "ignored stale code metadata",
+        "checks": ["exit 99"],
+    }
+    no_code = subprocess.run(
+        [
+            str(EXECUTABLE),
+            "agentic_workflows.research.finalization_start:FinalizationStart",
+        ],
+        input=yaml.safe_dump(no_code_request, sort_keys=False),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    assert no_code.returncode == 0, no_code.stderr
+    assert json.loads(no_code.stdout)["code_commit"] == committed_head

@@ -47,9 +47,6 @@ class FinalizationStartWorkflow(
                 ).run()
                 if commit.state != "committed" or commit.commit is None:
                     raise RuntimeError("code snapshot was not committed")
-        elif self.commit_message is not None or self.checks:
-            raise ValueError("commit_message and checks require nonempty code_paths")
-
         return FinalizationCaptureTool(
             report_assets=self.report_assets,
             project_dir=self.project_dir,

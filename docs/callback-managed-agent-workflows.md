@@ -167,7 +167,9 @@ provided but all selected paths already match `HEAD`, it skips
 `branch-snapshot` and `branch-commit` and captures the current commit. This is
 the expected recovery behavior when a prior attempt committed the code and the
 agent retries the same finalization request. `finish complete` is idempotent as
-well, including cleanup.
+well, including cleanup. When `code_paths` is empty, code-only
+`commit_message` or `checks` values are ignored: they cannot prevent capture of
+a result that legitimately changed no code.
 
 For diagnosis, inspect a ticket with:
 
