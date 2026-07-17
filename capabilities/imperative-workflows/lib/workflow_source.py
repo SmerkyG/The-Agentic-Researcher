@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load and render modular agent-followed workflow sources."""
+"""Load, validate, and render modular workflow sources."""
 
 from __future__ import annotations
 
@@ -109,26 +109,44 @@ def parse_workflow_definition(
         path=source_path,
     )
     matches = list(WORKFLOW_FENCE.finditer(body))
-    if len(matches) != 1:
-        raise WorkflowSourceError(
-            f"{source_path}: expected exactly one `python agentic-workflow` block, found {len(matches)}"
-        )
-
-    try:
-        implementation_module = frontmatter["workflow_module"]
-        implementation_symbol = frontmatter["workflow_entry"]
-    except KeyError as exc:
-        raise WorkflowSourceError(
-            f"{source_path}: missing frontmatter key {exc.args[0]}"
-        ) from exc
-
+    workflow = frontmatter.get("workflow")
     interface = frontmatter.get("workflow_interface")
     receiver = frontmatter.get("workflow_receiver")
-    if bool(interface) == bool(receiver):
+    if sum(bool(value) for value in (workflow, interface, receiver)) != 1:
         raise WorkflowSourceError(
-            f"{source_path}: specify exactly one of workflow_interface or workflow_receiver"
+            f"{source_path}: specify exactly one of workflow, workflow_interface, "
+            "or workflow_receiver"
         )
-    if interface:
+    if workflow:
+        if matches:
+            raise WorkflowSourceError(
+                f"{source_path}: a workflow-referenced agent must not contain a "
+                "`python agentic-workflow` block"
+            )
+        kind = "agent"
+        agent_kind = frontmatter.get("kind")
+        implementation_module, implementation_symbol = split_reference(
+            workflow,
+            field="workflow",
+            path=source_path,
+        )
+        interface_module = implementation_module
+        interface_symbol = implementation_symbol
+        receiver_module = receiver_symbol = None
+        block_start = block_end = len(body)
+    elif interface:
+        if len(matches) != 1:
+            raise WorkflowSourceError(
+                f"{source_path}: expected exactly one `python agentic-workflow` block, "
+                f"found {len(matches)}"
+            )
+        try:
+            implementation_module = frontmatter["workflow_module"]
+            implementation_symbol = frontmatter["workflow_entry"]
+        except KeyError as exc:
+            raise WorkflowSourceError(
+                f"{source_path}: missing frontmatter key {exc.args[0]}"
+            ) from exc
         kind = "agent"
         agent_kind = frontmatter.get("kind")
         interface_module, interface_symbol = split_reference(
@@ -137,7 +155,29 @@ def parse_workflow_definition(
             path=source_path,
         )
         receiver_module = receiver_symbol = None
+        block = matches[0]
+        block_start = block.start()
+        block_end = block.end()
+        code = block.group("code")
+        try:
+            ast.parse(code, filename=str(source_path))
+        except SyntaxError as exc:
+            raise WorkflowSourceError(
+                f"{source_path}:{exc.lineno}: invalid workflow Python: {exc.msg}"
+            ) from exc
     else:
+        if len(matches) != 1:
+            raise WorkflowSourceError(
+                f"{source_path}: expected exactly one `python agentic-workflow` block, "
+                f"found {len(matches)}"
+            )
+        try:
+            implementation_module = frontmatter["workflow_module"]
+            implementation_symbol = frontmatter["workflow_entry"]
+        except KeyError as exc:
+            raise WorkflowSourceError(
+                f"{source_path}: missing frontmatter key {exc.args[0]}"
+            ) from exc
         kind = "skill"
         agent_kind = None
         receiver_module, receiver_symbol = split_reference(
@@ -146,21 +186,23 @@ def parse_workflow_definition(
             path=source_path,
         )
         interface_module = interface_symbol = None
-    block = matches[0]
-    code = block.group("code")
-    try:
-        ast.parse(code, filename=str(source_path))
-    except SyntaxError as exc:
-        raise WorkflowSourceError(
-            f"{source_path}:{exc.lineno}: invalid workflow Python: {exc.msg}"
-        ) from exc
+        block = matches[0]
+        block_start = block.start()
+        block_end = block.end()
+        code = block.group("code")
+        try:
+            ast.parse(code, filename=str(source_path))
+        except SyntaxError as exc:
+            raise WorkflowSourceError(
+                f"{source_path}:{exc.lineno}: invalid workflow Python: {exc.msg}"
+            ) from exc
 
     return WorkflowDefinition(
         source_path=source_path,
         bundle_root=(bundle_root or discover_bundle_root(source_path)).resolve(),
         body=body,
-        block_start=block.start(),
-        block_end=block.end(),
+        block_start=block_start,
+        block_end=block_end,
         kind=kind,
         agent_kind=agent_kind,
         interface_module=interface_module,
@@ -370,9 +412,6 @@ def _annotation_name(annotation: ast.expr | None) -> str | None:
 
 
 def workflow_roots(definition: WorkflowDefinition) -> list[str]:
-    if definition.kind == "agent":
-        assert definition.interface_module is not None
-        return [definition.interface_module, definition.implementation_module]
     return [definition.implementation_module]
 
 
@@ -415,6 +454,25 @@ def validate_definition(
             raise WorkflowSourceError(
                 f"{implementation.path}: implementation class "
                 f"{definition.implementation_symbol!r} was not found"
+            )
+        workflow_class = next(
+            (
+                node
+                for node in ast.parse(implementation.code, filename=str(implementation.path)).body
+                if isinstance(node, ast.ClassDef)
+                and node.name == definition.implementation_symbol
+            ),
+            None,
+        )
+        assert workflow_class is not None
+        if not any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "workflow"
+            for node in workflow_class.body
+        ):
+            raise WorkflowSourceError(
+                f"{implementation.path}: agent class "
+                f"{definition.implementation_symbol!r} must define workflow()"
             )
         return
 
@@ -459,8 +517,8 @@ def render_workflow(
 
     if definition.kind == "agent":
         entry_description = (
-            f"Follow `{definition.implementation_symbol}` as the implementation of "
-            f"`{definition.interface_module}:{definition.interface_symbol}`."
+            f"Follow `{definition.implementation_module}:"
+            f"{definition.implementation_symbol}` as this agent's workflow."
         )
         dispatch_description = (
             "`operation.run()` starts a tool or subagent synchronously. "
@@ -776,7 +834,7 @@ def load_agent_implementation(
     *,
     package_roots: Sequence[Path],
 ) -> type[object]:
-    """Load one registered Markdown agent implementation into this process."""
+    """Load one registered agent workflow class into this process."""
 
     definition = find_workflow_definition(
         implementation,
@@ -825,7 +883,6 @@ def manifest(
     validate_definition(definition, modules)
     result: dict[str, object] = {
         "kind": definition.kind,
-        "implementation": f"{definition.implementation_module}:{definition.implementation_symbol}",
         "modules": [
             {
                 "name": module.name,
@@ -835,8 +892,13 @@ def manifest(
         ],
     }
     if definition.kind == "agent":
-        result["interface"] = f"{definition.interface_module}:{definition.interface_symbol}"
+        result["workflow"] = (
+            f"{definition.implementation_module}:{definition.implementation_symbol}"
+        )
     else:
+        result["implementation"] = (
+            f"{definition.implementation_module}:{definition.implementation_symbol}"
+        )
         result["receiver"] = f"{definition.receiver_module}:{definition.receiver_symbol}"
     return result
 

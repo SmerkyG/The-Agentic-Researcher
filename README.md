@@ -41,6 +41,7 @@ Agentic Team is split into a small launcher, a shared Git-backed state substrate
 **Capabilities.** Capabilities are selected packages that can add commands, instruction sections, launcher hooks, and stateful workflows. Built-in capabilities include:
 
 - **Agentic Notes** (`agentic-notes`): owns `agent-notes/` layout at org, project, and work-branch scopes; renders `always-injected.md` content and on-demand note topic lists; provides the `agentic-notes` command with `read-note`, `update-note`, and `rewrite-note` subcommands.
+- **Imperative Workflows** (`imperative-workflows): lets you script agent workflows in python with standard control-flow constructs; separates the usual giant messy block of declarative and imperative english-language AGENTS.md instructions into a maintainable, auditable, understandable codebase.
 - **Experiment Log** (`experiment-log`): owns `experiment-log/` files on the active work state branch; records experiment YAML files, `COUNTER.yaml`, and append-maintained `SUMMARY.md`; provides the `experiment-log` command with `append`, `correct`, and `summary` subcommands.
 
 This separation is intentional: the launcher can stay mostly about launching and rendering, Agentic State can stay about Git-backed state mechanics, and each capability can evolve its own command surface and data model.

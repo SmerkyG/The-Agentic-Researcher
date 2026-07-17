@@ -53,10 +53,17 @@ def test_callback_cli_preserves_python_stack_across_agent_request(tmp_path: Path
     agents = bundle / "agents"
     package.mkdir(parents=True)
     agents.mkdir()
-    (package / "demo_contract.py").write_text(
-        "from agentic_workflows.contract import UserFacingWorkflow\n\n\n"
+    (package / "demo_workflow.py").write_text(
+        "from agentic_workflows.contract import UserFacingWorkflow\n"
+        "from agentic_workflows.fill_spec import field, step, var\n\n\n"
         "class Demo(UserFacingWorkflow[str]):\n"
-        "    prefix: str\n",
+        "    prefix: str\n\n"
+        "    def workflow(self) -> str:\n"
+        "        with self.agent_request() as result:\n"
+        "            var('internal', int, 'one internal answer')\n"
+        "            step('Perform one declarative action.')\n"
+        "            field('answer', str, 'returned answer')\n"
+        "        return self.prefix + ':' + result.answer\n",
         encoding="utf-8",
     )
     (agents / "demo.md").write_text(
@@ -64,26 +71,10 @@ def test_callback_cli_preserves_python_stack_across_agent_request(tmp_path: Path
 name: demo
 kind: main
 renderer: imperative-workflows
-workflow_interface: demo_contract:Demo
-workflow_module: demo_workflow
-workflow_entry: DemoWorkflow
+workflow: demo_workflow:Demo
 ---
 
 # Demo
-
-```python agentic-workflow
-from agentic_workflows.fill_spec import field, step, var
-from demo_contract import Demo
-
-
-class DemoWorkflow(Demo):
-    def workflow(self) -> str:
-        with self.agent_request() as result:
-            var("internal", int, "one internal answer")
-            step("Perform one declarative action.")
-            field("answer", str, "returned answer")
-        return self.prefix + ":" + result.answer
-```
 """,
         encoding="utf-8",
     )
@@ -97,7 +88,7 @@ class DemoWorkflow(Demo):
     started, first = _invoke(
         env,
         "start",
-        "demo_workflow:DemoWorkflow",
+        "demo_workflow:Demo",
         payload={"prefix": "kept"},
     )
     assert started.returncode == 0, started.stderr

@@ -91,8 +91,8 @@ class YAMLArgvTool(ArgvTool[ResultT], Generic[ResultT]):
     """Run exact argv with declared fields serialized as YAML stdin.
 
     The operation owns serialization. Do not invent fields or hand-format YAML.
-    In agent-follow mode without native structured dispatch, encode the declared
-    field values as JSON stdin, which is valid YAML and safely quotes strings.
+    Encode declared field values as JSON stdin, which is valid YAML and safely
+    quotes strings.
     """
 
 
@@ -100,7 +100,7 @@ class Workflow(Operation[ResultT], Generic[ResultT]):
     """Shared synchronous and tracked-asynchronous workflow vocabulary."""
 
     def workflow(self) -> ResultT:
-        """Execute or follow this workflow's body."""
+        """Execute this workflow's body."""
         raise NotImplementedError
 
     def launch(self, operation: Operation[StartedResultT]) -> Job[StartedResultT]:
@@ -110,7 +110,7 @@ class Workflow(Operation[ResultT], Generic[ResultT]):
     def fire_and_forget(self, operation: Operation[Any]) -> None:
         """Start asynchronously, discard its platform handle, and continue now.
 
-        AgentWorkflow callers immediately follow the next Python statement.
+        AgentWorkflow workers immediately execute the next Python statement.
         Never wait, poll, list, message, follow up with, or depend on that
         operation. Executable runtimes may reject detached execution when they
         cannot make the launch durable.
@@ -153,24 +153,22 @@ class ExecutableWorkflow(YAMLArgvTool[ResultT], Workflow[ResultT], Generic[Resul
 
 
 class AgentWorkflow(Workflow[ResultT], Generic[ResultT]):
-    """A workflow with separate invocation and body semantics.
+    """One executable agent contract and workflow implementation.
 
-    A callable agent declares a public contract subclass containing its inputs
-    and result type, then an implementation subclass overriding workflow(). The
-    manifest pairs the two classes. At top-level startup, follow on_startup()
-    and then workflow(). After compaction, follow on_compaction() and resume the
-    interrupted workflow() statement. Normal Python scope remains available to
-    later model operations in that context.
+    The same class declares typed constructor inputs, result type, and
+    workflow(). A callback worker executes on_startup() and workflow(), retaining
+    its Python stack across model and user boundaries. After compaction it
+    executes on_compaction() before resuming the interrupted statement.
     """
 
     agent_name: ClassVar[str]
 
     def on_startup(self) -> None:
-        """Follow once before workflow() at session startup."""
+        """Execute once before workflow() at session startup."""
         ...
 
     def on_compaction(self) -> None:
-        """Follow after compaction before resuming the interrupted statement."""
+        """Execute after compaction before resuming the interrupted statement."""
         ...
 
     def do(self, actions: Sequence[str], guidance: str | None = None) -> None:
@@ -223,15 +221,9 @@ class AgentWorkflow(Workflow[ResultT], Generic[ResultT]):
 class SubagentWorkflow(AgentWorkflow[ResultT], Generic[ResultT]):
     """A workflow that must run in a separately started subagent context.
 
-    The child follows the contract named by agent_name and receives the typed
-    constructor fields as its request. The caller resolves agent_name through
-    the Available Subagents catalog and uses its matching Contract path; it
-    must not search the filesystem or installation for an agent contract.
-    Preserve inherited history when the platform supports it. If a native named
-    role cannot inherit history, a history fork must receive that exact rendered
-    contract path and be explicitly directed to follow it. The child reads that
-    path directly and must not search for another contract. The caller must
-    never execute this workflow's body.
+    The runtime emits a native subagent boundary containing agent_name and the
+    typed constructor fields. The adapter starts the child and must never
+    execute this workflow body in the caller's worker or model context.
     """
 
 

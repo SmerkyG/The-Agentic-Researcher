@@ -489,7 +489,7 @@ def test_launcher_native_runs_host_cli__without_container(
     assert "developer_instructions" in codex_agent_text
     assert "Call the `start_workflow` tool" in codex_agent_text
     assert (
-        "agentic_workflows.research.workflows.research_finalizer:ResearchFinalizerWorkflow"
+        "agentic_workflows.research.research_finalizer:ResearchFinalizer"
         in codex_agent_text
     )
     assert "Do not invoke `imperative-workflows-callback` through a shell" in codex_agent_text
@@ -887,7 +887,7 @@ def test_native_cluster_run_backend_renders_project_skill(
     assert 'model_reasoning_effort = "low"' in finalizer_agent.read_text()
     assert "Call the `start_workflow` tool" in finalizer_agent.read_text()
     assert (
-        "agentic_workflows.research.workflows.research_finalizer:ResearchFinalizerWorkflow"
+        "agentic_workflows.research.research_finalizer:ResearchFinalizer"
         in finalizer_agent.read_text()
     )
 

@@ -105,10 +105,39 @@ reference and typed inputs:
 
 ```json
 {
-  "implementation": "agentic_workflows.research.workflows.research_coordinator:ResearchCoordinatorWorkflow",
+  "implementation": "agentic_workflows.research.research_coordinator:ResearchCoordinator",
   "inputs": {}
 }
 ```
+
+## Agent Source Layout
+
+An imperative agent has one ordinary Python class containing both its typed
+constructor fields and its executable `workflow()` method:
+
+```python
+class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):
+    agent_name = "research-finalizer"
+    ticket: FinalizationTicket
+
+    def workflow(self) -> ResearchFinalizerResult:
+        ...
+```
+
+Its optional Markdown agent file retains launcher metadata and prose guidance,
+and points to that class with one reference:
+
+```yaml
+renderer: imperative-workflows
+workflow: agentic_workflows.research.research_finalizer:ResearchFinalizer
+```
+
+There is no separately authored interface/header class or implementation
+subclass. The callback worker imports and executes the referenced class. Agent
+callers submit typed operations through callback events and never interpret the
+callee's Python body. Plain Markdown agents remain valid without a `workflow`
+field, allowing authors to introduce an imperative class only when they need
+executed ordering, branches, typed boundaries, or process lifecycle control.
 
 Each event contains `run_id` and `boundary_id` when resumption is possible.
 Codex calls `resume_workflow` with those exact values and an event-specific
@@ -193,19 +222,22 @@ than starting a duplicate finalizer blindly.
 
 The intended migration remains incremental:
 
-1. Write a readable agent workflow in normal Python, even if it initially uses
-   several small model operations.
-2. Aggregate adjacent model reasoning and agent-native actions into one ordered
+1. Start with a readable plain Markdown agent and keep its domain guidance.
+2. When executed ordering becomes useful, add one Python agent class and point
+   the existing Markdown manifest to it with `workflow: module:Class`. The first
+   workflow may contain a broad `agent_request()` that relies on the retained
+   Markdown guidance.
+3. Aggregate adjacent model reasoning and agent-native actions into one ordered
    `agent_request()` with `var`, `step`, and `field` declarations.
-3. Move deterministic dependent tool sequences into an `ExecutableWorkflow`.
+4. Move deterministic dependent tool sequences into an `ExecutableWorkflow`.
    The callback worker executes those sequences without another model boundary.
-4. Launch independent tool operations with `launch()` and join them with
+5. Launch independent tool operations with `launch()` and join them with
    `wait_all()` or `wait_any()` in Python.
-5. Move context-independent model work into typed `SubagentWorkflow` calls.
+6. Move context-independent model work into typed `SubagentWorkflow` calls.
    Use synchronous `run()` when a later statement needs the result. Use
    `admit()` followed by `detach()` when only validated launcher acceptance is
    required and later work must not depend on completion.
-6. As managed runtimes improve, a native Codex app-server adapter can replace
+7. As managed runtimes improve, a native Codex app-server adapter can replace
    MCP without changing workflow source or boundary data.
 
 The direction is from one monolithic agent turn toward larger declarative agent
@@ -227,7 +259,8 @@ toward a monolithic domain-specific tool.
   need to restart from their own durable state after worker loss.
 - On Codex, a skill whose receiver is a callback-managed agent activates that
   receiver's registered workflow instead of replaying the skill's Python body.
-  Non-Codex CLIs retain the direct agent-follow rendering path.
+  CLIs without a callback execution adapter support plain Markdown agents but
+  do not support imperative Python workflows.
 
 These constraints are transport and lifecycle gaps, not reasons to put model
 branches or process supervision back into English instructions.

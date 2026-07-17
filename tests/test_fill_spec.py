@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 import sys
 from typing import ClassVar, Literal
@@ -208,16 +207,3 @@ def test_builder_callback_populates_deferred_field_attributes() -> None:
             _ = result.answer
 
     assert result.answer == "resolved"
-
-
-def test_example_python_block_remains_syntactically_valid() -> None:
-    example_path = (
-        REPO_ROOT
-        / "capabilities"
-        / "research-coordinator"
-        / "agents"
-        / "research-coordinator.example.md"
-    )
-    text = example_path.read_text()
-    python_block = text.split("```python\n", 1)[1].split("\n```", 1)[0]
-    ast.parse(python_block)

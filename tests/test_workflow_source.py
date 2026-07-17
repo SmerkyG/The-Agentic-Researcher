@@ -46,22 +46,19 @@ def test_tool_implementations_do_not_depend_on_imperative_workflows() -> None:
     assert offenders == []
 
 
-def test_research_manifest_walks_public_and_implementation_modules() -> None:
+def test_research_manifest_uses_one_workflow_class() -> None:
     source = WORKFLOW_ROOT / "capabilities" / "research-coordinator" / "agents" / "research-coordinator.md"
 
     result = manifest(source, package_roots=PACKAGE_ROOTS)
 
-    assert result["interface"] == (
+    assert result["workflow"] == (
         "agentic_workflows.research.research_coordinator:ResearchCoordinator"
-    )
-    assert result["implementation"] == (
-        "agentic_workflows.research.workflows.research_coordinator:ResearchCoordinatorWorkflow"
     )
     module_names = [module["name"] for module in result["modules"]]
     assert module_names[0] == "agentic_workflows.contract"
     assert "agentic_workflows.research.research_finalizer" in module_names
     assert "agentic_workflows.research.workflows.research_finalizer" not in module_names
-    assert module_names[-1] == "agentic_workflows.research.workflows.research_coordinator"
+    assert module_names[-1] == "agentic_workflows.research.research_coordinator"
 
 
 def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() -> None:
@@ -75,7 +72,7 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     assert "class FinalizationStateCommitTool" in rendered
     assert "class ExperimentLogAppendTool" in rendered
     assert "class AgenticNotesUpdateTool" in rendered
-    assert "class ResearchFinalizerWorkflow(ResearchFinalizer):" in rendered
+    assert "class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):" in rendered
     assert "ticket: FinalizationTicket" in rendered
     assert "records.experiment_log.code.branch = workspace.code_branch" in rendered
     assert "records.experiment_log.code.commit = workspace.code_commit" in rendered
@@ -84,10 +81,8 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     assert rendered.index("FinalizationFinishTool(") < rendered.index("NoteUpdater(")
     assert "experiment_log_state" not in rendered
     assert "BranchSnapshotAfterCommit" not in rendered
-    assert "class NoteUpdaterWorkflow" not in rendered
     assert "class ExperimentLogSummaryTool" not in rendered
     assert "class ExperimentLogCorrectTool" not in rendered
-    assert "class AgenticNotesReadTopicTool" not in rendered
     assert "class FinalizationCaptureTool" not in rendered
     assert "class ResearchStateInitializeTool" not in rendered
 
@@ -109,11 +104,7 @@ def test_coordinator_admits_and_detaches_finalizer_without_waiting() -> None:
         "self.admit(ResearchFinalizer(ticket=ticket))"
     )
     assert "the snapshot name-status contains unexpected files" not in rendered
-    assert "ReportAppendTool(" not in rendered
     assert "experiment_log: ExperimentLogAppendTool = self.fill" not in rendered
-    assert "class ExperimentLogAppendTool" not in rendered
-    assert "class AgenticNotesUpdateTool" not in rendered
-    assert "class FinalizationReadyTool" not in rendered
     assert "relative to the work-state directory" in rendered
     assert "uv run --no-project python ..." in rendered
     assert "Use ordinary `uv run` only when the check imports project dependencies" in rendered
@@ -242,8 +233,7 @@ def test_workflow_source_cli_emits_machine_readable_manifest() -> None:
     )
 
     data = json.loads(result.stdout)
-    assert data["interface"].endswith(":NoteUpdater")
-    assert data["implementation"].endswith(":NoteUpdaterWorkflow")
+    assert data["workflow"].endswith(":NoteUpdater")
 
 
 def test_modular_skill_renders_current_context_function() -> None:

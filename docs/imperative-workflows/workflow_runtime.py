@@ -1,4 +1,4 @@
-"""Interpreter contract for agent-followed imperative workflows."""
+"""Reference contract for callback-executed imperative workflows."""
 
 from __future__ import annotations
 
@@ -205,8 +205,8 @@ class YAMLArgvTool(ArgvTool):
     """Run exact argv with declared fields serialized as YAML stdin.
 
     The operation owns serialization. Do not invent fields or hand-format YAML.
-    In agent-follow mode without native structured dispatch, encode the declared
-    field values as JSON stdin, which is valid YAML and safely quotes strings.
+    Encode declared field values as JSON stdin, which is valid YAML and safely
+    quotes strings.
     """
 
 

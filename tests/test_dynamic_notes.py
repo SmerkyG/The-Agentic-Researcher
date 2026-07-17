@@ -31,10 +31,8 @@ def test_builtin_subagents_have_one_contract_template() -> None:
         text = agent_path.read_text(encoding="utf-8")
         if "kind: subagent" not in text:
             continue
-        if "workflow_module:" in text:
-            assert text.count("```python agentic-workflow") == 1, agent_path.name
-            assert "workflow_interface:" in text, agent_path.name
-            assert "workflow_entry:" in text, agent_path.name
+        if "workflow:" in text:
+            assert "```python agentic-workflow" not in text, agent_path.name
             continue
         assert "## Subagent Contract" in text, agent_path.name
         contract = text.split("## Subagent Contract", 1)[1]
@@ -1449,12 +1447,12 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     assert "## Callback-Managed Imperative Workflow" in instruction_text
     assert "Call the `start_workflow` tool" in instruction_text
     assert (
-        "agentic_workflows.research.workflows.research_coordinator:ResearchCoordinatorWorkflow"
+        "agentic_workflows.research.research_coordinator:ResearchCoordinator"
         in instruction_text
     )
     assert "Do not invoke `imperative-workflows-callback` through a shell" in instruction_text
     assert "### Workflow Modules" not in instruction_text
-    assert "class ResearchCoordinatorWorkflow" not in instruction_text
+    assert "class ResearchCoordinator" not in instruction_text
     normalized_instructions = " ".join(instruction_text.split())
     assert "persistent worker owns Python ordering" in normalized_instructions
     assert "only `ask_user`, `complete`, `failed`, or `cancelled` is a terminal event" in normalized_instructions
@@ -1466,7 +1464,7 @@ def test_work_state_files_render_plan_and_stay_off_code_branch(tmp_path: Path) -
     assert "## Callback-Managed Imperative Workflow" in finalizer_text
     assert "Call the `start_workflow` tool" in finalizer_text
     assert (
-        "agentic_workflows.research.workflows.research_finalizer:ResearchFinalizerWorkflow"
+        "agentic_workflows.research.research_finalizer:ResearchFinalizer"
         in finalizer_text
     )
     assert "$WORK_STATE_DIR/images/" in instruction_text
@@ -2627,7 +2625,7 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert "## Callback-Managed Skill" in research_skill_text
     assert "Call the `start_workflow` tool" in research_skill_text
     assert (
-        "agentic_workflows.research.workflows.research_coordinator:ResearchCoordinatorWorkflow"
+        "agentic_workflows.research.research_coordinator:ResearchCoordinator"
         in research_skill_text
     )
     assert "def do_research" not in research_skill_text
@@ -3025,7 +3023,7 @@ def test_project_capability_replaces_builtin_provider_with_same_name(tmp_path: P
     assert result.returncode == 0, result.stderr
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "# Project Research Coordinator" in instruction_text
-    assert "class ResearchCoordinatorWorkflow" not in instruction_text
+    assert "class ResearchCoordinator" not in instruction_text
     assert not (project / ".agents" / "skills" / "do_research" / "SKILL.md").exists()
 
 

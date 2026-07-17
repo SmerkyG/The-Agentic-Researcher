@@ -126,12 +126,13 @@ runtime to dispatch its child tools without model turns. See
 `docs/executable-operation-workflows.md` for its execution boundary and the
 recommended migration path.
 
-## Interpreter Interface
+## Execution Interface
 
 Workflow source MUST be valid Python against the declared `AgentWorkflow`
-interface, not pseudocode with ad hoc fake functions. The workflow is followed
-by the agent rather than executed as a local Python program. Method semantics
-belong in the interface docstrings and the agent-facing interpreter guide:
+interface, not pseudocode with ad hoc fake functions. A conforming runtime
+executes the workflow and pauses only at declared model, user, tool, or subagent
+boundaries. Method semantics belong in the interface docstrings and runtime
+protocol:
 
 ```python
 def Value(description: str, *, default=MISSING, default_factory=MISSING):
@@ -184,20 +185,20 @@ class YAMLArgvTool(ArgvTool):
     """Run exact argv with declared fields serialized as YAML stdin.
 
     The operation owns serialization. Do not invent fields or hand-format YAML.
-    In agent-follow mode without native structured dispatch, encode the declared
-    field values as JSON stdin, which is valid YAML and safely quotes strings.
+    Encode the declared field values as JSON stdin, which is valid YAML and
+    safely quotes strings.
     """
 
 
 class AgentWorkflow(Operation):
     def on_startup(self):
-        """Lifecycle hook followed once before workflow() at session startup."""
+        """Lifecycle hook executed once before workflow() at session startup."""
 
     def on_compaction(self):
-        """Lifecycle hook followed after compaction before resuming workflow()."""
+        """Lifecycle hook executed after compaction before resuming workflow()."""
 
     def workflow(self):
-        """Follow or execute this agent context's workflow body."""
+        """Execute this agent context's workflow body."""
 
     def do(self, actions: Sequence[str], guidance: str | None = None):
         """
@@ -266,15 +267,9 @@ class AgentWorkflow(Operation):
 class SubagentWorkflow(AgentWorkflow):
     """A workflow that must run in a separately started subagent context.
 
-    The child follows the contract named by agent_name and receives the typed
-    constructor fields as its request. The caller resolves agent_name through
-    the Available Subagents catalog and uses its matching Contract path; it
-    must not search the filesystem or installation for an agent contract.
-    Preserve inherited history when the platform supports it. If a native named
-    role cannot inherit history, a history fork must receive that exact rendered
-    contract path and be explicitly directed to follow it. The child reads that
-    path directly and must not search for another contract. The caller must
-    never execute this workflow's body.
+    The runtime emits a native subagent boundary containing agent_name and the
+    typed constructor fields. The adapter starts the child and must never
+    execute this workflow body in the caller's worker or model context.
     """
 
 
@@ -296,7 +291,9 @@ Workflow specs MUST NOT call methods that are neither part of the declared
 workflow contract nor defined on the current workflow class. Reused ordinary
 Python helper methods are valid; invented runtime primitives are not.
 
-Every agent implementation subclass MUST define `workflow` as its entrypoint.
+Every imperative agent class MUST define `workflow` as its entrypoint. Its typed
+constructor fields and implementation belong on that same class; authors MUST
+NOT create a separate interface/header class solely to hide the implementation.
 `Operation.run()` dispatches a tool or subagent and MUST NOT enter the called
 agent's workflow body in the current context.
 Do not make the launcher know about role-specific method names such as
@@ -319,10 +316,9 @@ undeclared domain-specific workflow method:
 gpu_status = self.determine_local_gpu_status()
 ```
 
-Concrete implementations may subclass the base workflow, record traces for
-tests, execute deterministic helper commands, or render embedded code for an
-agent to follow. The same workflow source should be importable by tests, even
-when some operations are mocked by the workflow runtime.
+Concrete implementations may record traces for tests or execute deterministic
+helper commands. The same workflow source should be importable by tests, even
+when operations are mocked by the workflow runtime.
 
 ## Actions And Evaluations
 
@@ -630,19 +626,13 @@ Executable workflow code is preferred for deterministic bookkeeping, schema
 validation, file movement, Git safety checks, and any task where a model would
 otherwise be asked to simulate a small program by reading prose.
 
-### Embedded Workflow Code
+### Executed Workflow Code
 
-When the agent must make judgment calls, coordinate subagents, or use tools that
-cannot be hidden behind one deterministic command, Agentic Team MAY embed the
-workflow code itself in the rendered instructions. In that mode the agent reads
-and mentally steps through the code.
-
-Embedded code is still better than prose-only instructions because ordering,
-conditions, and failure behavior remain visible as code. The embedded code may
-use abstract helper calls such as `self.do(...)`, `self.wait_all(...)`, and
-`self.wait_any(...)` when those calls are defined by the workflow runtime or by
-surrounding instruction text. Tools, subagents, and subworkflows should appear
-as ordinary constructor-configured operation objects:
+When the agent must make judgment calls, coordinate subagents, or use multiple
+tools, the persistent runtime executes the registered Python workflow and emits
+only the necessary callback boundaries. The model does not mentally simulate
+Python control flow. Tools, subagents, and subworkflows appear as ordinary
+constructor-configured operation objects:
 `job: Job[SomeResult] = self.launch(SomeWorkflow(config=config))`.
 
 ### Rendered Prose

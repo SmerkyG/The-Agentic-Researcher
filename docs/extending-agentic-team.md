@@ -179,53 +179,35 @@ override built-in capability modules by overriding the whole capability.
 
 ### Imperative workflows
 
-The optional `imperative-workflows` capability is a source renderer. A provider
-that uses it lists it in `capability.toml`; plain Markdown agent capabilities do
-not need it. Modular workflows keep public invocation contracts and reusable
-operations in ordinary Python, while agent Markdown keeps launcher metadata,
-declarative guidance, and one implementation block:
+The optional `imperative-workflows` capability executes registered Python agent
+workflows through callback-capable CLIs. A provider that uses it lists it in
+`capability.toml`; plain Markdown agent capabilities do not need it. Imperative
+agents keep their complete typed contract and `workflow()` implementation in
+one ordinary Python class. Agent Markdown retains launcher metadata and any
+declarative prose guidance:
 
 ```text
 capabilities/<provider>/
-  package/<python-package>/     public contracts and operations
-  agents/                       agent guidance and workflow implementations
+  package/<python-package>/     agent workflows and operations
+  agents/                       agent manifests and prose guidance
   skills/                       on-demand skill definitions
 ```
 
-An agent definition declares the interface and implementation pairing in
-frontmatter:
+An agent definition points to its single workflow class:
 
 ```yaml
 renderer: imperative-workflows
-workflow_interface: agentic_workflows.research.finalizer:ResearchFinalizer
-workflow_module: agentic_workflows.research.workflows.finalizer
-workflow_entry: ResearchFinalizerWorkflow
+workflow: agentic_workflows.research.research_finalizer:ResearchFinalizer
 ```
 
-Its body contains exactly one tagged block:
+The callback worker imports and executes that class. A caller constructs the
+same typed class as a subagent operation, but lifecycle dispatch is owned by the
+runtime; the caller model does not follow the callee's Python body. Workflow
+metadata is stripped from platform-specific agent files.
 
-````markdown
-```python agentic-workflow
-from agentic_workflows.research.finalizer import ResearchFinalizer
-
-class ResearchFinalizerWorkflow(ResearchFinalizer):
-    def workflow(self) -> None:
-        ...
-```
-````
-
-The renderer combines `package/` roots from enabled capabilities. It indexes
-Python modules below those roots, indexes tagged agent and skill modules,
-and walks local imports from both the public interface and implementation. The
-rendered agent therefore receives the complete implementation graph, while a
-caller that imports only the public class does not receive the called agent's
-implementation module. Workflow metadata is stripped from platform-specific
-agent files.
-
-Dependency inclusion is module-level, not symbol-level. Keep modules aligned
-with operation ownership so a workflow sees only the capabilities it uses. In
-particular, separate read, mutation, and worker-only operations when different
-agents own them instead of collecting them in one convenience module.
+Existing Markdown-only agents remain valid. Authors can preserve their prose,
+add one Python workflow class when imperative execution becomes useful, and
+then migrate individual tool, branch, and lifecycle regions over time.
 
 A modular skill uses the same tagged block but extends the current agent
 context instead of declaring a separately dispatched agent:
