@@ -21,9 +21,8 @@ def render_source(ctx: Any, source_path: Path, source_kind: str) -> str:
     if renderer is None:
         renderer = WorkflowRenderer(package_roots)
         _RENDERERS[package_roots] = renderer
-    if getattr(ctx, "cli", None) == "codex":
-        if source_kind == "agent":
-            return renderer.render_callback(source_path)
-        if source_kind == "skill":
-            return renderer.render_callback_skill(source_path)
+    if source_kind == "agent":
+        return renderer.render_callback(source_path)
+    if source_kind == "skill":
+        return renderer.render_callback_skill(source_path)
     return renderer.render(source_path)

@@ -101,6 +101,7 @@ main() {
     if [[ "$RENDER_ONLY" != "true" ]]; then
         profile_step "setup_compaction_hooks" setup_compaction_hooks
         profile_step "setup_steering_hooks" setup_steering_hooks
+        profile_step "setup_tool_transport" setup_tool_transport
         profile_step "write_hook_configs" flush_managed_hook_json
         profile_step "translate_cli_args" translate_cli_args
         profile_step "setup_auth_binds" setup_auth_binds

@@ -14,6 +14,8 @@ import sys
 
 
 CAPABILITY_ROOT = Path(__file__).resolve().parents[1]
+INSTALL_ROOT = CAPABILITY_ROOT.parents[1]
+sys.path.insert(0, str(INSTALL_ROOT / "scripts" / "package"))
 sys.path.insert(0, str(CAPABILITY_ROOT / "package"))
 sys.path.insert(0, str(CAPABILITY_ROOT / "lib"))
 for package_root in reversed(

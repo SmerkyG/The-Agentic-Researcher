@@ -15,6 +15,7 @@ WORKFLOW_LIB = IMPERATIVE_CAPABILITY / "lib"
 WORKFLOW_ROOT = REPO_ROOT
 PACKAGE_ROOTS = [
     IMPERATIVE_CAPABILITY / "package",
+    REPO_ROOT / "capabilities" / "branch" / "package",
     REPO_ROOT / "capabilities" / "agentic-notes" / "package",
     REPO_ROOT / "capabilities" / "experiment-log" / "package",
     REPO_ROOT / "capabilities" / "research-coordinator" / "package",
@@ -33,16 +34,16 @@ from workflow_source import (  # noqa: E402
 import workflow_source  # noqa: E402
 
 
-def test_tool_implementations_do_not_depend_on_imperative_workflows() -> None:
+def test_tool_domain_libraries_do_not_depend_on_imperative_workflows() -> None:
     forbidden = re.compile(r"^\s*(?:from|import)\s+agentic_workflows\b", re.MULTILINE)
     offenders: list[str] = []
     for capability in (REPO_ROOT / "capabilities").iterdir():
-        for directory in (capability / "bin", capability / "lib"):
-            if not directory.is_dir():
-                continue
-            for path in directory.rglob("*"):
-                if path.is_file() and forbidden.search(path.read_text(encoding="utf-8", errors="ignore")):
-                    offenders.append(str(path.relative_to(REPO_ROOT)))
+        directory = capability / "lib"
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob("*"):
+            if path.is_file() and forbidden.search(path.read_text(encoding="utf-8", errors="ignore")):
+                offenders.append(str(path.relative_to(REPO_ROOT)))
     assert offenders == []
 
 
@@ -55,10 +56,10 @@ def test_research_manifest_uses_one_workflow_class() -> None:
         "agentic_workflows.research.research_coordinator:ResearchCoordinator"
     )
     module_names = [module["name"] for module in result["modules"]]
-    assert module_names[0] == "agentic_workflows.contract"
+    assert "agentic_workflows.contract" in module_names
     assert "agentic_workflows.research.research_finalizer" in module_names
     assert "agentic_workflows.research.workflows.research_finalizer" not in module_names
-    assert module_names[-1] == "agentic_workflows.research.research_coordinator"
+    assert "agentic_workflows.research.research_coordinator" in module_names
 
 
 def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() -> None:
@@ -76,9 +77,10 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     assert "ticket: FinalizationTicket" in rendered
     assert "records.experiment_log.code.branch = workspace.code_branch" in rendered
     assert "records.experiment_log.code.commit = workspace.code_commit" in rendered
-    assert rendered.index("FinalizationReadyTool(") < rendered.index("ReportAppendTool(")
-    assert rendered.index("FinalizationStateCommitTool(") < rendered.index("records.experiment_log.run()")
-    assert rendered.index("FinalizationFinishTool(") < rendered.index("NoteUpdater(")
+    workflow = rendered[rendered.index("class ResearchFinalizer(SubagentWorkflow") :]
+    assert workflow.index("FinalizationReadyTool(") < workflow.index("ReportAppendTool(")
+    assert workflow.index("FinalizationStateCommitTool(") < workflow.index("records.experiment_log.run()")
+    assert workflow.index("FinalizationFinishTool(") < workflow.index("NoteUpdater(")
     assert "experiment_log_state" not in rendered
     assert "BranchSnapshotAfterCommit" not in rendered
     assert "class ExperimentLogSummaryTool" not in rendered

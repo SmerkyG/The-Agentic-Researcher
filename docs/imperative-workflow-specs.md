@@ -10,7 +10,7 @@ are not allowed to encode ordering, branching, retry policy, blocking policy, or
 concurrency.
 
 For the executable Codex boundary model built on this specification, including
-ordered `agent_request()` declarations and the JSON callback protocol, see
+class-declared `AgentRequest` boundaries and the JSON callback protocol, see
 [Callback-Managed Agent Workflows](callback-managed-agent-workflows.md).
 
 ## Goals
@@ -18,9 +18,8 @@ ordered `agent_request()` declarations and the JSON callback protocol, see
 - Make agent workflows readable as normal imperative programs.
 - Keep ordering, conditions, loops, concurrency, and failure handling visible to
   static review and tests.
-- Embed the workflow source for the agent to follow, while extracting
-  deterministic steps into executable operation workflows or tools where
-  practical.
+- Execute workflow source in a persistent runtime while extracting deterministic
+  steps into executable operation workflows or tools where practical.
 - Avoid maintaining a second, drifting English-language version of the same
   flow.
 - Preserve enough English for model-facing task prompts, but keep that English
@@ -97,6 +96,56 @@ the published workflow should read like ordinary Python agent behavior.
 The order of these statements is the order of the workflow. No English string in
 the example is responsible for establishing the ordering.
 
+## Aggregate Agent Requests
+
+Model reasoning and agent-native actions MUST be grouped in an `AgentRequest`
+class and executed with `self.agent_request(RequestType)`. Python executes the
+class body in declaration order; its metaclass freezes that sequence before the
+callback is submitted:
+
+```python
+class Iteration(AgentRequest):
+    with guidance("Prefer one cheap variable change."):
+        experiment: str = local("next focused experiment")
+        hypothesis: str = local(f"testable hypothesis for {experiment}")
+        step(f"Implement and verify {experiment}.")
+
+    finalization: FinalizationStart = result("finalization request")
+
+iteration = self.agent_request(Iteration)
+ticket = iteration.finalization.run()
+```
+
+`local()` and `result()` declarations MUST use an explicit annotation. The
+annotation is the response type. `local()` values remain in retained agent
+context; `result()` values are also exposed as attributes on the returned
+request instance. `step()` has no structured return.
+
+Top-level operation invocations are queued automatically outside the request.
+Their operation type, one-line action, typed inputs, lifecycle status, and
+result appear in chronological order at the next request. Authors MUST NOT
+manually re-queue an operation result merely to explain which operation
+produced it.
+
+Other external values MAY be queued with
+`self.queue_agent_observation(value, desc=None)`. Repeated calls preserve order
+with operation entries. The optional `desc` MUST be presentation prose and MUST
+NOT create a symbolic identifier or parallel naming system. Explicit queued
+values MUST be consumed by a later request. Trusted scalar Python values needed
+by one instruction MAY instead be interpolated directly into its f-string.
+
+An earlier declaration MAY be interpolated into a later description or step
+with a plain f-string expression. Its declaration placeholder formats as the
+exact Python identifier surrounded by backticks. Format specifications are not
+allowed. Request classes MUST contain only declarations, steps, guidance scopes,
+and an optional docstring; observations, runtime branches, loops, tools, and
+subagent calls remain outside the class in ordinary workflow Python.
+
+`with guidance(...)` groups its enclosed declarations but does not create a
+Python name scope. Names MUST be unique throughout one request class. A request
+schema is fixed by successful class construction and is submitted as one model
+boundary.
+
 Every function and method in workflow source MUST declare an explicit return
 type annotation. Use `-> None` for side-effect-only workflow steps. Helper
 functions that return domain values MUST name those values in the type system,
@@ -163,13 +212,24 @@ class Operation(WorkflowRecord):
     """A runnable workflow operation, implemented by a tool or subagent."""
 
     guidance: ClassVar[str] = ""
+    agent_visibility: ClassVar[Literal["shown", "hidden"]] = "shown"
 
-    def run(self):
+    def run(self, *, agent_visibility=None):
         """Start this tool or subagent synchronously and return its result."""
+
+    def agent_observation(self, result):
+        """Project a completed result for automatic agent-visible provenance."""
 
 
 class WorkflowTool(Operation):
     """Generic tool operation."""
+
+
+class PythonTool(Operation):
+    """Launcher-level structured tool implemented directly in Python."""
+
+    def execute(self):
+        """Execute in the operation runtime and return a typed result."""
 
 
 class ArgvTool(WorkflowTool):
@@ -237,10 +297,10 @@ class AgentWorkflow(Operation):
         descriptions.
         """
 
-    def launch(self, operation: Operation):
+    def launch(self, operation: Operation, *, agent_visibility=None):
         """Start a tool or named subagent asynchronously and return its tracked Job."""
 
-    def fire_and_forget(self, operation: Operation) -> None:
+    def fire_and_forget(self, operation: Operation, *, agent_visibility=None) -> None:
         """Start asynchronously, discard its platform handle, and continue now.
 
         Immediately follow the next Python statement. Never wait for, poll,
@@ -296,6 +356,13 @@ constructor fields and implementation belong on that same class; authors MUST
 NOT create a separate interface/header class solely to hide the implementation.
 `Operation.run()` dispatches a tool or subagent and MUST NOT enter the called
 agent's workflow body in the current context.
+
+Operation invocations default to agent-visible provenance. Definitions MAY set
+`agent_visibility` to `"hidden"`; `run`, `launch`, `admit`, and
+`fire_and_forget` MAY override it per invocation. Callback runtimes show only
+top-level operations, so nested tools called by an `ExecutableWorkflow` remain
+encapsulated behind that workflow's typed inputs and result. This visibility is
+presentation policy, not security redaction.
 Do not make the launcher know about role-specific method names such as
 `finalize`, `review`, `append`, or `integrate`. Deterministic helper logic
 SHOULD be plain functions or tested helper classes rather than extra `self`
@@ -584,23 +651,29 @@ the CLI lacks native structured dispatch, invoke the exact argv and send the
 declared field values as JSON stdin; JSON is valid YAML and safely represents
 strings containing colons, newlines, quotes, and other YAML syntax.
 
-An imperative-workflow tool class is an agent-facing adapter, not part of the
-tool implementation. Executable commands and their runtime libraries MUST NOT
-import `agentic_workflows` or depend on `WorkflowRecord`, `Value`, workflow
-rendering, or workflow interpretation. They MUST own their request validation,
-domain types, execution, and persisted-record formats independently. The
-adapter MAY mirror that external command contract and tests SHOULD detect drift,
-but dependency flow is one-way: imperative workflows know how to invoke tools;
-tools do not know that imperative workflows exist.
+An `ArgvTool` or `YAMLArgvTool` class is an agent-facing adapter, not part of the
+external command implementation. Executable commands and their runtime
+libraries MUST NOT import `agentic_workflows` or depend on `WorkflowRecord`,
+`Value`, workflow rendering, or workflow interpretation. The adapter MAY mirror
+that external command contract and tests SHOULD detect drift, but dependency
+flow is one-way: imperative workflows know how to invoke external commands;
+external commands do not know that imperative workflows exist.
 
-Repeated deterministic command sequences SHOULD be extracted into a capability
-bin command rather than spelled out as a chain of workflow-level tool calls. For
-example, isolated research result integration should use a helper such as
-`research-coordinator-finalization`, and branch integration Git plumbing
-should use a helper such as `research-coordinator-branch-integrate`. The
-workflow should show the semantic boundary; the helper should own the exact
-`git fetch`, `git add`, `git commit`, `git push`, merge, cherry-pick, and check
-sequence.
+A `PythonTool` is a launcher-level structured operation: its annotated fields,
+`execute()` implementation, and typed result are canonical. It is defined with
+the launcher-owned `agentic_tools` contract and does not require imperative
+workflows. A non-workflow agent MAY invoke it through `agentic-tool
+module:Class`, sending a JSON or YAML mapping on stdin and receiving JSON on
+stdout; `--schema` returns the input JSON Schema. Capabilities MAY provide a
+thin named `bin/` wrapper around that generic adapter. Do not create a second
+command implementation or duplicate validation merely to expose a native tool
+on PATH. Imperative workflows consume the same object in-process.
+
+Repeated deterministic Python work SHOULD be extracted into a `PythonTool` or
+`ExecutableWorkflow` rather than spelled out as workflow-level tool calls. Use
+a capability command when the operation also needs an independently useful
+external interface. The workflow should show the semantic boundary; one
+canonical implementation should own the exact operation sequence.
 
 ## Workflow Consumption Modes
 

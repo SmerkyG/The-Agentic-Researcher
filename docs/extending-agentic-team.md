@@ -15,10 +15,10 @@ A capability is one selected package. It may contain any combination of these pa
 
 ```text
   capabilities/<name>/
-  capability.toml        # optional metadata and capability dependencies
+  capability.toml        # metadata, dependencies, structured tools, and Python hooks
   agents/                 # optional main-agent and subagent definitions
     agent-name.md
-  package/                # optional Python workflow contracts and operations
+  package/                # optional structured Python tools and workflow modules
     python-package/
   instruction-modules/    # optional reusable Markdown included by agents
     module-name.md
@@ -32,9 +32,7 @@ A capability is one selected package. It may contain any combination of these pa
   lib/                     # optional private support code for bin/hooks/render/launcher code
     common.sh
   render.py                # optional Python instruction renderer
-  hooks/
-    setup                  # optional instruction/state lifecycle hook
-    post-compaction
+  hooks/                  # optional legacy executable lifecycle hooks
   launcher/                # optional sourced launcher hooks
     preflight.sh
     setup.sh
@@ -108,13 +106,33 @@ remote-run --status
 remote-run node1 --bg -- uv run python train.py
 ```
 
-Structured actions use the same `bin/` directory:
+Keep `bin/` primarily for human-oriented commands and compatibility entrypoints.
+Structured agent actions normally do not need one executable per tool: declare
+the Python tool in `capability.toml` and the launcher exposes it through one MCP
+server. A command wrapper remains useful for shell users or CLIs without native
+MCP support:
 
 ```bash
 experiment-log append <<'YAML'
 summary: ...
 YAML
 ```
+
+When a capability already implements an operation as an importable
+`PythonTool`, such a compatibility command should be a thin structured wrapper
+instead of a second implementation:
+
+```sh
+#!/bin/sh
+exec agentic-tool package.module:ToolClass
+```
+
+The wrapper accepts a JSON or YAML mapping on stdin and emits the typed result
+as JSON. `agentic-tool package.module:ToolClass --schema` emits its input JSON
+Schema from the same Python annotations and `Value` descriptions. Keep a
+handwritten argparse command only when users benefit from a custom positional,
+subcommand, or formatted interface. This structured tool surface is provided
+by the launcher and does not require the `imperative-workflows` capability.
 
 Commands are added to `PATH` in this order:
 
@@ -128,6 +146,56 @@ Use `lib/` for private support code used by that capability's own commands,
 hooks, renderer, and launcher scripts. The launcher does not add capability
 `lib/` directories to `PATH`; command entrypoints should load private helpers
 relative to their own location.
+
+### Structured Python tools
+
+Enabled capability `package/` directories are placed on `$AR_TOOL_PATH` and on
+the launched process's Python import path. Define canonical JSON/YAML tools
+against the launcher-owned contract:
+
+```python
+from agentic_tools import PythonTool, Record, Value
+
+
+class CheckResult(Record):
+    valid: bool
+    detail: str
+
+
+class CheckMetadata(PythonTool[CheckResult]):
+    path: str = Value("Metadata file to check")
+
+    def execute(self) -> CheckResult:
+        ...
+```
+
+Register the tool under a stable, globally unique snake-case name:
+
+```toml
+[tools]
+check_metadata = "my_capability.tools:CheckMetadata"
+```
+
+For Codex, Claude, Gemini, OpenCode, and Pi, the launcher registers a single `agentic_tools`
+MCP server containing every `[tools]` entry from the enabled capabilities. The
+MCP input schema is derived from the same annotations and `Value` descriptions,
+and results are returned as structured content. Pi loads the pinned
+`pi-mcp-extension` package for this transport; override its package spec with
+`AR_PI_MCP_EXTENSION_SPEC` when testing an upgrade. This does not require the
+`imperative-workflows` capability.
+
+The same tool can be invoked from a shell or a CLI without MCP through the
+generic compatibility adapter:
+
+```bash
+agentic-tool my_capability.tools:CheckMetadata <<'JSON'
+{"path": "metadata.json"}
+JSON
+```
+
+Imperative workflows accept the same `PythonTool` object in-process. Put the
+domain implementation in an ordinary Python package and keep `execute()` thin
+when other Python callers also need the behavior.
 
 ### `render.py`
 
@@ -188,7 +256,7 @@ declarative prose guidance:
 
 ```text
 capabilities/<provider>/
-  package/<python-package>/     agent workflows and operations
+  package/<python-package>/     structured tools and optional agent workflows
   agents/                       agent manifests and prose guidance
   skills/                       on-demand skill definitions
 ```
@@ -209,14 +277,13 @@ Existing Markdown-only agents remain valid. Authors can preserve their prose,
 add one Python workflow class when imperative execution becomes useful, and
 then migrate individual tool, branch, and lifecycle regions over time.
 
-A modular skill uses the same tagged block but extends the current agent
+A modular skill references a package function and extends the current agent
 context instead of declaring a separately dispatched agent:
 
 ```yaml
 renderer: imperative-workflows
+workflow: agentic_workflows.research.do_research:do_research
 workflow_receiver: agentic_workflows.research.research_coordinator:ResearchCoordinator
-workflow_module: agentic_workflows.research.do_research
-workflow_entry: do_research
 ```
 
 Its entry is an ordinary function whose first parameter is annotated with the
@@ -229,22 +296,35 @@ def do_research(self: ResearchCoordinator) -> None:
 
 The launcher validates that annotation, walks imports from the receiver and
 skill module, preserves normal skill discovery fields such as `name` and
-`description`, and strips the `workflow_*` metadata from the installed
-`SKILL.md`. Plain Markdown skills remain valid.
+`description`, and strips the workflow metadata from the installed `SKILL.md`.
+The implementation belongs in the capability's `package/` tree; the skill
+Markdown retains only discovery metadata and user-facing guidance. Plain
+Markdown skills remain valid. Legacy `python agentic-workflow` fences remain
+supported so an existing Markdown skill can migrate piecemeal, but new
+executable skills should reference an importable package function.
 
-### `hooks/`
+### Lifecycle hooks
 
-Use `hooks/` when a capability owns refreshed instruction state or other
-launcher lifecycle work.
-Each lifecycle hook is its own executable file; missing hooks are treated as
-no-ops:
+Use importable Python lifecycle hooks when a capability owns refreshed
+instruction state or other launcher lifecycle work. Declare the functions in
+`capability.toml`:
 
-```text
-hooks/setup
-hooks/post-compaction
-hooks/refresh-loop
-hooks/cleanup
+```toml
+[hooks]
+setup = "my_capability.hooks:setup"
+post-compaction = "my_capability.hooks:post_compaction"
+refresh-loop = "my_capability.hooks:refresh_loop"
+create-work = "my_capability.hooks:create_work"
+cleanup = "my_capability.hooks:cleanup"
 ```
+
+Each function takes no arguments and reads the lifecycle context from the
+environment below. The launcher imports it from the capability's `package/`
+tree. Named-work creation invokes registered Python hooks in-process; other
+launcher phases use the same generic hook runner. An executable
+`hooks/<lifecycle-name>` remains a migration fallback when no Python hook is
+declared, but new hooks should be package functions rather than shell wrappers
+around Python.
 
 The launcher passes common context through environment variables:
 
@@ -261,8 +341,10 @@ AT_REFRESH_INTERVAL_SECONDS
 AT_STALE_SECONDS
 ```
 
-The built-in `agentic-notes` capability uses lifecycle hooks to initialize and
-refresh Agentic Notes. It uses `render.py` to render Agentic Notes guidance,
+The built-in `agentic-notes` capability uses package-native lifecycle hooks to
+initialize, refresh, and inherit Agentic Notes. The research coordinator uses a
+package-native `create-work` hook for inherited research context. Agentic Notes
+uses `render.py` to render its guidance,
 always-injected notes, and on-demand note listings. The built-in
 `experiment-log` capability uses `render.py` to render work-branch
 experiment-log guidance.

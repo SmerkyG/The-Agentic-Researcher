@@ -105,6 +105,10 @@ older_than_days: 7
 YAML
 ```
 
+Imperative workflows call the corresponding native Python tools in
+`agentic_workflows.branch` directly. These commands are thin JSON/YAML wrappers
+over the same implementation for non-workflow agents and shell automation.
+
 `branch-temporary-worktree create` makes a detached linked worktree from a named
 source worktree's current commit. `publish` creates one commit and advances the
 captured source branch only when it still points to the captured base commit;

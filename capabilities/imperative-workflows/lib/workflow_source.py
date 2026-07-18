@@ -112,12 +112,60 @@ def parse_workflow_definition(
     workflow = frontmatter.get("workflow")
     interface = frontmatter.get("workflow_interface")
     receiver = frontmatter.get("workflow_receiver")
-    if sum(bool(value) for value in (workflow, interface, receiver)) != 1:
+    if interface and (workflow or receiver):
         raise WorkflowSourceError(
-            f"{source_path}: specify exactly one of workflow, workflow_interface, "
-            "or workflow_receiver"
+            f"{source_path}: workflow_interface cannot be combined with workflow or "
+            "workflow_receiver"
         )
-    if workflow:
+    if not any((workflow, interface, receiver)):
+        raise WorkflowSourceError(
+            f"{source_path}: specify workflow, workflow_interface, or workflow_receiver"
+        )
+    if receiver:
+        kind = "skill"
+        agent_kind = None
+        receiver_module, receiver_symbol = split_reference(
+            receiver,
+            field="workflow_receiver",
+            path=source_path,
+        )
+        interface_module = interface_symbol = None
+        if workflow:
+            if matches:
+                raise WorkflowSourceError(
+                    f"{source_path}: a workflow-referenced skill must not contain a "
+                    "`python agentic-workflow` block"
+                )
+            implementation_module, implementation_symbol = split_reference(
+                workflow,
+                field="workflow",
+                path=source_path,
+            )
+            block_start = block_end = len(body)
+        else:
+            if len(matches) != 1:
+                raise WorkflowSourceError(
+                    f"{source_path}: expected exactly one `python agentic-workflow` block, "
+                    f"found {len(matches)}"
+                )
+            try:
+                implementation_module = frontmatter["workflow_module"]
+                implementation_symbol = frontmatter["workflow_entry"]
+            except KeyError as exc:
+                raise WorkflowSourceError(
+                    f"{source_path}: missing frontmatter key {exc.args[0]}"
+                ) from exc
+            block = matches[0]
+            block_start = block.start()
+            block_end = block.end()
+            code = block.group("code")
+            try:
+                ast.parse(code, filename=str(source_path))
+            except SyntaxError as exc:
+                raise WorkflowSourceError(
+                    f"{source_path}:{exc.lineno}: invalid workflow Python: {exc.msg}"
+                ) from exc
+    elif workflow:
         if matches:
             raise WorkflowSourceError(
                 f"{source_path}: a workflow-referenced agent must not contain a "
@@ -155,37 +203,6 @@ def parse_workflow_definition(
             path=source_path,
         )
         receiver_module = receiver_symbol = None
-        block = matches[0]
-        block_start = block.start()
-        block_end = block.end()
-        code = block.group("code")
-        try:
-            ast.parse(code, filename=str(source_path))
-        except SyntaxError as exc:
-            raise WorkflowSourceError(
-                f"{source_path}:{exc.lineno}: invalid workflow Python: {exc.msg}"
-            ) from exc
-    else:
-        if len(matches) != 1:
-            raise WorkflowSourceError(
-                f"{source_path}: expected exactly one `python agentic-workflow` block, "
-                f"found {len(matches)}"
-            )
-        try:
-            implementation_module = frontmatter["workflow_module"]
-            implementation_symbol = frontmatter["workflow_entry"]
-        except KeyError as exc:
-            raise WorkflowSourceError(
-                f"{source_path}: missing frontmatter key {exc.args[0]}"
-            ) from exc
-        kind = "skill"
-        agent_kind = None
-        receiver_module, receiver_symbol = split_reference(
-            receiver or "",
-            field="workflow_receiver",
-            path=source_path,
-        )
-        interface_module = interface_symbol = None
         block = matches[0]
         block_start = block.start()
         block_end = block.end()
@@ -630,9 +647,11 @@ immediately:
 - `subagent_run`: start the named subagent with exactly `inputs`, wait for its
   typed result, and resume with `payload={{"result": ...}}`; on failure resume
   with an `error` string.
-- `ask_user`: ask the supplied question and end the turn. When the user answers,
-  call `resume_workflow` with `payload={{"answer": "..."}}`, then continue
-  processing.
+- `ask_user`: treat `instructions` as a model-facing contract for the question,
+  not necessarily verbatim user prose. Using retained context, formulate and ask
+  the concise user-facing prompt that satisfies it, then end the turn. When the
+  user answers, call `resume_workflow` with `payload={{"answer": "..."}}`, then
+  continue processing.
 - `request_error`: the workflow is still alive. Correct the structured tool
   arguments and retry only the pending boundary identified by the event. Never
   invent an empty payload for an agent request.
@@ -648,7 +667,7 @@ summary merely because one response turn is ending: only `ask_user`, `complete`,
 
 
 def render_callback_workflow(source_path: Path) -> str:
-    """Render compact instructions for a callback-capable Codex session."""
+    """Render compact instructions for a callback-capable CLI session."""
 
     definition = parse_workflow_definition(source_path)
     if definition.kind != "agent":
@@ -715,7 +734,7 @@ def render_callback_skill(
     *,
     package_roots: Sequence[Path],
 ) -> str:
-    """Render a Codex skill as activation of its receiver callback workflow."""
+    """Render a skill as activation of its receiver callback workflow."""
 
     definition = parse_workflow_definition(source_path)
     if definition.kind != "skill":

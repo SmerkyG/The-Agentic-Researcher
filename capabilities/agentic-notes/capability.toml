@@ -1,0 +1,14 @@
+description = "Provide Git-backed reusable agent notes."
+requires = []
+
+[tools]
+agentic_notes_read_topic = "agentic_notes.tools.read:AgenticNotesReadTopicTool"
+agentic_notes_read = "agentic_notes.tools.read:AgenticNotesReadTool"
+agentic_notes_update = "agentic_notes.tools.update:AgenticNotesUpdateTool"
+agentic_notes_rewrite = "agentic_notes.tools.rewrite:AgenticNotesRewriteTool"
+
+[hooks]
+setup = "agentic_notes.hooks:setup"
+post-compaction = "agentic_notes.hooks:post_compaction"
+refresh-loop = "agentic_notes.hooks:refresh_loop"
+create-work = "agentic_notes.hooks:create_work"

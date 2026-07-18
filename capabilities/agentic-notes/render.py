@@ -4,23 +4,13 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from pathlib import Path
-import runpy
 from types import SimpleNamespace
 from typing import Any
 
-
-_INTERNAL: dict[str, Any] | None = None
-
-
-def internal() -> dict[str, Any]:
-    global _INTERNAL
-    if _INTERNAL is None:
-        _INTERNAL = runpy.run_path(str(Path(__file__).resolve().parent / "lib" / "agentic-notes-internal"))
-    return _INTERNAL
+from agentic_notes import state
 
 
 def with_render_locks(ctx: Any, command: str, agent_types: list[str], render: Any) -> Any:
-    api = internal()
     args = SimpleNamespace(
         command=command,
         project_dir=str(ctx.project_dir),
@@ -28,16 +18,15 @@ def with_render_locks(ctx: Any, command: str, agent_types: list[str], render: An
         dynamic_only=False,
     )
     with ExitStack() as stack:
-        for lock_path in api["lock_paths_for_args"](args):
-            stack.enter_context(api["state_lock"](lock_path))
+        for lock_path in state.lock_paths_for_args(args):
+            stack.enter_context(state.state_lock(lock_path))
         return render()
 
 
 def build_section(ctx: Any, agent_type: str, *, include_guidance: bool) -> str:
-    api = internal()
-    return api["build_notes_section"](
+    return state.build_notes_section(
         ctx.project_dir,
-        api["agent_type"](agent_type),
+        state.agent_type(agent_type),
         include_guidance=include_guidance,
     ).rstrip()
 
@@ -67,13 +56,11 @@ def render_agent_section(ctx: Any, agent_type: str) -> str:
 
 
 def render_agent_sections(ctx: Any, agent_types: list[str]) -> dict[str, str]:
-    api = internal()
-
     def render() -> dict[str, str]:
         rendered: dict[str, str] = {}
         seen: set[str] = set()
         for raw_agent_type in agent_types:
-            active_agent_type = api["agent_type"](raw_agent_type)
+            active_agent_type = state.agent_type(raw_agent_type)
             if active_agent_type in seen:
                 continue
             seen.add(active_agent_type)

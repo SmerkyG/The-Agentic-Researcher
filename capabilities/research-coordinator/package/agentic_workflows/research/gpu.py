@@ -15,15 +15,6 @@ class LocalGpuCapacity(WorkflowRecord):
     status_text: str = ""
 
 
-class ReadEnvironmentVariableTool(ArgvTool[CommandResult]):
-    argv_template: ClassVar[tuple[str, ...]] = ("sh", "-lc")
-    name: str
-    default: str = ""
-
-    def argv(self) -> list[str]:
-        return [*self.argv_template, f'printf "%s" "${{{self.name}:-{self.default}}}"']
-
-
 class NvidiaSmiGpuIdsTool(ArgvTool[CommandResult]):
     argv_template: ClassVar[tuple[str, ...]] = (
         "nvidia-smi", "--query-gpu=index", "--format=csv,noheader",
@@ -35,7 +26,7 @@ class RocmSmiGpuIdsTool(ArgvTool[CommandResult]):
 
 
 def discover_local_gpu_capacity() -> LocalGpuCapacity:
-    nvidia: CommandResult = NvidiaSmiGpuIdsTool().run()
+    nvidia: CommandResult = NvidiaSmiGpuIdsTool().run(agent_visibility="hidden")
     if nvidia.returncode == 0 and nvidia.stdout.strip():
         return LocalGpuCapacity(
             vendor="nvidia",
@@ -43,7 +34,7 @@ def discover_local_gpu_capacity() -> LocalGpuCapacity:
             status_text=nvidia.stdout,
         )
 
-    rocm: CommandResult = RocmSmiGpuIdsTool().run()
+    rocm: CommandResult = RocmSmiGpuIdsTool().run(agent_visibility="hidden")
     if rocm.returncode == 0 and rocm.stdout.strip():
         device_ids = [
             line.split(",", 1)[0].strip()

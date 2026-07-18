@@ -55,15 +55,23 @@ def test_callback_cli_preserves_python_stack_across_agent_request(tmp_path: Path
     agents.mkdir()
     (package / "demo_workflow.py").write_text(
         "from agentic_workflows.contract import UserFacingWorkflow\n"
-        "from agentic_workflows.fill_spec import field, step, var\n\n\n"
+        "from agentic_workflows.request_spec import AgentRequest, local, result, step\n\n\n"
         "class Demo(UserFacingWorkflow[str]):\n"
         "    prefix: str\n\n"
         "    def workflow(self) -> str:\n"
-        "        with self.agent_request() as result:\n"
-        "            var('internal', int, 'one internal answer')\n"
+        "        self.queue_agent_observation(\n"
+        "            {'source': 'tool', 'value': 7},\n"
+        "            desc='Focused tool result.',\n"
+        "        )\n"
+        "        class Request(AgentRequest):\n"
+        "            internal: int = local('one internal answer')\n"
         "            step('Perform one declarative action.')\n"
-        "            field('answer', str, 'returned answer')\n"
-        "        return self.prefix + ':' + result.answer\n",
+        "            answer: str = result('returned answer')\n"
+        "        response = self.agent_request(Request)\n"
+        "        user_answer = self.ask_user(\n"
+        "            'Ask the user to confirm the generated answer and explain any correction.'\n"
+        "        )\n"
+        "        return self.prefix + ':' + response.answer + ':' + user_answer\n",
         encoding="utf-8",
     )
     (agents / "demo.md").write_text(
@@ -94,6 +102,9 @@ workflow: demo_workflow:Demo
     assert started.returncode == 0, started.stderr
     assert first["status"] == "agent_request"
     assert "Perform one declarative action" in first["instructions"]
+    assert "External observations queued for this request" in first["instructions"]
+    assert "Focused tool result." in first["instructions"]
+    assert '"source": "tool"' in first["instructions"]
 
     inspected, worker = _invoke(
         env,
@@ -119,17 +130,31 @@ workflow: demo_workflow:Demo
     assert retried["status"] == "agent_request"
     assert "missing assignments" in retried["validation_error"]
 
-    completed, final = _invoke(
+    requested, question = _invoke(
         env,
         "resume",
         str(retried["run_id"]),
         str(retried["boundary_id"]),
         payload={"assignments": {"internal": 7, "answer": "done"}},
     )
+    assert requested.returncode == 0, requested.stderr
+    assert question["status"] == "ask_user"
+    assert question["instructions"] == (
+        "Ask the user to confirm the generated answer and explain any correction."
+    )
+    assert "question" not in question
+
+    completed, final = _invoke(
+        env,
+        "resume",
+        str(question["run_id"]),
+        str(question["boundary_id"]),
+        payload={"answer": "confirmed"},
+    )
     assert completed.returncode == 0, completed.stderr
     assert final == {
         "boundary_id": None,
-        "result": "kept:done",
+        "result": "kept:done:confirmed",
         "run_id": first["run_id"],
         "status": "complete",
     }
@@ -193,16 +218,148 @@ class DemoWorkflow(Demo):
     assert cancellation["status"] == "cancelled"
 
 
+def test_callback_rejects_unconsumed_queued_observations(tmp_path: Path) -> None:
+    bundle = tmp_path / "demo"
+    package = bundle / "package"
+    agents = bundle / "agents"
+    package.mkdir(parents=True)
+    agents.mkdir()
+    (package / "demo_workflow.py").write_text(
+        "from agentic_workflows.contract import UserFacingWorkflow\n\n"
+        "class Demo(UserFacingWorkflow[None]):\n"
+        "    def workflow(self) -> None:\n"
+        "        self.queue_agent_observation({'unused': True})\n",
+        encoding="utf-8",
+    )
+    (agents / "demo.md").write_text(
+        "---\nname: demo\nkind: main\nrenderer: imperative-workflows\n"
+        "workflow: demo_workflow:Demo\n---\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["AR_WORKFLOW_PATH"] = os.pathsep.join(
+        [str(package), str(IMPERATIVE_PACKAGE)]
+    )
+    env["AR_RUNTIME_ROOT"] = str(tmp_path / "runtime")
+
+    started, event = _invoke(
+        env,
+        "start",
+        "demo_workflow:Demo",
+        payload={},
+    )
+
+    assert started.returncode == 1
+    assert event["status"] == "failed"
+    assert "unconsumed queued agent observations" in event["error"]
+
+
+def test_callback_automatically_observes_top_level_operations_with_visibility_overrides(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "demo"
+    package = bundle / "package"
+    agents = bundle / "agents"
+    package.mkdir(parents=True)
+    agents.mkdir()
+    (package / "demo_workflow.py").write_text(
+        "import sys\n"
+        "from agentic_workflows.contract import (\n"
+        "    ArgvTool, CommandResult, ExecutableWorkflow, Job, UserFacingWorkflow,\n"
+        ")\n"
+        "from agentic_workflows.request_spec import AgentRequest, result\n\n\n"
+        "class EchoTool(ArgvTool[CommandResult]):\n"
+        "    \"\"\"Echo one typed input.\"\"\"\n"
+        "    text: str\n\n"
+        "    def argv(self) -> list[str]:\n"
+        "        return [sys.executable, '-c', 'import sys; print(sys.argv[1])', self.text]\n\n\n"
+        "class HiddenEchoTool(EchoTool):\n"
+        "    agent_visibility = 'hidden'\n\n\n"
+        "class EchoBundle(ExecutableWorkflow[CommandResult]):\n"
+        "    \"\"\"Run an encapsulated echo operation.\"\"\"\n"
+        "    text: str\n\n"
+        "    def workflow(self) -> CommandResult:\n"
+        "        return EchoTool(text=self.text).run()\n\n\n"
+        "class Demo(UserFacingWorkflow[str]):\n"
+        "    def workflow(self) -> str:\n"
+        "        EchoTool(text='default-shown').run()\n"
+        "        EchoTool(text='call-hidden').run(agent_visibility='hidden')\n"
+        "        HiddenEchoTool(text='override-shown').run(agent_visibility='shown')\n"
+        "        EchoBundle(text='nested-child-hidden').run()\n"
+        "        job: Job[CommandResult] = self.launch(EchoTool(text='async-shown'))\n"
+        "        self.wait(job)\n"
+        "        class Request(AgentRequest):\n"
+        "            answer: str = result('acknowledgement')\n"
+        "        response = self.agent_request(Request)\n"
+        "        EchoTool(text='unused-after-last-request').run()\n"
+        "        return response.answer\n",
+        encoding="utf-8",
+    )
+    (agents / "demo.md").write_text(
+        "---\nname: demo\nkind: main\nrenderer: imperative-workflows\n"
+        "workflow: demo_workflow:Demo\n---\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["AR_WORKFLOW_PATH"] = os.pathsep.join(
+        [str(package), str(IMPERATIVE_PACKAGE)]
+    )
+    env["AR_RUNTIME_ROOT"] = str(tmp_path / "runtime")
+
+    started, event = _invoke(
+        env,
+        "start",
+        "demo_workflow:Demo",
+        payload={},
+    )
+
+    assert started.returncode == 0, started.stderr
+    assert event["status"] == "agent_request"
+    instructions = event["instructions"]
+    assert "Echo one typed input." in instructions
+    assert '"text": "default-shown"' in instructions
+    assert '"text": "override-shown"' in instructions
+    assert '"text": "async-shown"' in instructions
+    assert '"status": "completed"' in instructions
+    assert '"stdout": "async-shown\\n"' in instructions
+    assert '"text": "call-hidden"' not in instructions
+    assert '"text": "nested-child-hidden"' in instructions
+    assert "Run an encapsulated echo operation." in instructions
+    assert instructions.count("demo_workflow:EchoBundle") == 1
+    # The child EchoTool is suppressed; the concrete text appears only as the
+    # bundle's own typed input and result.
+    nested_section = instructions.split("demo_workflow:EchoBundle", 1)[1]
+    assert "demo_workflow:EchoTool" not in nested_section.split("Observation", 1)[0]
+
+    completed, final = _invoke(
+        env,
+        "resume",
+        str(event["run_id"]),
+        str(event["boundary_id"]),
+        payload={"assignments": {"answer": "seen"}},
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert final["status"] == "complete"
+    assert final["result"] == "seen"
+
+
 def test_callback_mcp_uses_structured_arguments_without_shell_stdin(tmp_path: Path) -> None:
     bundle = tmp_path / "demo"
     package = bundle / "package"
     agents = bundle / "agents"
     package.mkdir(parents=True)
     agents.mkdir()
-    (package / "demo_contract.py").write_text(
-        "from agentic_workflows.contract import UserFacingWorkflow\n\n\n"
+    (package / "demo_workflow.py").write_text(
+        "from agentic_workflows.contract import UserFacingWorkflow\n"
+        "from agentic_workflows.request_spec import AgentRequest, local, result\n\n\n"
         "class Demo(UserFacingWorkflow[str]):\n"
-        "    prefix: str\n",
+        "    prefix: str\n\n"
+        "    def workflow(self) -> str:\n"
+        "        class Request(AgentRequest):\n"
+        "            internal: str = local('a long internal answer')\n"
+        "            answer: str = result('returned answer')\n"
+        "        response = self.agent_request(Request)\n"
+        "        return self.prefix + ':' + response.answer\n",
         encoding="utf-8",
     )
     (agents / "demo.md").write_text(
@@ -210,23 +367,8 @@ def test_callback_mcp_uses_structured_arguments_without_shell_stdin(tmp_path: Pa
 name: demo
 kind: main
 renderer: imperative-workflows
-workflow_interface: demo_contract:Demo
-workflow_module: demo_workflow
-workflow_entry: DemoWorkflow
+workflow: demo_workflow:Demo
 ---
-
-```python agentic-workflow
-from agentic_workflows.fill_spec import field, var
-from demo_contract import Demo
-
-
-class DemoWorkflow(Demo):
-    def workflow(self) -> str:
-        with self.agent_request() as result:
-            var("internal", str, "a long internal answer")
-            field("answer", str, "returned answer")
-        return self.prefix + ":" + result.answer
-```
 """,
         encoding="utf-8",
     )
@@ -256,7 +398,7 @@ class DemoWorkflow(Demo):
                 started = await session.call_tool(
                     "start_workflow",
                     {
-                        "implementation": "demo_workflow:DemoWorkflow",
+                        "implementation": "demo_workflow:Demo",
                         "inputs": {"prefix": "kept"},
                     },
                 )

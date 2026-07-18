@@ -109,6 +109,25 @@ capability_hook_path() {
     return 1
 }
 
+capability_python_hook_registered() {
+    local capability_name="$1"
+    local hook_name="$2"
+    local root manifest
+
+    root="$(capability_root "$capability_name")" || return 1
+    manifest="$root/capability.toml"
+    [[ -f "$manifest" ]] || return 1
+    python3 - "$manifest" "$hook_name" <<'PY'
+import sys
+import tomllib
+from pathlib import Path
+
+document = tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+hooks = document.get("hooks", {})
+raise SystemExit(0 if isinstance(hooks, dict) and isinstance(hooks.get(sys.argv[2]), str) else 1)
+PY
+}
+
 capability_bin_host_paths() {
     local capability_name root bin_dir
 
@@ -175,12 +194,38 @@ join_colon_paths() {
     printf '%s\n' "$joined"
 }
 
-capability_workflow_host_path() {
+capability_package_host_path() {
     capability_package_host_paths | join_colon_paths
 }
 
-capability_workflow_runtime_path() {
+capability_package_runtime_path() {
     capability_package_runtime_paths | join_colon_paths
+}
+
+enabled_capabilities_have_tools() {
+    local capability_name root manifest
+
+    for capability_name in $(enabled_capability_names); do
+        root="$(capability_root "$capability_name")" || continue
+        manifest="$root/capability.toml"
+        [[ -f "$manifest" ]] || continue
+        if grep -Eq '^\[tools(\.|\])' "$manifest"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+agentic_tools_mcp_runtime_command() {
+    printf '%s/agentic-tools-mcp\n' "$(ar_core_bin_env_path)"
+}
+
+imperative_workflows_mcp_runtime_command() {
+    local root runtime_root
+    capability_enabled imperative-workflows || return 1
+    root="$(capability_root imperative-workflows)" || return 1
+    runtime_root="$(capability_runtime_root imperative-workflows "$root")"
+    printf '%s/bin/imperative-workflows-mcp\n' "$runtime_root"
 }
 
 capability_hook_call() {
@@ -188,11 +233,19 @@ capability_hook_call() {
     local hook_name="$2"
     shift
     shift
-    local hook_exe
+    local hook_exe root
+    local -a hook_command
 
-    if ! hook_exe="$(capability_hook_path "$capability_name" "$hook_name")"; then
+    if capability_python_hook_registered "$capability_name" "$hook_name"; then
+        root="$(capability_root "$capability_name")" || return 1
+        hook_exe="$SCRIPT_DIR/scripts/bin/agentic-hook"
+        hook_command=("$hook_exe" "$root" "$hook_name")
+    elif ! hook_exe="$(capability_hook_path "$capability_name" "$hook_name")"; then
         return 0
+    else
+        hook_command=("$hook_exe")
     fi
+
     AT_PROJECT_DIR="${CAPABILITY_HOOK_PROJECT_DIR:-$WORKSPACE_DIR}" \
     AT_BRANCH="${CAPABILITY_HOOK_BRANCH:-${WORKSPACE_GIT_BRANCH:-}}" \
     AT_SESSION_ID="${CAPABILITY_HOOK_SESSION_ID:-${AR_SESSION_ID:-}}" \
@@ -203,7 +256,7 @@ capability_hook_call() {
     AT_HEARTBEAT_DIR="${CAPABILITY_HOOK_HEARTBEAT_DIR:-}" \
     AT_REFRESH_INTERVAL_SECONDS="${CAPABILITY_HOOK_INTERVAL_SECONDS:-}" \
     AT_STALE_SECONDS="${CAPABILITY_HOOK_STALE_SECONDS:-}" \
-        "$hook_exe" "$@"
+        "${hook_command[@]}" "$@"
 }
 
 project_agent_root_for_cli() {

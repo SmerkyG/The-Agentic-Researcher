@@ -132,6 +132,14 @@ ar_core_command_lib_host_path() {
     printf '%s/scripts/lib/commands\n' "$SCRIPT_DIR"
 }
 
+ar_core_package_env_path() {
+    printf '%s/scripts/package\n' "$(ar_install_env_path)"
+}
+
+ar_core_package_host_path() {
+    printf '%s/scripts/package\n' "$SCRIPT_DIR"
+}
+
 join_path_entries() {
     local path_prefix="" entry
     while IFS= read -r entry; do
@@ -225,18 +233,21 @@ ar_capability_execution_env_pairs() {
 ar_agent_command_env_pairs() {
     local install_dir="$1"
     local path_prefix="$2"
-    local command_lib_path workflow_path
+    local command_lib_path core_package_path tool_path
 
     path_env_pair "$path_prefix"
     if [[ "$install_dir" == "$SCRIPT_DIR" ]]; then
         command_lib_path="$(ar_core_command_lib_host_path)"
-        workflow_path="$(capability_workflow_host_path)"
+        core_package_path="$(ar_core_package_host_path)"
+        tool_path="$(capability_package_host_path)"
     else
         command_lib_path="$(ar_core_command_lib_env_path)"
-        workflow_path="$(capability_workflow_runtime_path)"
+        core_package_path="$(ar_core_package_env_path)"
+        tool_path="$(capability_package_runtime_path)"
     fi
-    pythonpath_env_pair "$command_lib_path"
-    printf 'AR_WORKFLOW_PATH=%s\n' "$workflow_path"
+    pythonpath_env_pair "$core_package_path:$command_lib_path${tool_path:+:$tool_path}"
+    printf 'AR_TOOL_PATH=%s\n' "$tool_path"
+    printf 'AR_WORKFLOW_PATH=%s\n' "$tool_path"
     ar_core_env_pairs "$install_dir"
     ar_agent_context_env_pairs
     ar_capability_config_env_pairs

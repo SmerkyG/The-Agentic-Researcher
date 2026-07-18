@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal
 
-from agentic_workflows.contract import CommandResult, SubagentWorkflow, Value, WorkflowRecord
-from agentic_workflows.fill_spec import field, observe
-from agentic_workflows.research.agentic_notes_read import AgenticNotesReadTool
-from agentic_workflows.research.agentic_notes_rewrite import AgenticNotesRewriteTool
-from agentic_workflows.research.agentic_notes_update import AgenticNotesUpdateTool
+from agentic_workflows.contract import SubagentWorkflow, Value, WorkflowRecord
+from agentic_workflows.request_spec import AgentRequest, result
+from agentic_notes.tools.read import AgenticNotesReadTool
+from agentic_notes.tools.rewrite import AgenticNotesRewriteTool
+from agentic_notes.tools.update import AgenticNotesUpdateTool
 
 
 class NoteUpdaterResult(WorkflowRecord):
@@ -32,41 +32,39 @@ class NoteUpdater(SubagentWorkflow[NoteUpdaterResult]):
     note_update: AgenticNotesUpdateTool
 
     def workflow(self) -> NoteUpdaterResult:
-        with self.agent_request() as triage:
-            field(
-                "decision",
-                SkipNote | ApplyNote,
+        class Triage(AgentRequest):
+            decision: SkipNote | ApplyNote = result(
                 "whether to skip this proposal or apply it at the narrowest durable scope",
             )
+
+        triage = self.agent_request(Triage)
 
         match triage.decision:
             case SkipNote():
                 return NoteUpdaterResult(status="skipped")
             case ApplyNote(scope=scope):
                 self.note_update.target.scope = scope
-        update: CommandResult = self.note_update.run()
-        if update.returncode != 0:
+        try:
+            self.note_update.run()
+            AgenticNotesReadTool(target=self.note_update.target).run()
+        except Exception:
             return NoteUpdaterResult(status="failed")
 
-        rendered: CommandResult = AgenticNotesReadTool(target=self.note_update.target).run()
-        if rendered.returncode != 0:
-            return NoteUpdaterResult(status="failed")
-
-        with self.agent_request() as review:
-            observe(rendered_note=rendered)
-            field(
-                "replacement",
-                str | None,
+        class Review(AgentRequest):
+            replacement: str | None = result(
                 "complete terse replacement note when the rendered note is materially "
                 "worse through duplication, verbosity, or scope mismatch; otherwise null",
             )
 
+        review = self.agent_request(Review)
+
         if review.replacement is not None:
-            rewrite: CommandResult = AgenticNotesRewriteTool(
-                target=self.note_update.target,
-                content=review.replacement,
-            ).run()
-            if rewrite.returncode != 0:
+            try:
+                AgenticNotesRewriteTool(
+                    target=self.note_update.target,
+                    content=review.replacement,
+                ).run()
+            except Exception:
                 return NoteUpdaterResult(status="failed")
 
         return NoteUpdaterResult(status="updated")

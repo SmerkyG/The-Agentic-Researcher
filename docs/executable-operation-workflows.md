@@ -10,12 +10,72 @@ results, and exceptions. Its body may call command-backed tools and nested
 executable workflows. It must not call model primitives such as `do`,
 `evaluate`, `fill`, or `ask_user`.
 
+One deterministic operation implemented directly in Python should use
+`PythonTool`, not an `ExecutableWorkflow` and not a Python command wrapped in
+`ArgvTool`. Its `execute()` method owns the implementation and returns a typed
+result:
+
+```python
+from agentic_tools import PythonTool, Record, Value
+
+
+class Metadata(Record):
+    version: str
+
+
+class ReadMetadata(PythonTool[Metadata]):
+    path: str = Value("Metadata file path")
+
+    def execute(self) -> Metadata:
+        payload = json.loads(Path(self.path).read_text(encoding="utf-8"))
+        return Metadata(version=str(payload["version"]))
+```
+
+The persistent callback executor calls `execute()` in-process. Native tools may
+still invoke true external programs such as Git through `subprocess`; the point
+is to avoid launching another Python interpreter, serializing YAML, and
+reinstalling script dependencies merely to run Python code.
+
+Any importable `PythonTool` can also be exposed to non-workflow agents by
+declaring it in its capability manifest:
+
+```toml
+[tools]
+read_metadata = "package.module:ReadMetadata"
+```
+
+The launcher combines enabled declarations into one `agentic_tools` MCP server
+for Codex, Claude, Gemini, OpenCode, and Pi. This is the primary agent-facing surface: the
+model receives the derived JSON Schema and native structured result without
+discovering or invoking a command wrapper. The generic command adapter remains
+available for shell callers and CLIs without MCP:
+
+```bash
+agentic-tool package.module:ToolClass <<'JSON'
+{"path": "metadata.json"}
+JSON
+```
+
+The adapter accepts a JSON or YAML mapping, validates it against the tool's
+annotated fields, executes `execute()` in-process, and emits the typed result as
+JSON. JSON is valid YAML, so modern structured tool callers do not require a
+separate transport or an argparse flag for every field. A capability may place
+a thin named wrapper in its `bin/` directory when a stable command name is more
+convenient. Handwritten argparse interfaces remain appropriate only when a
+human-facing positional or formatted interface is materially better.
+The launcher provides this adapter and the `agentic_tools` contract even when
+the imperative-workflows capability is not enabled. Use `--schema` to emit the
+tool's input JSON Schema.
+
 Executable workflows must be top-level classes in importable package modules
 available through `$AR_WORKFLOW_PATH`. Their typed fields and `workflow()` body
 live together in that class. Do not define them only inside an agent Markdown
 workflow block: the generic CLI imports the class and executes its body.
 
 ```python
+from agentic_workflows.branch import BranchCommitTool, BranchSnapshotTool, Snapshot
+
+
 class PublishResult(ExecutableWorkflow[PublishTicket]):
     paths: list[str]
     message: str
@@ -79,11 +139,16 @@ objects or maintain a second graph representation.
 
 The generic CLI currently supports:
 
+- native `PythonTool` operations;
 - synchronous `ArgvTool` and `YAMLArgvTool` calls;
 - nested `ExecutableWorkflow` calls;
 - tracked parallel tool calls through `launch`, `wait`, `wait_all`, and
   `wait_any`;
 - fail-fast propagation of command and decoding errors.
+
+`imperative-workflows-run` is the `ExecutableWorkflow` adapter. The
+`agentic_tools` MCP server and core `agentic-tool` compatibility command are two
+transports over the same `PythonTool` records and result encoding.
 
 It intentionally does not support:
 

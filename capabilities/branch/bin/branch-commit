@@ -3,80 +3,16 @@
 # dependencies = ["PyYAML>=6.0"]
 # ///
 
-from __future__ import annotations
-
-import argparse
 from pathlib import Path
 import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+root = Path(__file__).resolve().parents[1]
+repo = root.parents[1]
+sys.path[:0] = [
+    str(root / "package"),
+    str(repo / "scripts" / "package"),
+]
 
-from command_common import CommandError, bool_from, load_request, main, print_json
-from branch_git_common import commit_snapshot_foreground, start_background_commit
+from agentic_workflows.branch_cli import commit_cli
 
-
-HELP = """Commit a snapshot created by branch-snapshot.
-
-Reads YAML from stdin.
-
-Example:
-  branch-commit <<'YAML'
-  snapshot_dir: /home/user/my-project-at/.runtime/commit-snapshots/123-research-main
-  background: true
-  YAML
-
-Fields:
-  snapshot_dir  Required. Directory returned by branch-snapshot.
-  background    Optional. Defaults to true. When true, queues a background
-                worker and returns immediately with a status path.
-
-Use branch-commit-status with the returned snapshot_dir or status_path only when
-later work truly needs progress, a commit hash, or an error report.
-"""
-
-
-def run_from_stdin() -> None:
-    request = load_request()
-    snapshot_dir = str(request.get("snapshot_dir") or "").strip()
-    if not snapshot_dir:
-        raise CommandError("snapshot_dir is required")
-
-    if bool_from(request.get("background"), default=True):
-        result = start_background_commit(
-            Path(snapshot_dir).expanduser().resolve(),
-            [sys.executable, str(Path(__file__).resolve()), "--worker", "--snapshot-dir", snapshot_dir],
-        )
-    else:
-        result = commit_snapshot_foreground(Path(snapshot_dir).expanduser().resolve())
-    response = {"command": "branch-commit", "commit_result": result}
-    response.update(result)
-    print_json(response)
-
-
-def run_worker(snapshot_dir: str) -> None:
-    result = commit_snapshot_foreground(Path(snapshot_dir).expanduser().resolve())
-    print_json(result)
-
-
-def cli() -> int:
-    parser = argparse.ArgumentParser(
-        prog="branch-commit",
-        description="Commit a branch-snapshot from a temporary worktree.",
-        epilog=HELP,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--snapshot-dir", help=argparse.SUPPRESS)
-    args = parser.parse_args()
-    if args.worker:
-        if not args.snapshot_dir:
-            print("branch-commit: --snapshot-dir is required for worker mode", file=sys.stderr)
-            return 1
-        return main(lambda: run_worker(args.snapshot_dir))
-    return main(run_from_stdin)
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli())
+raise SystemExit(commit_cli())

@@ -15,15 +15,25 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTIC_NOTES_INTERNAL = REPO_ROOT / "capabilities" / "agentic-notes" / "lib" / "agentic-notes-internal"
+AGENTIC_NOTES_STATE = REPO_ROOT / "capabilities" / "agentic-notes" / "package" / "agentic_notes" / "state.py"
 AGENTIC_NOTES = REPO_ROOT / "capabilities" / "agentic-notes" / "bin" / "agentic-notes"
 EXPERIMENT_LOG = REPO_ROOT / "capabilities" / "experiment-log" / "bin" / "experiment-log"
-REPORT_APPEND = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-report-append"
 FINALIZATION = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-finalization"
-INITIALIZE_RESEARCH_STATE = REPO_ROOT / "capabilities" / "research-coordinator" / "bin" / "research-coordinator-initialize-state"
 BRANCH_SNAPSHOT = REPO_ROOT / "capabilities" / "branch" / "bin" / "branch-snapshot"
 TEMPORARY_WORKTREE = REPO_ROOT / "capabilities" / "branch" / "bin" / "branch-temporary-worktree"
 AGENTIC_TEAM = REPO_ROOT / "agentic-team"
 AGENTIC_WORKSPACE = REPO_ROOT / "scripts" / "bin" / "agentic-workspace"
+IMPERATIVE_PACKAGE = REPO_ROOT / "capabilities" / "imperative-workflows" / "package"
+RESEARCH_PACKAGE = REPO_ROOT / "capabilities" / "research-coordinator" / "package"
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "package"))
+sys.path.insert(0, str(IMPERATIVE_PACKAGE))
+sys.path.insert(0, str(RESEARCH_PACKAGE))
+
+from agentic_workflows.execution import OperationExecutor  # noqa: E402
+from agentic_workflows.research.research_state import (  # noqa: E402
+    ResearchStateInitializeTool,
+)
+from agentic_workflows.research.report import ReportAppendResult, ReportAppendTool  # noqa: E402
 
 
 def test_builtin_subagents_have_one_contract_template() -> None:
@@ -72,26 +82,34 @@ def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
     return run(["git", *args], cwd=repo, check=check)
 
 
+def append_report(
+    work_state_dir: Path | str,
+    content: str,
+    *,
+    max_lines: int = 300,
+) -> ReportAppendResult:
+    with OperationExecutor() as executor:
+        return executor.run(
+            ReportAppendTool(
+                work_state_dir=str(work_state_dir),
+                content=content,
+                max_lines=max_lines,
+            )
+        )
+
+
 def test_research_report_append_uses_latest_numbered_page(tmp_path: Path) -> None:
     state = tmp_path / "work-state"
     state.mkdir()
 
-    first = run(
-        [str(REPORT_APPEND)],
-        input=yaml.safe_dump({"work_state_dir": str(state), "content": "## First result\n\nEvidence."}),
-    )
-    first_response = json.loads(first.stdout)
-    assert first_response["page_number"] == 1
-    assert first_response["created"] is True
+    first = append_report(state, "## First result\n\nEvidence.")
+    assert first.page_number == 1
+    assert first.created is True
     assert (state / "report_page1.md").read_text(encoding="utf-8") == "## First result\n\nEvidence.\n"
 
-    second = run(
-        [str(REPORT_APPEND)],
-        input=yaml.safe_dump({"work_state_dir": str(state), "content": "## Second result"}),
-    )
-    second_response = json.loads(second.stdout)
-    assert second_response["page_number"] == 1
-    assert second_response["created"] is False
+    second = append_report(state, "## Second result")
+    assert second.page_number == 1
+    assert second.created is False
     assert (state / "report_page1.md").read_text(encoding="utf-8").endswith("\n\n## Second result\n")
 
 
@@ -100,14 +118,10 @@ def test_research_report_append_starts_page_after_line_limit(tmp_path: Path) -> 
     state.mkdir()
     (state / "report_page1.md").write_text("\n".join(f"line {index}" for index in range(300)) + "\n", encoding="utf-8")
 
-    result = run(
-        [str(REPORT_APPEND)],
-        input=yaml.safe_dump({"work_state_dir": str(state), "content": "## New page"}),
-    )
-    response = json.loads(result.stdout)
+    response = append_report(state, "## New page")
 
-    assert response["page_number"] == 2
-    assert response["created"] is True
+    assert response.page_number == 2
+    assert response.created is True
     assert (state / "report_page2.md").read_text(encoding="utf-8") == "## New page\n"
 
 
@@ -252,12 +266,7 @@ def test_finalization_stages_assets_and_publishes_state_for_committed_code(tmp_p
     assert ready["state"] == "active"
     private_state = Path(ready["state_dir"])
     assert (private_state / "images" / "result.png").read_bytes() == b"png"
-    run(
-        [str(REPORT_APPEND)],
-        input=yaml.safe_dump(
-            {"work_state_dir": str(private_state), "content": "## Completed result\n\nEvidence."}
-        ),
-    )
+    append_report(private_state, "## Completed result\n\nEvidence.")
     (private_state / "condensed_report.md").write_text("# Condensed\n\nCurrent result.\n", encoding="utf-8")
     (private_state / "TODO.md").write_text("- [x] baseline\n", encoding="utf-8")
     (state / "TODO.md").write_text("- [ ] newer live work\n", encoding="utf-8")
@@ -342,12 +351,7 @@ def test_finalization_reconcile_completes_logged_committed_ticket(tmp_path: Path
             input=yaml.safe_dump({"root": str(root)}),
         ).stdout
     )
-    run(
-        [str(REPORT_APPEND)],
-        input=yaml.safe_dump(
-            {"work_state_dir": ready["state_dir"], "content": "## Result"}
-        ),
-    )
+    append_report(ready["state_dir"], "## Result")
     run(
         [str(FINALIZATION), "commit"],
         env=env,
@@ -421,10 +425,7 @@ def test_later_finalization_refreshes_after_earlier_completion(tmp_path: Path) -
     first_ready = json.loads(
         run([str(FINALIZATION), "ready"], env=env, input=yaml.safe_dump({"root": first["root"]})).stdout
     )
-    run(
-        [str(REPORT_APPEND)],
-        input=yaml.safe_dump({"work_state_dir": first_ready["state_dir"], "content": "## First"}),
-    )
+    append_report(first_ready["state_dir"], "## First")
     run([str(FINALIZATION), "commit"], env=env, input=yaml.safe_dump({"root": first["root"]}))
     run(
         [str(FINALIZATION), "finish"],
@@ -446,21 +447,22 @@ def test_initialize_research_state_creates_numbered_records(tmp_path: Path) -> N
     (state / ".seed").write_text("seed\n", encoding="utf-8")
     git(state, "add", ".seed")
     git(state, "commit", "-m", "initial state")
-    env = {
-        **os.environ,
-        "AR_WORK_STATE_DIR": str(state),
-        "AR_WORK_BRANCH": "research-main",
-        "AR_MAIN_AGENT": "research-coordinator",
-    }
+    with OperationExecutor() as executor:
+        response = executor.run(
+            ResearchStateInitializeTool(
+                plan="# Research Plan\n\nMeasure the baseline.",
+                work_state_dir=str(state),
+                work_branch="research-main",
+                agent_name="research-coordinator",
+            )
+        )
 
-    result = run(
-        [str(INITIALIZE_RESEARCH_STATE)],
-        env=env,
-        input=yaml.safe_dump({"plan": "# Research Plan\n\nMeasure the baseline."}),
-    )
-
-    response = json.loads(result.stdout)
-    assert response["command"] == "research-coordinator-initialize-state"
+    assert response.created == [
+        "agent-notes/research-coordinator/always-injected.md",
+        "condensed_report.md",
+        "report_page1.md",
+        "TODO.md",
+    ]
     assert (state / "report_page1.md").exists()
     assert not (state / "report.md").exists()
     assert (state / "condensed_report.md").exists()
@@ -1218,18 +1220,22 @@ def test_note_update_stores_lesson_without_summary_or_rationale_boilerplate(tmp_
     project.mkdir()
     env = base_env(tmp_path, org_remote)
     run([str(AGENTIC_NOTES_INTERNAL), "init-org-notes", "--repo", str(org_remote)], env=env)
-    request = make_request(
-        tmp_path,
-        {
-            "kind": "note_update_request",
-            "target": {"scope": "org", "agent_type": "all-agents", "note_name": "gpu-runtime"},
-            "summary": "ROCm runtime mismatch",
-            "lesson": "Check PyTorch device visibility before launching local ROCm GPU jobs.",
-            "rationale": "rocm-smi listed devices but the active uv environment reported zero torch devices on 2026-07-01",
-        },
-    )
+    request = {
+        "target": {"scope": "org", "agent_type": "all-agents", "note_name": "gpu-runtime"},
+        "summary": "ROCm runtime mismatch",
+        "lesson": "Check PyTorch device visibility before launching local ROCm GPU jobs.",
+        "rationale": "rocm-smi listed devices but the active uv environment reported zero torch devices on 2026-07-01",
+        "project_dir": str(project),
+    }
 
-    run([str(AGENTIC_NOTES_INTERNAL), "update-note", "--request", str(request), "--project-dir", str(project)], env=env)
+    result = run(
+        [str(AGENTIC_NOTES), "update-note"],
+        input=yaml.safe_dump(request, sort_keys=False),
+        env=env,
+    )
+    response = json.loads(result.stdout)
+    assert response["scope"] == "org"
+    assert response["changed"] is True
 
     checkout = org_checkout(env)
     text = (checkout / "agent-notes" / "all-agents" / "gpu-runtime.md").read_text()
@@ -1270,7 +1276,8 @@ def test_rewrite_note_replaces_one_note_through_agent_command(tmp_path: Path) ->
     )
 
     response = json.loads(result.stdout)
-    assert response["command"] == "agentic-notes rewrite-note"
+    assert response["scope"] == "org"
+    assert response["changed"] is True
     checkout = org_checkout(env)
     text = (checkout / "agent-notes" / "all-agents" / "gpu-runtime.md").read_text()
     assert "before local ROCm or CUDA jobs" in text
@@ -1879,7 +1886,7 @@ def test_launcher_branch_guard_blocks_same_branch_but_not_other_branches(tmp_pat
 
 
 def test_remote_repo_spec_detects_scp_style_remotes() -> None:
-    loader = SourceFileLoader("ar_notes_remote_spec_test", str(AGENTIC_NOTES_INTERNAL))
+    loader = SourceFileLoader("ar_notes_remote_spec_test", str(AGENTIC_NOTES_STATE))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     assert spec is not None
     at_notes = importlib.util.module_from_spec(spec)
@@ -1891,7 +1898,7 @@ def test_remote_repo_spec_detects_scp_style_remotes() -> None:
 
 
 def test_init_org_notes_treats_scp_style_repo_as_remote(tmp_path: Path) -> None:
-    loader = SourceFileLoader("ar_notes_scp_org_remote_test", str(AGENTIC_NOTES_INTERNAL))
+    loader = SourceFileLoader("ar_notes_scp_org_remote_test", str(AGENTIC_NOTES_STATE))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     assert spec is not None
     at_notes = importlib.util.module_from_spec(spec)
@@ -1948,7 +1955,7 @@ def test_update_org_note_locks_only_org_state(tmp_path: Path) -> None:
     os.environ["AR_STATE_ROOT"] = str(tmp_path / "state")
     os.environ["AR_ORG_NOTES_REPO"] = str(tmp_path / "org.git")
     try:
-        loader = SourceFileLoader("ar_notes_lock_test", str(AGENTIC_NOTES_INTERNAL))
+        loader = SourceFileLoader("ar_notes_lock_test", str(AGENTIC_NOTES_STATE))
         spec = importlib.util.spec_from_loader(loader.name, loader)
         assert spec is not None
         at_notes = importlib.util.module_from_spec(spec)
@@ -1992,13 +1999,13 @@ def experiment_request(tmp_path: Path, short_description: str, key_result: str =
 
 def test_experiment_log_rejects_payloads_outside_the_tool_schema(tmp_path: Path) -> None:
     cases = [
-        (lambda data: data.pop("title"), "request.title: required field is missing"),
-        (lambda data: data.__setitem__("success", "false"), "request.success: expected bool"),
-        (lambda data: data.__setitem__("status", "successful"), "request.status: expected one of"),
-        (lambda data: data.__setitem__("metrics", {"tests_passed": 1}), "request.metrics: expected a list"),
-        (lambda data: data.__setitem__("artifacts", {}), "request.artifacts: expected a list"),
-        (lambda data: data.__setitem__("mystery", True), "request: unknown field(s): mystery"),
-        (lambda data: data["code"].__setitem__("repo", "local"), "request.code: unknown field(s): repo"),
+        (lambda data: data.pop("title"), "missing required ExperimentLogAppendTool fields: title"),
+        (lambda data: data.__setitem__("success", "false"), "expected bool, got str"),
+        (lambda data: data.__setitem__("status", "successful"), "expected one of"),
+        (lambda data: data.__setitem__("metrics", {"tests_passed": 1}), "expected an array, got dict"),
+        (lambda data: data.__setitem__("artifacts", {}), "expected an array, got dict"),
+        (lambda data: data.__setitem__("mystery", True), "unexpected ExperimentLogAppendTool fields: mystery"),
+        (lambda data: data["code"].__setitem__("repo", "local"), "unexpected ExperimentCode fields: repo"),
         (
             lambda data: (data.__setitem__("success", True), data.__setitem__("status", "failed")),
             "success=true requires status=completed",
@@ -2065,7 +2072,17 @@ def test_experiment_logger_creates_counter_ids_and_appends_summary(tmp_path: Pat
     counter = yaml.safe_load((log_dir / "COUNTER.yaml").read_text())
     assert counter["next_experiment_number"] == 3
     assert "next_correction_number" not in counter
-    summary = (log_dir / "SUMMARY.md").read_text()
+    summary = run(
+        [
+            str(EXPERIMENT_LOG),
+            "summary",
+            "--project-dir",
+            str(project),
+            "--work-branch",
+            "kernel-search",
+        ],
+        env=env,
+    ).stdout
     assert len(summary_rows(summary)) == 2
     assert first_id in summary
     assert second_id in summary
@@ -2637,7 +2654,6 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert (project / ".codex" / "agents" / "research-finalizer.toml").exists()
     assert not (project / ".codex" / "agents" / "branch-committer.toml").exists()
     assert not (project / ".codex" / "agents" / "branch-commit-status.toml").exists()
-    assert (project / ".codex" / "agents" / "branch-integrator.toml").exists()
     assert not (project / ".codex" / "agents" / "research-coordinator.toml").exists()
     instruction_text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "<!-- AGENTIC-TEAM-MAIN-AGENT-START" not in instruction_text
@@ -2650,7 +2666,6 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert "- `research-finalizer`:" in instruction_text
     assert "- `branch-committer`:" not in instruction_text
     assert "- `branch-commit-status`:" not in instruction_text
-    assert "- `branch-integrator`:" in instruction_text
     assert "Request: `" not in instruction_text
     assert "Contract: `" in instruction_text
     assert "# Research Coordinator" in instruction_text

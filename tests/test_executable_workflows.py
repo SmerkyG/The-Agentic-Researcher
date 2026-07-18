@@ -13,9 +13,12 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = REPO_ROOT / "capabilities" / "imperative-workflows" / "package"
 EXECUTABLE = REPO_ROOT / "capabilities" / "imperative-workflows" / "bin" / "imperative-workflows-run"
+TOOL_EXECUTABLE = REPO_ROOT / "scripts" / "bin" / "agentic-tool"
 BRANCH_BIN = REPO_ROOT / "capabilities" / "branch" / "bin"
+BRANCH_PACKAGE = REPO_ROOT / "capabilities" / "branch" / "package"
 FINALIZATION_BIN = REPO_ROOT / "capabilities" / "research-coordinator" / "bin"
 RESEARCH_PACKAGE = REPO_ROOT / "capabilities" / "research-coordinator" / "package"
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "package"))
 sys.path.insert(0, str(PACKAGE_ROOT))
 
 from agentic_workflows.contract import (  # noqa: E402
@@ -167,6 +170,44 @@ def test_cli_imports_and_executes_registered_workflow(tmp_path: Path) -> None:
     assert json.loads(result.stdout) == {"returncode": 0, "stderr": "", "stdout": "hello"}
 
 
+def test_structured_cli_imports_and_executes_native_tool(tmp_path: Path) -> None:
+    module = tmp_path / "demo_tool.py"
+    module.write_text(
+        "from agentic_tools import PythonTool, Record\n"
+        "class Number(Record):\n"
+        "    value: int\n"
+        "class NativeNumberTool(PythonTool[Number]):\n"
+        "    value: int\n"
+        "    def execute(self) -> Number:\n"
+        "        return Number(value=self.value + 1)\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["AR_TOOL_PATH"] = str(tmp_path)
+
+    result = subprocess.run(
+        [str(TOOL_EXECUTABLE), "demo_tool:NativeNumberTool"],
+        input='{"value": 4}\n',
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"value": 5}
+
+    schema = subprocess.run(
+        [str(TOOL_EXECUTABLE), "demo_tool:NativeNumberTool", "--schema"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    assert schema.returncode == 0, schema.stderr
+    assert json.loads(schema.stdout)["required"] == ["value"]
+
+
 def test_composed_finalization_snapshots_commits_and_captures(tmp_path: Path) -> None:
     project = tmp_path / "project"
     state = tmp_path / "state"
@@ -191,7 +232,7 @@ def test_composed_finalization_snapshots_commits_and_captures(tmp_path: Path) ->
 
     env = os.environ.copy()
     env["PATH"] = f"{BRANCH_BIN}:{FINALIZATION_BIN}:{env['PATH']}"
-    env["AR_WORKFLOW_PATH"] = f"{PACKAGE_ROOT}:{RESEARCH_PACKAGE}"
+    env["AR_WORKFLOW_PATH"] = f"{PACKAGE_ROOT}:{BRANCH_PACKAGE}:{RESEARCH_PACKAGE}"
     env["AR_WORKSPACE_ROOT"] = str(tmp_path / "workspace")
     env["AR_WORK_BRANCH"] = "kernel-search"
     env["AR_WORK_STATE_DIR"] = str(state)

@@ -1,13 +1,18 @@
-"""Research report operation contracts."""
+"""Native research report append operation."""
 
 from __future__ import annotations
 
-from typing import ClassVar
+import os
+from pathlib import Path
+import re
 
-from agentic_workflows.contract import WorkflowRecord, YAMLArgvTool
+from agentic_tools import PythonTool, Record, Value
 
 
-class ReportAppendResult(WorkflowRecord):
+PAGE_PATTERN = re.compile(r"report_page(\d+)\.md")
+
+
+class ReportAppendResult(Record):
     page: str
     page_number: int
     created: bool
@@ -15,8 +20,78 @@ class ReportAppendResult(WorkflowRecord):
     lines: int
 
 
-class ReportAppendTool(YAMLArgvTool[ReportAppendResult]):
-    argv_template: ClassVar[tuple[str, ...]] = ("research-coordinator-report-append",)
-    content: str
-    work_state_dir: str | None = None
-    max_lines: int = 300
+def _line_count(text: str) -> int:
+    return len(text.splitlines())
+
+
+def _report_pages(work_state_dir: Path) -> list[tuple[int, Path]]:
+    pages: list[tuple[int, Path]] = []
+    for path in work_state_dir.glob("report_page*.md"):
+        match = PAGE_PATTERN.fullmatch(path.name)
+        if match:
+            pages.append((int(match.group(1)), path))
+    return sorted(pages)
+
+
+def _append_section(page: Path, content: str) -> None:
+    existing = page.read_text(encoding="utf-8") if page.exists() else ""
+    separator = "\n\n" if existing.rstrip() else ""
+    page.write_text(
+        existing.rstrip() + separator + content.strip() + "\n",
+        encoding="utf-8",
+    )
+
+
+class ReportAppendTool(PythonTool[ReportAppendResult]):
+    """Append one section to the latest numbered research report page."""
+
+    content: str = Value("Complete report section to append")
+    work_state_dir: str | None = Value(
+        "Explicit work-state directory, or null to use AR_WORK_STATE_DIR",
+        default=None,
+    )
+    max_lines: int = Value(
+        "Line count at which a new numbered report page is started",
+        default=300,
+    )
+
+    def execute(self) -> ReportAppendResult:
+        content = self.content.strip()
+        if not content:
+            raise ValueError("content must be a non-empty string")
+        if (
+            not isinstance(self.max_lines, int)
+            or isinstance(self.max_lines, bool)
+            or self.max_lines < 1
+        ):
+            raise ValueError("max_lines must be a positive integer")
+
+        work_state_value = self.work_state_dir or os.environ.get("AR_WORK_STATE_DIR")
+        if not work_state_value:
+            raise ValueError("work_state_dir or AR_WORK_STATE_DIR is required")
+        work_state_dir = Path(work_state_value).expanduser().resolve()
+        if not work_state_dir.is_dir():
+            raise ValueError(f"work-state directory does not exist: {work_state_dir}")
+
+        pages = _report_pages(work_state_dir)
+        previous_lines = (
+            _line_count(pages[-1][1].read_text(encoding="utf-8"))
+            if pages
+            else 0
+        )
+        if not pages or previous_lines >= self.max_lines:
+            page_number = pages[-1][0] + 1 if pages else 1
+            page = work_state_dir / f"report_page{page_number}.md"
+            created = True
+        else:
+            page_number, page = pages[-1]
+            created = False
+
+        _append_section(page, content)
+        return ReportAppendResult(
+            page=str(page),
+            page_number=page_number,
+            created=created,
+            previous_lines=previous_lines,
+            lines=_line_count(page.read_text(encoding="utf-8")),
+        )

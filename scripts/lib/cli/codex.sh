@@ -196,7 +196,7 @@ cli_codex_workflow_mcp_env_vars_json() {
 
 cli_codex_translate_cli_args() {
     local translated=()
-    local i arg next workflow_root workflow_runtime mcp_command mcp_env_vars
+    local i arg next workflow_root workflow_runtime mcp_command mcp_env_vars tool_mcp_command
 
     for ((i=0; i<${#CLI_ARGS[@]}; i++)); do
         arg="${CLI_ARGS[$i]}"
@@ -223,6 +223,17 @@ cli_codex_translate_cli_args() {
     fi
     if [[ "$YOLO_MODE" == "true" ]]; then
         CLI_ARGS+=("--dangerously-bypass-approvals-and-sandbox")
+    fi
+    if enabled_capabilities_have_tools; then
+        tool_mcp_command="$(agentic_tools_mcp_runtime_command)"
+        mcp_env_vars="$(cli_codex_workflow_mcp_env_vars_json)"
+        CLI_ARGS+=(
+            --config "mcp_servers.agentic_tools.command=$(json_string "$tool_mcp_command")"
+            --config "mcp_servers.agentic_tools.env_vars=$mcp_env_vars"
+            --config 'mcp_servers.agentic_tools.required=true'
+            --config 'mcp_servers.agentic_tools.startup_timeout_sec=60'
+            --config 'mcp_servers.agentic_tools.tool_timeout_sec=3600'
+        )
     fi
     if capability_enabled imperative-workflows && \
         workflow_root="$(capability_root imperative-workflows)"; then

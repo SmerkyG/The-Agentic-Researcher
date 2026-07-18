@@ -808,6 +808,46 @@ class Role(AgentWorkflow):
     assert findings == []
 
 
+def test_lint_source_accepts_class_declared_agent_request() -> None:
+    findings = lint_source(
+        '''
+class Iteration(AgentRequest):
+    with guidance("Stay focused."):
+        experiment: str = local("next experiment")
+        step(f"Run {experiment}.")
+    summary: str = result(f"summary of {experiment}")
+''',
+        path="demo.py",
+    )
+
+    assert findings == []
+
+
+def test_lint_source_rejects_control_flow_inside_agent_request() -> None:
+    findings = lint_source(
+        '''
+class Iteration(AgentRequest):
+    if condition:
+        summary: str = result("summary")
+''',
+        path="demo.py",
+    )
+
+    assert any(finding.code == "WF950" for finding in findings)
+
+
+def test_lint_source_rejects_observe_inside_agent_request() -> None:
+    findings = lint_source(
+        '''
+class Iteration(AgentRequest):
+    observe(tool_result=result)
+''',
+        path="demo.py",
+    )
+
+    assert any(finding.code == "WF950" for finding in findings)
+
+
 def test_lint_source_accepts_declared_workflow_helper_method() -> None:
     findings = lint_source(
         """
@@ -875,6 +915,33 @@ class Role(AgentWorkflow):
     )
 
     assert findings == []
+
+
+def test_lint_source_accepts_literal_agent_visibility_overrides() -> None:
+    findings = lint_source(
+        """
+class Role(AgentWorkflow):
+    def workflow(self) -> None:
+        hidden_job: Job[None] = self.launch(OtherRole(), agent_visibility="hidden")
+        self.fire_and_forget(OtherRole(), agent_visibility="shown")
+""",
+        path="demo.py",
+    )
+
+    assert findings == []
+
+
+def test_lint_source_rejects_invalid_agent_visibility_override() -> None:
+    findings = lint_source(
+        """
+class Role(AgentWorkflow):
+    def workflow(self) -> None:
+        job: Job[None] = self.launch(OtherRole(), agent_visibility="private")
+""",
+        path="demo.py",
+    )
+
+    assert [finding.code for finding in findings] == ["WF802"]
 
 
 def test_lint_source_accepts_workflow_tool_as_evaluate_schema() -> None:

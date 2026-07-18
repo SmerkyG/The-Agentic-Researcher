@@ -72,7 +72,7 @@ Reflect on these additional dimensions:
 ### B. Experiment Log and Report Quality
 - Is the shared experiment log complete enough to reconstruct what was run?
 - Was completed code committed before detached finalization, then reported, logged, and note-triaged from a temporary state worktree without blocking the coordinator?
-- Were corrections routed through the `experiment-corrector` subagent instead of manually altering old experiment fields?
+- Were corrections appended through `ExperimentLogCorrectTool` instead of manually altering old experiment fields?
 - Was `SUMMARY.md` append-maintained rather than regenerated or hand-edited?
 - Is `condensed_report.md` concise, current, and about one page rather than a growing chronology?
 - Are report pages numbered correctly with `report_page1.md` as the oldest page

@@ -93,6 +93,48 @@ for offset in range(1, len(sys.argv), 3):
             if not is_managed_group(group, marker)
         ] + groups
 
+    patch_servers = patch.get("mcpServers", {})
+    if patch_servers:
+        if not isinstance(patch_servers, dict):
+            print("patch mcpServers must be an object", file=sys.stderr)
+            sys.exit(1)
+        data_servers = data.setdefault("mcpServers", {})
+        if not isinstance(data_servers, dict):
+            print(f"{target}: mcpServers must be an object", file=sys.stderr)
+            sys.exit(1)
+        for server_name, server in patch_servers.items():
+            if server is None:
+                data_servers.pop(server_name, None)
+            elif isinstance(server, dict):
+                data_servers[server_name] = server
+            else:
+                print(
+                    f"patch mcpServers.{server_name}: value must be an object or null",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+    patch_mcp = patch.get("mcp", {})
+    if patch_mcp:
+        if not isinstance(patch_mcp, dict):
+            print("patch mcp must be an object", file=sys.stderr)
+            sys.exit(1)
+        data_mcp = data.setdefault("mcp", {})
+        if not isinstance(data_mcp, dict):
+            print(f"{target}: mcp must be an object", file=sys.stderr)
+            sys.exit(1)
+        for server_name, server in patch_mcp.items():
+            if server is None:
+                data_mcp.pop(server_name, None)
+            elif isinstance(server, dict):
+                data_mcp[server_name] = server
+            else:
+                print(
+                    f"patch mcp.{server_name}: value must be an object or null",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
 for target, data in documents.items():
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -376,6 +418,11 @@ setup_steering_hooks() {
 
     cli_call setup_steering_hooks
 }
+
+setup_tool_transport() {
+    cli_call setup_tool_transport
+}
+
 translate_cli_args() {
     cli_call translate_cli_args
 }

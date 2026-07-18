@@ -7,6 +7,9 @@ import types
 from typing import Any, ClassVar, Literal, Sequence, Union, get_args, get_origin, get_type_hints
 
 
+AgentVisibility = Literal["shown", "hidden"]
+
+
 def Value(
     description: str,
     *,
@@ -167,15 +170,20 @@ class Operation(WorkflowRecord):
     """A tool or subagent invocation interpreted by the current agent."""
 
     guidance: ClassVar[str] = ""
+    agent_visibility: ClassVar[AgentVisibility] = "shown"
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         if "__dataclass_fields__" not in cls.__dict__:
             dataclass(cls)
 
-    def run(self) -> Any:
+    def run(self, *, agent_visibility: AgentVisibility | None = None) -> Any:
         """Start this tool or subagent synchronously and return its result."""
         raise NotImplementedError
+
+    def agent_observation(self, result: Any) -> object:
+        """Project a completed result for automatic agent-visible provenance."""
+        return result
 
 
 class CommandResult(WorkflowRecord):
@@ -188,6 +196,13 @@ class CommandResult(WorkflowRecord):
 
 class WorkflowTool(Operation):
     """Generic tool operation."""
+
+
+class PythonTool(WorkflowTool):
+    """Deterministic tool implemented directly in Python."""
+
+    def execute(self) -> Any:
+        raise NotImplementedError
 
 
 class ArgvTool(WorkflowTool):
@@ -216,10 +231,20 @@ class Workflow(Operation):
     def workflow(self) -> Any:
         raise NotImplementedError
 
-    def launch(self, operation: Operation) -> Job:
+    def launch(
+        self,
+        operation: Operation,
+        *,
+        agent_visibility: AgentVisibility | None = None,
+    ) -> Job:
         raise NotImplementedError
 
-    def fire_and_forget(self, operation: Operation) -> None:
+    def fire_and_forget(
+        self,
+        operation: Operation,
+        *,
+        agent_visibility: AgentVisibility | None = None,
+    ) -> None:
         raise NotImplementedError
 
     def wait(self, job: Job, timeout_seconds: float | None = None) -> Any:
@@ -297,17 +322,36 @@ class AgentWorkflow(Workflow):
         """
         raise NotImplementedError
 
-    def launch(self, operation: Operation) -> Job:
+    def launch(
+        self,
+        operation: Operation,
+        *,
+        agent_visibility: AgentVisibility | None = None,
+    ) -> Job:
         """Start a tool or named subagent asynchronously and return its tracked Job."""
         raise NotImplementedError
 
-    def fire_and_forget(self, operation: Operation) -> None:
+    def fire_and_forget(
+        self,
+        operation: Operation,
+        *,
+        agent_visibility: AgentVisibility | None = None,
+    ) -> None:
         """Start asynchronously, discard its platform handle, and continue now.
 
         Immediately follow the next Python statement. Never wait for, poll,
         list, message, follow up with, or otherwise inspect this operation. No
         later action or response may depend on its completion or result.
         """
+        raise NotImplementedError
+
+    def queue_agent_observation(
+        self,
+        value: object,
+        *,
+        desc: str | None = None,
+    ) -> None:
+        """Queue a non-operation external value for the next agent request."""
         raise NotImplementedError
 
     def wait_all(self, jobs, timeout_seconds=None) -> Any:
@@ -351,10 +395,11 @@ class UserFacingWorkflow(AgentWorkflow):
 
     def ask_user(self, question: str, **kwargs) -> str:
         """
-        Suspend for user input, then resume with the user's response.
+        Have the active agent formulate a prompt, suspend, then resume.
 
-        The question is the model-facing contract for what to ask. It should be
-        specific enough to render a user-facing prompt from current context:
+        The question argument is the model-facing contract for what to ask, not
+        necessarily verbatim user prose. It should be specific enough to render
+        a concise user-facing prompt from retained context:
         describe the blocker or choice, why autonomous workflow should not
         decide it alone, what input shape is useful, and any stop/skip choices.
         """

@@ -176,14 +176,9 @@ Include in the relevant work-branch report page:
   the branch snapshot/commit helper commands instead. Work-state record updates are ordinary
   commits in the separate work-state worktree.
 - When the user asks to integrate completed branch work into `dev`, `main`, or
-  another development branch, launch the `branch-integrator` subagent instead
-  of switching this top-level session onto the target branch. Try to spawn it,
-  retry once if spawning fails, and alert the user if it still cannot be
-  spawned.
-- If the user explicitly asks you to bypass the subagent workflow and perform
-  Git operations yourself, first confirm that they really want this exception.
-  Never force-push or rewrite shared history unless they explicitly ask for
-  that too.
+  another development branch, use a separate temporary worktree rather than
+  switching this top-level session onto the target branch. Never force-push or
+  rewrite shared history unless they explicitly ask for that too.
 
 ## 6. Directory and File Conventions
 

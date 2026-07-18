@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import importlib
 from typing import Any, ClassVar, Generic, Sequence, TypeVar
+
+from agentic_tools import (
+    AgentVisibility,
+    Operation,
+    PythonTool,
+    Record as WorkflowRecord,
+    Value,
+)
 
 
 ResultT = TypeVar("ResultT")
@@ -12,37 +19,7 @@ StartedResultT = TypeVar("StartedResultT")
 
 
 def _current_executor() -> Any:
-    """Resolve the optional executable runtime without publishing it as workflow source."""
-
     return importlib.import_module("agentic_workflows.execution").current_executor()
-
-
-def Value(
-    description: str,
-    *,
-    guidance: str | None = None,
-    default: object = ...,
-    default_factory: object = ...,
-) -> object:
-    """Describe one typed structured field and declarative guidance."""
-    metadata = {"description": description}
-    if guidance is not None:
-        metadata["guidance"] = guidance
-    kwargs: dict[str, object] = {"metadata": metadata}
-    if default is not ...:
-        kwargs["default"] = default
-    if default_factory is not ...:
-        kwargs["default_factory"] = default_factory
-    return field(**kwargs)
-
-
-class WorkflowRecord:
-    """Typed structured data whose annotated fields form its schema."""
-
-    def __init_subclass__(cls, **kwargs: object) -> None:
-        super().__init_subclass__(**kwargs)
-        if "__dataclass_fields__" not in cls.__dict__:
-            dataclass(cls)
 
 
 class Job(WorkflowRecord, Generic[ResultT]):
@@ -53,16 +30,6 @@ class OperationNotice(WorkflowRecord):
     """Instructions followed immediately before resuming an operation result."""
 
     instructions: str
-
-
-class Operation(WorkflowRecord, Generic[ResultT]):
-    """A typed tool or subagent invocation."""
-
-    guidance: ClassVar[str] = ""
-
-    def run(self) -> ResultT:
-        """Start this tool or subagent synchronously and return its result."""
-        return _current_executor().run(self)
 
 
 class CommandResult(WorkflowRecord):
@@ -103,11 +70,24 @@ class Workflow(Operation[ResultT], Generic[ResultT]):
         """Execute this workflow's body."""
         raise NotImplementedError
 
-    def launch(self, operation: Operation[StartedResultT]) -> Job[StartedResultT]:
+    def launch(
+        self,
+        operation: Operation[StartedResultT],
+        *,
+        agent_visibility: AgentVisibility | None = None,
+    ) -> Job[StartedResultT]:
         """Start a non-agent operation asynchronously and return a tracked job."""
-        return _current_executor().launch(operation)
+        return _current_executor().launch(
+            operation,
+            agent_visibility=agent_visibility,
+        )
 
-    def fire_and_forget(self, operation: Operation[Any]) -> None:
+    def fire_and_forget(
+        self,
+        operation: Operation[Any],
+        *,
+        agent_visibility: AgentVisibility | None = None,
+    ) -> None:
         """Start asynchronously, discard its platform handle, and continue now.
 
         AgentWorkflow workers immediately execute the next Python statement.
@@ -115,7 +95,10 @@ class Workflow(Operation[ResultT], Generic[ResultT]):
         operation. Executable runtimes may reject detached execution when they
         cannot make the launch durable.
         """
-        _current_executor().fire_and_forget(operation)
+        _current_executor().fire_and_forget(
+            operation,
+            agent_visibility=agent_visibility,
+        )
 
     def wait(self, job: Job[ResultT], timeout_seconds: float | None = None) -> ResultT:
         """Wait for one tracked job."""
@@ -187,23 +170,38 @@ class AgentWorkflow(Workflow[ResultT], Generic[ResultT]):
         """Fill one typed record from current scope and field descriptions."""
         ...
 
-    def agent_request(self, name: str | None = None) -> Any:
-        """Declare one aggregate model boundary with ordered declarative nodes.
+    def agent_request(self, request_type: type[Any], name: str | None = None) -> Any:
+        """Execute a class-declared aggregate model boundary.
 
-        The returned context manager accepts ``observe``, ``step``, ``var``,
-        ``field``, and nested ``guidance`` declarations.  It submits the whole
-        request only after successful block exit.  Values declared with
-        ``field`` are then available as attributes on the context-manager value.
+        ``request_type`` is an ``AgentRequest`` subclass whose ordered class body
+        contains ``step``, ``local``, ``result``, and nested ``guidance``
+        declarations. Returned results are available as attributes on the
+        resulting request instance. Previously queued external observations are
+        supplied as a preamble to this boundary.
+
         """
-        return _current_executor().agent_request(name=name)
+        return _current_executor().agent_request(request_type, name=name)
 
-    def observe(self, **values: object) -> None:
-        """Retain external operation results for the next agent request."""
-        _current_executor().observe(**values)
+    def queue_agent_observation(
+        self,
+        value: object,
+        *,
+        desc: str | None = None,
+    ) -> None:
+        """Queue one external value for exactly the next agent request."""
+        _current_executor().queue_agent_observation(value, desc=desc)
 
-    def admit(self, operation: Operation[StartedResultT]) -> Job[StartedResultT]:
+    def admit(
+        self,
+        operation: Operation[StartedResultT],
+        *,
+        agent_visibility: AgentVisibility | None = None,
+    ) -> Job[StartedResultT]:
         """Obtain receiver-side acceptance for an asynchronously launched operation."""
-        return _current_executor().admit(operation)
+        return _current_executor().admit(
+            operation,
+            agent_visibility=agent_visibility,
+        )
 
     def detach(self, job: Job[Any]) -> None:
         """Transfer lifecycle ownership of an admitted operation to the launcher."""
@@ -231,9 +229,11 @@ class UserFacingWorkflow(AgentWorkflow[ResultT], Generic[ResultT]):
     """Top-level workflow permitted to pause for visible user input."""
 
     def ask_user(self, question: str, **kwargs: object) -> str:
-        """Ask a specific question, suspend, and resume with the answer.
+        """Have the agent formulate a user-facing question, suspend, and resume.
 
-        Subagents must not ask the user. Describe the blocker or choice, why
-        autonomous work cannot decide it, and the needed answer.
+        ``question`` is a model-facing contract, not necessarily verbatim user
+        prose. Describe what the prompt must establish, relevant context and
+        constraints, and the answer needed. The agent renders the final concise
+        prompt from its retained context. Subagents must not ask the user.
         """
         return _current_executor().ask_user(question, **kwargs)

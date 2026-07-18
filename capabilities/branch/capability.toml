@@ -1,2 +1,11 @@
 description = "Provide snapshot commits and temporary Git worktree tools."
 requires = []
+
+[tools]
+branch_snapshot = "agentic_workflows.branch:BranchSnapshotTool"
+branch_commit = "agentic_workflows.branch:BranchCommitTool"
+branch_commit_status = "agentic_workflows.branch:BranchCommitStatusTool"
+branch_commit_cleanup = "agentic_workflows.branch:BranchCommitCleanupTool"
+branch_worktree_create = "agentic_workflows.branch:BranchWorktreeCreateTool"
+branch_worktree_publish = "agentic_workflows.branch:BranchWorktreePublishTool"
+branch_worktree_drop = "agentic_workflows.branch:BranchWorktreeDropTool"

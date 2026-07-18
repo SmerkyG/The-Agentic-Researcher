@@ -9,25 +9,24 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = REPO_ROOT / "capabilities" / "imperative-workflows" / "package"
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "package"))
 sys.path.insert(0, str(PACKAGE_ROOT))
 
 from agentic_workflows.contract import Value, WorkflowRecord  # noqa: E402
-from agentic_workflows.fill_spec import (  # noqa: E402
+from agentic_workflows.request_spec import (  # noqa: E402
+    AgentRequest,
+    AgentObservation,
     AgentRequestSpec,
-    AgentRequestSpecBuilder,
     FillSpecError,
     GuidanceScope,
-    Observe,
-    agent_request_spec,
     assignment_schema,
     decode_assignments,
-    field,
     guidance,
-    observe,
+    local,
     output_schema,
     render_agent_request,
+    result,
     step,
-    var,
 )
 
 
@@ -45,48 +44,53 @@ class SecondChoice(WorkflowRecord):
     second: str = Value("Second choice value")
 
 
-def example_spec() -> AgentRequestSpec:
-    with agent_request_spec("iteration") as declaration:
-        observe(tool_result={"returncode": 0, "stdout": "measured"})
-        with guidance("Use the full-decision scale before concluding."):
-            var("hypothesis", str, "Testable hypothesis")
-            step("Run the planned experiment.")
-            var("evidence", list[str], "Concrete measured evidence")
-        field(
-            "summary",
-            str,
-            "Conclusion supported by `evidence`",
-            guidance="Do not substitute expected results.",
-        )
-        field(
-            "capacity",
-            Literal["available", "unavailable", "unknown"],
-            "Remote capacity classification",
-        )
-
-    return declaration.spec
-
-
-def test_renderer_preserves_node_order_and_trailing_guidance_scope() -> None:
-    rendered = render_agent_request(example_spec())
-
-    assert "Process agent request `iteration`:" in rendered
-    assert rendered.index("Observe external results") < rendered.index("Testable hypothesis")
-    assert rendered.index("Testable hypothesis") < rendered.index("Run the planned experiment.")
-    assert rendered.index("Run the planned experiment.") < rendered.index("Concrete measured evidence")
-    assert rendered.index("Concrete measured evidence") < rendered.index(
-        "Use the full-decision scale before concluding."
+class ExampleAgentRequest(AgentRequest):
+    with guidance("Use the full-decision scale before concluding."):
+        hypothesis: str = local("Testable hypothesis")
+        evidence: list[str] = local(f"Concrete evidence for {hypothesis}")
+        step(f"Run the experiment for {hypothesis}.")
+    summary: str = result(
+        f"Conclusion supported by {evidence}",
+        guidance="Do not substitute expected results.",
     )
-    assert rendered.index("Use the full-decision scale before concluding.") < rendered.index(
-        "Conclusion supported by `evidence`"
+    capacity: Literal["available", "unavailable", "unknown"] = result(
+        "Remote capacity classification"
+    )
+
+
+def test_class_request_preserves_order_and_backticked_references() -> None:
+    rendered = render_agent_request(ExampleAgentRequest.__request_spec__)
+
+    assert "Process agent request `ExampleAgentRequest`:" in rendered
+    assert "Concrete evidence for `hypothesis`" in rendered
+    assert "Run the experiment for `hypothesis`." in rendered
+    assert "Conclusion supported by `evidence`" in rendered
+    assert rendered.index("Testable hypothesis") < rendered.index(
+        "Concrete evidence for `hypothesis`"
+    )
+    assert rendered.index("Concrete evidence for `hypothesis`") < rendered.index(
+        "Use the full-decision scale before concluding."
     )
     assert rendered.endswith(
         "exactly these assignments: hypothesis, evidence, summary, capacity.\n"
     )
 
 
-def test_assignment_schema_includes_vars_but_output_schema_contains_only_fields() -> None:
-    spec = example_spec()
+def test_existing_python_values_interpolate_concretely() -> None:
+    state_dir = "/tmp/research-state"
+
+    class ConcreteInput(AgentRequest):
+        step(f"Read the report from {state_dir}.")
+        summary: str = result("summary")
+
+    rendered = render_agent_request(ConcreteInput.__request_spec__)
+
+    assert "Read the report from /tmp/research-state." in rendered
+    assert "`state_dir`" not in rendered
+
+
+def test_assignment_schema_includes_locals_but_output_contains_only_results() -> None:
+    spec = ExampleAgentRequest.__request_spec__
     all_assignments = assignment_schema(spec)
     returned = output_schema(spec)
 
@@ -104,20 +108,42 @@ def test_assignment_schema_includes_vars_but_output_schema_contains_only_fields(
     ]
 
 
-def test_named_workflow_record_schema_respects_defaults() -> None:
-    with agent_request_spec("request_fill") as declaration:
-        field("request", ExampleRequest)
+def test_queued_observations_render_before_declared_nodes() -> None:
+    declared = ExampleAgentRequest.__request_spec__
+    spec = AgentRequestSpec(
+        declared.items,
+        name=declared.name,
+        observations=(
+            AgentObservation(
+                {"returncode": 0, "stdout": "measured"},
+                desc="Focused verification command result.",
+            ),
+        ),
+    )
 
-    request = output_schema(declaration.spec)["properties"]["request"]
+    rendered = render_agent_request(spec)
+
+    assert "External observations queued for this request:" in rendered
+    assert "Observation 1 (dict) — Focused verification command result." in rendered
+    assert rendered.index("External observations") < rendered.index(
+        "Testable hypothesis"
+    )
+
+
+def test_named_workflow_record_schema_respects_defaults() -> None:
+    class RequestFill(AgentRequest):
+        request: ExampleRequest = result("request")
+
+    request = output_schema(RequestFill.__request_spec__)["properties"]["request"]
     assert request["required"] == ["required"]
     assert request["properties"]["required"]["description"] == "Required request value"
     assert request["properties"]["optional"]["default"] == "default"
     assert "dispatch_metadata" not in request["properties"]
 
 
-def test_decode_assignments_validates_all_values_and_returns_only_fields() -> None:
+def test_decode_assignments_validates_values_and_returns_only_results() -> None:
     variables, returned = decode_assignments(
-        example_spec(),
+        ExampleAgentRequest.__request_spec__,
         {
             "hypothesis": "measured hypothesis",
             "evidence": ["1.2 ms"],
@@ -130,80 +156,63 @@ def test_decode_assignments_validates_all_values_and_returns_only_fields() -> No
     assert returned == {"summary": "faster", "capacity": "available"}
 
     with pytest.raises(FillSpecError, match="missing assignments"):
-        decode_assignments(example_spec(), {"summary": "incomplete"})
+        decode_assignments(ExampleAgentRequest.__request_spec__, {"summary": "incomplete"})
 
 
 def test_union_record_decoding_selects_shape_by_declared_fields() -> None:
-    with agent_request_spec() as declaration:
-        field("choice", FirstChoice | SecondChoice)
+    class ChoiceRequest(AgentRequest):
+        choice: FirstChoice | SecondChoice = result("choice")
 
     _variables, returned = decode_assignments(
-        declaration.spec,
+        ChoiceRequest.__request_spec__,
         {"choice": {"second": "selected"}},
     )
 
     assert returned == {"choice": SecondChoice(second="selected")}
 
 
-def test_identifiers_are_unique_across_guidance_scopes() -> None:
-    with pytest.raises(FillSpecError, match="duplicate agent-request identifiers"):
-        with agent_request_spec():
-            var("answer", str, "first")
-            with guidance("Nested qualification"):
-                field("answer", str, "second")
+def test_class_request_rejects_unannotated_plain_and_duplicate_assignments() -> None:
+    with pytest.raises(FillSpecError, match="requires an explicit annotation"):
+
+        class MissingAnnotation(AgentRequest):
+            answer = result("answer")
+
+    with pytest.raises(FillSpecError, match="may contain only declarations"):
+
+        class PlainAssignment(AgentRequest):
+            answer: str = result("answer")
+            extra = "not a declaration"
+
+    with pytest.raises(FillSpecError, match="duplicate agent-request identifier"):
+
+        class DuplicateAssignment(AgentRequest):
+            answer: str = local("first")
+            answer: str = result("second")
 
 
-def test_observe_and_guidance_validate_their_contents() -> None:
-    with pytest.raises(FillSpecError, match="named external value"):
-        Observe()
+def test_declarations_require_agent_request_class_body() -> None:
+    with pytest.raises(FillSpecError, match="AgentRequest class body"):
+        local("answer")
+    with pytest.raises(FillSpecError, match="AgentRequest class body"):
+        result("answer")
+    with pytest.raises(FillSpecError, match="AgentRequest class body"):
+        step("Do work.")
+    with pytest.raises(FillSpecError, match="AgentRequest class body"):
+        with guidance("Stay focused."):
+            pass
+
+
+def test_guidance_validates_contents() -> None:
+    with pytest.raises(FillSpecError, match="observation description"):
+        AgentObservation("value", desc="")
 
     with pytest.raises(FillSpecError, match="at least one enclosed"):
         GuidanceScope(guidance="empty")
 
 
-def test_declarative_statements_require_an_active_block() -> None:
-    with pytest.raises(FillSpecError, match="active agent_request"):
-        field("result", str)
-    with pytest.raises(FillSpecError, match="active agent_request"):
-        var("result", str)
-    with pytest.raises(FillSpecError, match="active agent_request"):
-        step("Do work.")
-    with pytest.raises(FillSpecError, match="active agent request"):
-        with guidance("Stay focused."):
-            step("Do work.")
+def test_f_string_format_specifier_is_rejected() -> None:
+    with pytest.raises(FillSpecError, match="format specifiers"):
 
-
-def test_failed_block_is_not_compiled_and_does_not_leak_context() -> None:
-    declaration = agent_request_spec("failed")
-    with pytest.raises(RuntimeError, match="construction failed"):
-        with declaration:
-            field("result", str)
-            raise RuntimeError("construction failed")
-
-    with pytest.raises(FillSpecError, match="unavailable"):
-        declaration.spec
-
-    with agent_request_spec("next_fill") as next_declaration:
-        field("result", str)
-    assert next_declaration.spec.name == "next_fill"
-
-
-def test_root_request_cannot_be_nested() -> None:
-    with agent_request_spec("outer"):
-        field("result", str)
-        with pytest.raises(FillSpecError, match="cannot be nested"):
-            with agent_request_spec("inner"):
-                field("other", str)
-
-
-def test_builder_callback_populates_deferred_field_attributes() -> None:
-    def resolve(_spec: AgentRequestSpec) -> dict[str, object]:
-        return {"answer": "resolved"}
-
-    declaration = AgentRequestSpecBuilder(on_complete=resolve)
-    with declaration as result:
-        field("answer", str)
-        with pytest.raises(FillSpecError, match="before successful block exit"):
-            _ = result.answer
-
-    assert result.answer == "resolved"
+        class InvalidFormat(AgentRequest):
+            value: float = local("value")
+            summary: str = result(f"summary {value:.2f}")

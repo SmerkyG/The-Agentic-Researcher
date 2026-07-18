@@ -3,62 +3,16 @@
 # dependencies = ["PyYAML>=6.0"]
 # ///
 
-from __future__ import annotations
-
-import argparse
 from pathlib import Path
 import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+root = Path(__file__).resolve().parents[1]
+repo = root.parents[1]
+sys.path[:0] = [
+    str(root / "package"),
+    str(repo / "scripts" / "package"),
+]
 
-from command_common import load_request, main, print_json
-from branch_git_common import create_snapshot
+from agentic_workflows.branch_cli import snapshot_cli
 
-
-HELP = """Create an explicit-path snapshot for a later branch commit.
-
-Reads YAML from stdin.
-
-Example:
-  branch-snapshot <<'YAML'
-  project_dir: .
-  work_branch: work/research-main
-  paths:
-    - src/kernel.py
-    - tests/test_kernel.py
-  commit_message: "test: update kernel"
-  checks:
-    - "uv run pytest tests/test_kernel.py"
-  check_timeout_seconds: 900
-  YAML
-
-Required fields:
-  paths           Non-empty explicit relative paths. No '.', globs, or absolute paths.
-  commit_message  Commit message to use if the snapshot is later committed.
-
-Common optional fields:
-  project_dir                  Project checkout. Defaults to '.'.
-  work_branch                  Active work branch. Defaults from AR_WORK_BRANCH/current branch.
-  checks                       Shell commands run in the temporary commit worktree.
-  check_timeout_seconds        Per-check timeout.
-"""
-
-
-def run() -> None:
-    result = create_snapshot(load_request())
-    response = {"command": "branch-snapshot"}
-    response.update(result)
-    print_json(response)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        prog="branch-snapshot",
-        description="Create an explicit-path snapshot for branch-commit.",
-        epilog=HELP,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.parse_args()
-    raise SystemExit(main(run))
+raise SystemExit(snapshot_cli())

@@ -1,2 +1,15 @@
 description = "Provide the research coordinator, its subagents, skills, and state tools."
 requires = ["imperative-workflows", "agentic-notes", "experiment-log", "branch"]
+
+[tools]
+research_finalization_capture = "research_finalization.tools.capture:FinalizationCaptureTool"
+research_finalization_ready = "research_finalization.tools.ready:FinalizationReadyTool"
+research_finalization_commit = "research_finalization.tools.commit:FinalizationStateCommitTool"
+research_finalization_finish = "research_finalization.tools.finish:FinalizationFinishTool"
+research_finalization_status = "research_finalization.tools.status:FinalizationStatusTool"
+research_finalization_reconcile = "research_finalization.tools.reconcile:FinalizationReconcileTool"
+research_report_append = "agentic_workflows.research.report:ReportAppendTool"
+research_state_initialize = "agentic_workflows.research.research_state:ResearchStateInitializeTool"
+
+[hooks]
+create-work = "agentic_workflows.research.hooks:create_work"

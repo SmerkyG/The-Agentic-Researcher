@@ -45,8 +45,8 @@ artifact paths.
 
 ## Logging Flow
 
-Working agents do not edit experiment-log state directly. Imperative workflows
-use structured tools:
+Working agents do not edit experiment-log state directly. The capability's
+canonical Python API is `experiment_log.tools`:
 
 - `ExperimentLogAppendTool` records completed experiment results.
 - `ExperimentLogCorrectTool` appends corrections to existing experiment files.
@@ -57,10 +57,10 @@ When logging an experiment, the append tool pulls latest work-branch state,
 reads the counter, writes one YAML file, increments the counter, appends one row
 to `SUMMARY.md`, commits, and pushes.
 
-Append and correction requests are decoded against their workflow tool schemas.
+Append and correction requests are decoded against their structured Python tool schemas.
 Missing required fields, unknown fields, and wrong scalar or collection types
-are rejected before state is changed. Successful command responses are JSON
-objects containing `experiment_id` or `correction_id`.
+are rejected before state is changed. Successful native-tool and command
+responses are JSON objects containing `experiment_id` or `correction_id`.
 
 If a push is rejected, the helper retries from the latest remote state. If it cannot safely merge the requested append, it reports the error instead of rewriting existing experiment history.
 
@@ -86,13 +86,21 @@ Completed negative or neutral experiments should omit `success` or set it to `fa
 
 ## Commands
 
-Agents usually route writes through subagents, but the capability also exposes one direct command with subcommands for inspection and request handling:
+The tools are ordinary `PythonTool` classes and do not depend on the imperative
+workflow runtime. Callback-managed workflows import and execute those same
+objects in-process. The capability also exposes a thin command selector over
+the common JSON/YAML tool runner:
 
-```text
-experiment-log append --request REQUEST.yaml --project-dir PATH --work-branch WORK_BRANCH
-experiment-log correct --request REQUEST.yaml --project-dir PATH --work-branch WORK_BRANCH
-experiment-log summary --project-dir PATH --work-branch WORK_BRANCH
+```bash
+experiment-log append < REQUEST.yaml
+experiment-log correct < CORRECTION.yaml
+printf '{"project_dir":".","work_branch":"my-work"}' | experiment-log summary
+experiment-log append --schema
 ```
+
+For human inspection, `experiment-log summary --project-dir PATH --work-branch
+WORK_BRANCH` prints the summary Markdown directly. The command contains no
+experiment-log domain logic or independent validation path.
 
 Research workflows often keep `condensed_report.md`, numbered report files
 (`report_page1.md` oldest and the highest number current), `TODO.md`, and

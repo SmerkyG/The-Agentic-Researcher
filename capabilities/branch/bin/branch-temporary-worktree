@@ -3,58 +3,16 @@
 # dependencies = ["PyYAML>=6.0"]
 # ///
 
-"""Create, publish, or remove one temporary linked Git worktree."""
-
-from __future__ import annotations
-
-import argparse
 from pathlib import Path
 import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+root = Path(__file__).resolve().parents[1]
+repo = root.parents[1]
+sys.path[:0] = [
+    str(root / "package"),
+    str(repo / "scripts" / "package"),
+]
 
-from command_common import CommandError, bool_from, load_request, main, print_json  # noqa: E402
-from temporary_worktree import (  # noqa: E402
-    create_temporary_worktree,
-    publish_temporary_worktree,
-    remove_temporary_worktree,
-)
+from agentic_workflows.branch_cli import temporary_worktree_cli
 
-
-def dispatch(command: str) -> None:
-    request = load_request()
-    source = Path(str(request.get("source_worktree") or "."))
-    if not request.get("worktree"):
-        raise CommandError("worktree is required")
-    worktree = Path(str(request["worktree"]))
-    if command == "create":
-        result = create_temporary_worktree(source, worktree)
-    elif command == "publish":
-        checks = [str(item) for item in request.get("checks", [])]
-        result = publish_temporary_worktree(
-            source,
-            worktree,
-            str(request.get("branch") or ""),
-            str(request.get("base_commit") or ""),
-            str(request.get("message") or ""),
-            checks=checks,
-            check_log=Path(str(request["check_log"])) if checks else None,
-            push=bool_from(request.get("push"), default=False),
-        )
-    else:
-        remove_temporary_worktree(source.expanduser().resolve(), worktree.expanduser().resolve())
-        result = {"removed": True, "worktree": str(worktree.expanduser().resolve())}
-    print_json({"command": f"branch-temporary-worktree {command}", **result})
-
-
-def cli() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["create", "publish", "drop"])
-    args = parser.parse_args()
-    return main(lambda: dispatch(args.command))
-
-
-if __name__ == "__main__":
-    raise SystemExit(cli())
+raise SystemExit(temporary_worktree_cli())

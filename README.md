@@ -40,9 +40,9 @@ Agentic Team is split into a small launcher, a shared Git-backed state substrate
 
 **Capabilities.** Capabilities are selected packages that can add commands, instruction sections, launcher hooks, and stateful workflows. Built-in capabilities include:
 
-- **Agentic Notes** (`agentic-notes`): owns `agent-notes/` layout at org, project, and work-branch scopes; renders `always-injected.md` content and on-demand note topic lists; provides the `agentic-notes` command with `read-note`, `update-note`, and `rewrite-note` subcommands.
+- **Agentic Notes** (`agentic-notes`): owns `agent-notes/` layout at org, project, and work-branch scopes; renders `always-injected.md` content and on-demand note topic lists; provides package-native tools plus the `agentic-notes` convenience command with `read-note`, `update-note`, and `rewrite-note` subcommands over the same implementation.
 - **Imperative Workflows** (`imperative-workflows): lets you script agent workflows in python with standard control-flow constructs; separates the usual giant messy block of declarative and imperative english-language AGENTS.md instructions into a maintainable, auditable, understandable codebase.
-- **Experiment Log** (`experiment-log`): owns `experiment-log/` files on the active work state branch; records experiment YAML files, `COUNTER.yaml`, and append-maintained `SUMMARY.md`; provides the `experiment-log` command with `append`, `correct`, and `summary` subcommands.
+- **Experiment Log** (`experiment-log`): owns `experiment-log/` files on the active work state branch; records experiment YAML files, `COUNTER.yaml`, and append-maintained `SUMMARY.md`; provides native workflow tools plus the `experiment-log` convenience command with `append`, `correct`, and `summary` subcommands over the same implementation.
 
 This separation is intentional: the launcher can stay mostly about launching and rendering, Agentic State can stay about Git-backed state mechanics, and each capability can evolve its own command surface and data model.
 
@@ -237,7 +237,7 @@ State branches start as orphan branches with empty filesets. They contain only s
 
 Multiple top-level agents must work in separate AT workspace entries with separate work branches. Branch guard files are local-only under `$AR_RUNTIME_ROOT/branch-guards/`; Git remains the real conflict mechanism.
 
-When the top-level agent has a coherent change set ready to commit, it uses `branch-snapshot` plus `branch-commit` directly so checks and commit creation happen from a temporary worktree. Snapshot metadata and temporary commit worktrees are retained locally for status checks and debugging; prune old completed or abandoned artifacts with `branch-commit-cleanup` after a dry run. When completed work-branch changes should land in a development branch such as `dev` or `main`, use the `branch-integrator` subagent.
+When a workflow has a coherent change set ready to commit, it uses the branch capability's native Python tools so checks and commit creation happen from a temporary worktree without another Python process or YAML round trip. Non-workflow agents receive those tools through the common MCP server. The stable `branch-snapshot`, `branch-commit`, `branch-commit-status`, `branch-commit-cleanup`, and `branch-temporary-worktree` commands remain as thin compatibility wrappers for shell automation and CLIs without MCP. Snapshot metadata and temporary commit worktrees are retained locally for status checks and debugging; prune old completed or abandoned artifacts with `branch-commit-cleanup` after a dry run.
 
 For details, see:
 
@@ -294,8 +294,8 @@ capabilities/
       my-command           # executable placed on PATH when enabled
     lib/
       common.sh            # optional private support code for this capability
-    hooks/
-      instruction          # optional render/refresh hook executable
+    package/
+      my_capability/       # optional Python tools, workflows, and lifecycle hooks
 agent-notes/
   all-agents/
     always-injected.md    # short organization-wide guidance injected every time
@@ -308,7 +308,7 @@ agent-notes/
 
 Put only short, high-value guidance in `always-injected.md`. Put longer or situational details in topic notes such as `agent-notes/all-agents/git.md`, `agent-notes/all-agents/slurm.md`, `agent-notes/all-agents/pytorch.md`, or `agent-notes/gpu-kernel-engineer/benchmarking.md`; Agentic Team lists those topics so agents can read the rendered note only when relevant.
 
-Org-provided agents live inside `capabilities/<capability>/agents/`. A capability may also ship Python workflow modules under `package/`, skills under `skills/`, commands under `bin/`, private helpers under `lib/`, launcher hooks under `launcher/`, and instruction lifecycle hooks under `hooks/`. `capability.toml` declares transitive dependencies. Capabilities are selected explicitly or by selecting a main agent they provide. Project providers use the same structure under `.agentic-team/capabilities/` and take precedence over org and built-in providers.
+Org-provided agents live inside `capabilities/<capability>/agents/`. A capability may also ship structured Python tools, workflows, and lifecycle hooks under `package/`, skills under `skills/`, commands under `bin/`, private helpers under `lib/`, and launcher hooks under `launcher/`. The launcher exposes enabled package roots through `$AR_TOOL_PATH`; `[tools]` entries in `capability.toml` are registered through one MCP server on Codex, Claude, Gemini, OpenCode, and Pi. Pi receives MCP through a pinned `pi-mcp-extension` package. The JSON/YAML `agentic-tool module:Class` adapter remains available for shell callers and other CLIs without native registration. Package-native `[hooks]` entries replace shell wrappers for lifecycle work while legacy `hooks/` executables remain a migration fallback. `capability.toml` also declares transitive dependencies. Capabilities are selected explicitly or by selecting a main agent they provide. Project providers use the same structure under `.agentic-team/capabilities/` and take precedence over org and built-in providers.
 
 See [docs/agentic-notes.md](docs/agentic-notes.md) for the notes layout and [docs/extending-agentic-team.md](docs/extending-agentic-team.md) for the agent and capability extension points.
 
@@ -350,11 +350,11 @@ Agentic State is implemented as shared command-library code used by capabilities
 
 Capabilities own agent and tool implementations, skills, commands, launcher hooks, and stateful instruction sections. Built-in capabilities live in `capabilities/`:
 
-- `agentic-notes` owns the `agent-notes/` data model, initializes and refreshes org/project/work-branch note state from its launcher hooks, renders Agentic Notes guidance plus dynamic always-injected and on-demand note listings, provides `agentic-notes read-note`, `agentic-notes update-note`, and `agentic-notes rewrite-note`, runs the background notes refresh loop, and emits lightweight steering notices when refreshed note topics change during a running session.
-- `experiment-log` owns the active work-branch `experiment-log/` data model, renders active experiment-log guidance, and provides `experiment-log append`, `experiment-log correct`, and `experiment-log summary`. The experiment log is capability-owned and may be absent until the workflow records an experiment.
-- `branch` provides snapshot commits plus generic `branch-temporary-worktree create`, `publish`, and `drop` operations shared by main-agent capabilities.
+- `agentic-notes` owns the `agent-notes/` data model, initializes and refreshes org/project/work-branch note state from package-native lifecycle hooks, renders Agentic Notes guidance plus dynamic always-injected and on-demand note listings, provides structured Python note tools with command compatibility, runs the background notes refresh loop, and emits lightweight steering notices when refreshed note topics change during a running session.
+- `experiment-log` owns the active work-branch `experiment-log/` data model and the package-native `experiment_log.tools` API, renders active experiment-log guidance, and provides `experiment-log append`, `experiment-log correct`, and `experiment-log summary` as thin structured wrappers. The experiment log is capability-owned and may be absent until a tool records an experiment.
+- `branch` provides native Python snapshot, commit, status, cleanup, and temporary-worktree tools shared by workflows and exposed through the common tool MCP server, plus thin command wrappers for compatibility and durable workers.
 - `imperative-workflows` renders and validates Python-shaped agent and skill workflows.
-- `research-coordinator` provides the research coordinator agent family and research-state workflow.
+- `research-coordinator` provides the research coordinator agent family, research-state workflow, package-native durable finalization tools, and a thin `research-coordinator-finalization` JSON/YAML wrapper for diagnostics.
 
 The default capability list is `agentic-notes,experiment-log` via `AR_CAPABILITIES`. After context compaction, the generated CLI hook runs `capability-refresh`, which delegates to `agentic-team --render-only --refresh-capabilities` so the launcher refreshes configured capabilities and rematerializes the instruction file for that exact invocation.
 

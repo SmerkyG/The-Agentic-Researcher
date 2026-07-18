@@ -2,67 +2,37 @@
 
 from __future__ import annotations
 
+import os
 from typing import ClassVar, Literal
 
 from agentic_workflows.contract import (
     CommandResult,
     Job,
     UserFacingWorkflow,
-    Value,
-    WorkflowRecord,
 )
-from agentic_workflows.fill_spec import field, guidance, observe, step, var
-from agentic_workflows.research.agentic_notes_read import AgenticNotesReadTopicTool
-from agentic_workflows.research.experiment_log_correct import ExperimentLogCorrectTool
-from agentic_workflows.research.experiment_log_summary import ExperimentLogSummaryTool
-from agentic_workflows.research.finalization import FinalizationTicket
-from agentic_workflows.research.finalization_reconcile import FinalizationReconcileTool
+from agentic_workflows.request_spec import (
+    AgentRequest,
+    guidance,
+    local,
+    result,
+    step,
+)
+from agentic_notes.tools.read import AgenticNotesReadTopicTool
+from experiment_log.tools.correct import ExperimentLogCorrectTool
+from experiment_log.tools.summary import (
+    ExperimentLogSummaryResult,
+    ExperimentLogSummaryTool,
+)
 from agentic_workflows.research.finalization_start import FinalizationStart
 from agentic_workflows.research.git import GitRecentLogTool, GitStatusShortTool
 from agentic_workflows.research.gpu import (
     LocalGpuCapacity,
-    ReadEnvironmentVariableTool,
     discover_local_gpu_capacity,
 )
 from agentic_workflows.research.research_finalizer import ResearchFinalizer
 from agentic_workflows.research.research_state import ResearchStateInitializeTool
-
-
-class ContinueResearch(WorkflowRecord):
-    next_step: str = Value("Next productive autonomous experiment or analysis")
-
-
-class AskUser(WorkflowRecord):
-    question: str = Value(
-        "Specific blocker or consequential choice and the exact user input needed"
-    )
-
-
-class ResearchComplete(WorkflowRecord):
-    summary: str = Value("Concise synthesis of the completed research track")
-
-
-class UseExistingResearchState(WorkflowRecord):
-    reason: str = Value("Evidence that an active research plan already exists")
-
-
-class InitializeResearchState(WorkflowRecord):
-    plan: str = Value("Complete proposed research plan derived from the user's request")
-    already_approved: bool = Value(
-        "True only when the user explicitly supplied or approved this complete plan"
-    )
-    approval_question: str = Value(
-        "Specific request to approve the plan or describe required changes"
-    )
-
-
-class ApprovePlan(WorkflowRecord):
-    confirmation: str = Value("Why the user's response approves the displayed plan")
-
-
-class RevisePlan(WorkflowRecord):
-    plan: str = Value("Revised complete plan incorporating the user's requested changes")
-    approval_question: str = Value("Specific request to approve this revision or change it")
+from research_finalization.records import FinalizationTicket
+from research_finalization.tools.reconcile import FinalizationReconcileTool
 
 
 class ResearchCoordinator(UserFacingWorkflow[None]):
@@ -77,69 +47,94 @@ class ResearchCoordinator(UserFacingWorkflow[None]):
         self.read_in_on_state()
 
     def read_in_on_state(self) -> None:
-        reconciliation = FinalizationReconcileTool(project_dir=".").run()
-        summary_job: Job[CommandResult] = self.launch(ExperimentLogSummaryTool())
+        FinalizationReconcileTool(project_dir=".").run()
+        summary_job: Job[ExperimentLogSummaryResult] = self.launch(
+            ExperimentLogSummaryTool()
+        )
         log_job: Job[CommandResult] = self.launch(GitRecentLogTool(count=20))
         status_job: Job[CommandResult] = self.launch(GitStatusShortTool())
-        summary, recent_log, status = self.wait_all(
-            [summary_job, log_job, status_job]
-        )
+        self.wait_all([summary_job, log_job, status_job])
 
-        with self.agent_request() as initial_state:
-            observe(
-                finalization_reconciliation=reconciliation,
-                experiment_summary=summary,
-                recent_code_history=recent_log,
-                worktree_status=status,
-            )
+        class InitialState(AgentRequest):
             step(
                 "Read the active research plan, TODO.md, condensed_report.md, latest "
                 "report page, and relevant older pages. Skip missing records and "
                 "inspect figures when relevant."
             )
-            field(
-                "relevant_note_topics",
-                list[str],
+            relevant_note_topics: list[str] = result(
                 "relevant on-demand Agentic Notes topics",
                 guidance="Request only topics that can affect the immediate research direction.",
             )
-            field(
-                "state_action",
-                UseExistingResearchState | InitializeResearchState,
-                "whether to use the existing active plan or initialize missing research state",
+            state_action: Literal["use_existing", "interactive_setup"] = result(
+                "whether existing work-branch Project Instructions are complete enough "
+                "to resume or fresh interactive setup is required",
             )
 
-        match initial_state.state_action:
-            case UseExistingResearchState():
-                pass
-            case InitializeResearchState(
-                plan=plan,
-                already_approved=already_approved,
-                approval_question=approval_question,
-            ):
-                while not already_approved:
-                    self.ask_user(plan + "\n\n" + approval_question)
-                    with self.agent_request() as review:
-                        field(
-                            "decision",
-                            ApprovePlan | RevisePlan,
-                            "whether the user approved the displayed plan or requested changes",
-                        )
-                    match review.decision:
-                        case ApprovePlan():
-                            already_approved = True
-                        case RevisePlan(
-                            plan=revised_plan,
-                            approval_question=revised_question,
-                        ):
-                            plan = revised_plan
-                            approval_question = revised_question
-                initialized: CommandResult = ResearchStateInitializeTool(plan=plan).run()
-                if initialized.returncode != 0:
-                    raise RuntimeError(
-                        "research state initialization failed: "
-                        + (initialized.stderr or initialized.stdout).strip()
+        initial_state = self.agent_request(InitialState)
+
+        if initial_state.state_action == "interactive_setup":
+            self.ask_user(
+                "Ask at most three concise questions needed to establish this research "
+                "branch's goal and context: the research goal, primary metric and which "
+                "direction is better, and current codebase state. Use retained context "
+                "from the invocation, omit questions already answered there, and briefly "
+                "confirm already-known items instead of asking for them again."
+            )
+            self.ask_user(
+                "Ask at most three concise follow-up questions needed to establish evaluation "
+                "and constraints: the exact evaluation command, known baseline, fixed "
+                "constraints, and target improvement. Use the original request and preceding "
+                "answers, combine related items, and omit questions already answered."
+            )
+            self.ask_user(
+                "Ask at most three concise final setup questions needed to establish approach, "
+                "scope, and compute: preferred approaches, papers or prior attempts, minimum "
+                "decision scale, off-limits areas, and compute budget. Use all retained answers, "
+                "combine related items, and omit questions already answered."
+            )
+
+            class DraftProjectInstructions(AgentRequest):
+                plan: str = result(
+                    "complete work-branch Project Instructions synthesized from the original "
+                    "request and all interactive setup answers",
+                    guidance=(
+                        "Write Markdown with: title and work branch; goal; primary metric name, "
+                        "direction, evaluation command, and baseline; fixed constraints; target "
+                        "improvement; minimum decision scale; prioritized initial approaches; "
+                        "references and prior attempts; compute budget; off-limits files or "
+                        "areas; current next steps; and additional notes. Mark genuinely unknown "
+                        "values TBD rather than inventing them."
+                    ),
+                )
+
+            draft = self.agent_request(DraftProjectInstructions)
+            plan = draft.plan
+            approved = False
+            while not approved:
+                self.ask_user(
+                    "Present the following proposed work-branch Project Instructions clearly, "
+                    "then ask the user to approve them or describe specific changes. Do not "
+                    f"silently alter the proposal:\n\n{plan}"
+                )
+
+                class PlanReview(AgentRequest):
+                    decision: Literal["approve", "revise"] = result(
+                        "whether the user approved the displayed plan or requested changes",
                     )
+
+                review = self.agent_request(PlanReview)
+                if review.decision == "approve":
+                    approved = True
+                else:
+                    class PlanRevision(AgentRequest):
+                        revised_plan: str = result(
+                            "revised complete plan incorporating the requested changes",
+                        )
+
+                    revision = self.agent_request(PlanRevision)
+                    plan = revision.revised_plan
+
+            ResearchStateInitializeTool(plan=plan).run()
 
         note_jobs: list[Job[CommandResult]] = []
         for topic in initial_state.relevant_note_topics:
@@ -147,62 +142,54 @@ class ResearchCoordinator(UserFacingWorkflow[None]):
                 AgenticNotesReadTopicTool(topic=topic)
             )
             note_jobs.append(note_job)
-        self.observe(rendered_notes=self.wait_all(note_jobs))
+        self.wait_all(note_jobs)
 
-    def check_gpu(self) -> None:
+    def check_gpu(self) -> str:
         local_capacity: LocalGpuCapacity = discover_local_gpu_capacity()
-        backend: CommandResult = ReadEnvironmentVariableTool(
-            name="AR_JOB_BACKEND",
-            default="none",
-        ).run()
-        backend_name = backend.stdout.strip() or "none"
-        self.observe(
-            local_gpu_capacity=local_capacity,
-            configured_job_backend=backend_name,
-        )
+        backend_name = os.environ.get("AR_JOB_BACKEND", "none").strip() or "none"
+        self.queue_agent_observation(local_capacity)
         if backend_name != "none":
-            with self.agent_request():
-                step("Read the configured backend skill and run its status or list command.")
-                var(
-                    "backend_evidence",
-                    str,
+
+            class BackendStatus(AgentRequest):
+                step(
+                    f"Read the configured {backend_name} backend skill and run its "
+                    "status or list command."
+                )
+                backend_evidence: str = local(
                     "concise backend-status evidence for the classification",
                 )
-                var(
-                    "backend_capacity",
-                    Literal["available", "unavailable", "unknown"],
+                backend_capacity: Literal[
+                    "available", "unavailable", "unknown"
+                ] = local(
                     "remote GPU capacity classification from backend status",
                 )
 
+            self.agent_request(BackendStatus)
+        return backend_name
+
     def workflow(self) -> None:
-        self.check_gpu()
+        backend_name = self.check_gpu()
 
         while True:
-            with self.agent_request() as iteration:
+            class Iteration(AgentRequest):
                 with guidance("Prefer a cheap experiment changing exactly one variable."):
-                    var(
-                        "experiment",
-                        str,
-                        "next focused experiment from the plan, report, TODO, or latest result",
+                    experiment: str = local(
+                        "next focused experiment from the plan, report, TODO, or latest "
+                        f"result with external job backend {backend_name}",
                     )
-                    var("hypothesis", str, "testable hypothesis for `experiment`")
-                    var(
-                        "changed_variable",
-                        str,
-                        "the single experimental variable to change in `experiment`",
+                    hypothesis: str = local(f"testable hypothesis for {experiment}")
+                    changed_variable: str = local(
+                        f"the single experimental variable to change in {experiment}",
                     )
-                    var("metric", str, "decision metric for `experiment`")
-                    var("direction", str, "desired direction for `metric`")
-                    var("baseline", str, "baseline for `metric`")
-                    var(
-                        "minimum_decision_scale",
-                        str,
-                        "minimum scale needed for a decision about `experiment`",
+                    metric: str = local(f"decision metric for {experiment}")
+                    direction: str = local(f"desired direction for {metric}")
+                    baseline: str = local(f"baseline for {metric}")
+                    minimum_decision_scale: str = local(
+                        f"minimum scale needed for a decision about {experiment}",
                     )
-                    var(
-                        "commands",
-                        list[str],
-                        "tiered debugging, signal, full-decision, and verification commands",
+                    commands: list[str] = local(
+                        "tiered debugging, signal, full-decision, and verification "
+                        f"commands for {experiment}",
                     )
 
                 with guidance(
@@ -214,57 +201,51 @@ class ResearchCoordinator(UserFacingWorkflow[None]):
                         "conclusions. Do useful independent work instead of waiting idly "
                         "during long jobs."
                     ):
-                        step("Implement `experiment`, changing only `changed_variable`.")
+                        step(f"Implement {experiment}, changing only {changed_variable}.")
                         with guidance(
                             "GPU based tiers expected to take more than 10 seconds should be "
                             "done in parallel. If one fails, cancel the rest."
                         ):
                             step(
-                                "Run the debugging, signal, and full-decision tiers in `commands`."
+                                f"Run the debugging, signal, and full-decision tiers in {commands}."
                             )
                             step(
                                 "Fix implementation failures and rerun until genuine results exist."
                             )
-                        step("Run the verification work in `commands` for nontrivial claims.")
+                        step(
+                            f"Run the verification work in {commands} for nontrivial claims."
+                        )
 
-                    var(
-                        "evidence",
-                        list[str],
-                        "concrete measurements, artifact paths, and verification results",
+                    evidence: list[str] = local(
+                        "concrete measurements, artifact paths, and verification "
+                        f"results obtained for {experiment}",
                         guidance=(
                             "Include only evidence actually obtained during the preceding steps."
                         ),
                     )
-                    var(
-                        "verification_grade",
-                        Literal["verified", "partially-verified", "unverified"],
-                        "verification grade justified by `evidence`",
+                    verification_grade: Literal[
+                        "verified", "partially-verified", "unverified"
+                    ] = local(
+                        f"verification grade justified by {evidence}",
                     )
-                    var(
-                        "report",
-                        str,
-                        "analysis of `evidence` against `hypothesis`, `baseline`, `metric`, "
-                        "`direction`, and `minimum_decision_scale`",
+                    report: str = local(
+                        f"analysis of {evidence} against {hypothesis}, {baseline}, "
+                        f"{metric}, {direction}, and {minimum_decision_scale}",
                         guidance="Report regressions and negative results honestly.",
                     )
-                    var(
-                        "summary",
-                        str,
-                        "honest decision-grade conclusion supported by `evidence`",
+                    experiment_summary: str = local(
+                        f"honest decision-grade conclusion supported by {evidence}",
                         guidance=(
                             "Describe genuinely completed work; never substitute expected results."
                         ),
                     )
 
-                    field(
-                        "correction",
-                        ExperimentLogCorrectTool | None,
+                    correction: ExperimentLogCorrectTool | None = result(
                         "append-only correction for a previously logged experiment, or null",
                         guidance="Never rewrite an existing experiment record.",
                     )
-                    field(
-                        "finalization",
-                        FinalizationStart,
+                    finalization: FinalizationStart = result(
+                        "finalization request for this completed result",
                         guidance=(
                             "Use explicit code paths, a focused commit message, non-redundant "
                             "immutable-snapshot checks, and work-state-relative report asset paths. "
@@ -274,16 +255,18 @@ class ResearchCoordinator(UserFacingWorkflow[None]):
                             "are required."
                         ),
                     )
-                    field(
-                        "continuation",
-                        ContinueResearch | AskUser | ResearchComplete,
+                    continuation: Literal[
+                        "continue_research", "ask_user", "research_complete"
+                    ] = result(
                         "what to do after handing off finalization",
                         guidance=(
                             "Re-analyze the result for productive autonomous work before choosing "
-                            "ResearchComplete. Choose AskUser only for a genuine blocker or "
+                            "research_complete. Choose ask_user only for a genuine blocker or "
                             "consequential choice."
                         ),
                     )
+
+            iteration = self.agent_request(Iteration)
 
             if iteration.correction is not None:
                 iteration.correction.run()
@@ -292,15 +275,15 @@ class ResearchCoordinator(UserFacingWorkflow[None]):
             accepted_finalizer = self.admit(ResearchFinalizer(ticket=ticket))
             self.detach(accepted_finalizer)
 
-            match iteration.continuation:
-                case ContinueResearch():
-                    continue
-                case AskUser(question=question):
-                    self.ask_user(question)
-                    continue
-                case ResearchComplete(summary=summary):
-                    self.ask_user(
-                        summary
-                        + "\n\nWhat new track of experiments would you like me to begin?"
-                    )
-                    continue
+            if iteration.continuation == "ask_user":
+                self.ask_user(
+                    "Using the completed experiment and retained research context, explain the "
+                    "specific blocker or consequential choice, why autonomous work cannot decide "
+                    "it safely, and ask for the exact user input needed to continue."
+                )
+            elif iteration.continuation == "research_complete":
+                self.ask_user(
+                    "Give the user a concise synthesis of the completed research track grounded "
+                    "in retained verified results, then ask what new track of experiments they "
+                    "would like to begin."
+                )

@@ -3,353 +3,48 @@
 # dependencies = ["PyYAML>=6.0"]
 # ///
 
-"""Stage work-state-relative report assets and serialize research-state finalizers."""
+"""Named JSON/YAML wrapper for package-native research finalization tools."""
 
 from __future__ import annotations
 
-import argparse
-from datetime import datetime
-import os
-from pathlib import Path, PurePosixPath
-import shutil
+from pathlib import Path
 import sys
-import time
-from typing import Any
-
-import yaml
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
-sys.path.insert(0, str(REPO_ROOT / "capabilities" / "branch" / "lib"))
-
-from branch_git_common import git_text, now_iso, safe_load_yaml, slugify, write_yaml  # noqa: E402
-from command_common import CommandError, load_request, main, print_json, runtime_root  # noqa: E402
-from temporary_worktree import (  # noqa: E402
-    create_temporary_worktree,
-    publish_temporary_worktree,
-    remove_temporary_worktree,
-)
 
 
-TERMINAL_STATES = {"complete", "failed"}
+CAPABILITY_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = CAPABILITY_ROOT.parents[1]
+sys.path[:0] = [
+    str(CAPABILITY_ROOT / "package"),
+    str(REPO_ROOT / "capabilities" / "branch" / "package"),
+    str(REPO_ROOT / "scripts" / "package"),
+]
+
+from agentic_tools.runner import cli as tool_cli  # noqa: E402
 
 
-def explicit_path(value: object) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise CommandError("report_assets must contain non-empty paths")
-    path = PurePosixPath(value)
-    if path.is_absolute() or path == PurePosixPath(".") or ".." in path.parts or ".git" in path.parts:
-        raise CommandError(
-            f"report asset path must be relative to the work-state directory without .git or ..: {value}"
-        )
-    if any(character in value for character in "*?["):
-        raise CommandError(f"report asset path must not contain a glob: {value}")
-    return path.as_posix()
+TOOLS = {
+    "capture": "research_finalization.tools.capture:FinalizationCaptureTool",
+    "ready": "research_finalization.tools.ready:FinalizationReadyTool",
+    "commit": "research_finalization.tools.commit:FinalizationStateCommitTool",
+    "finish": "research_finalization.tools.finish:FinalizationFinishTool",
+    "status": "research_finalization.tools.status:FinalizationStatusTool",
+    "reconcile": "research_finalization.tools.reconcile:FinalizationReconcileTool",
+}
 
 
-def manifest_path(root: Path) -> Path:
-    return root / "manifest.yaml"
-
-
-def status_path(root: Path) -> Path:
-    return root / "status.yaml"
-
-
-def load_ticket(value: object) -> tuple[Path, dict[str, Any]]:
-    root = Path(str(value or "")).expanduser().resolve()
-    if not root.is_dir() or not manifest_path(root).is_file():
-        raise CommandError(f"finalization ticket does not exist: {root}")
-    return root, safe_load_yaml(manifest_path(root))
-
-
-def update_status(root: Path, **values: object) -> dict[str, Any]:
-    status = safe_load_yaml(status_path(root)) if status_path(root).exists() else {}
-    status.update(values)
-    status["updated_at"] = now_iso()
-    write_yaml(status_path(root), status)
-    return status
-
-
-def response(root: Path, manifest: dict[str, Any], **values: object) -> dict[str, object]:
-    return {
-        "id": manifest["id"],
-        "root": str(root),
-        "status_path": str(status_path(root)),
-        "code_branch": manifest["code_branch"],
-        "code_commit": manifest["code_commit"],
-        "state_branch": manifest["state_branch"],
-        **values,
-    }
-
-
-def ticket_response(root: Path, manifest: dict[str, Any]) -> dict[str, object]:
-    status = safe_load_yaml(status_path(root))
-    return response(root, manifest, state=str(status.get("state") or "captured"))
-
-
-def copy_asset(source_root: Path, target_root: Path, relative: str) -> None:
-    source = source_root / relative
-    if not source.is_file():
-        raise CommandError(f"report asset is not a file: {relative}")
-    target = target_root / relative
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
-
-
-def capture(request: dict[str, Any]) -> dict[str, object]:
-    project_dir = Path(str(request.get("project_dir") or os.environ.get("AR_PROJECT_DIR") or ".")).expanduser().resolve()
-    work_state_value = request.get("work_state_dir") or os.environ.get("AR_WORK_STATE_DIR")
-    if not work_state_value:
-        raise CommandError("work_state_dir or AR_WORK_STATE_DIR is required")
-    work_state_dir = Path(str(work_state_value)).expanduser().resolve()
-    code_branch = git_text(project_dir, "branch", "--show-current")
-    state_branch = git_text(work_state_dir, "branch", "--show-current")
-    if not code_branch or not state_branch:
-        raise CommandError("finalization capture requires named code and state branches")
-    code_commit = git_text(project_dir, "rev-parse", "HEAD")
-    report_assets = list(dict.fromkeys(explicit_path(value) for value in request.get("report_assets", [])))
-
-    sequence = time.time_ns()
-    finalization_id = f"{sequence}-{os.getpid()}-{slugify(code_branch)}"
-    root = runtime_root(project_dir) / "finalizations" / finalization_id
-    assets_dir = root / "assets"
-    root.mkdir(parents=True)
-    try:
-        for relative in report_assets:
-            copy_asset(work_state_dir, assets_dir, relative)
-    except Exception:
-        shutil.rmtree(root, ignore_errors=True)
-        raise
-
-    manifest = {
-        "version": 2,
-        "id": finalization_id,
-        "sequence": sequence,
-        "created_at": now_iso(),
-        "project_dir": str(project_dir),
-        "work_state_dir": str(work_state_dir),
-        "work_branch": str(os.environ.get("AR_WORK_BRANCH") or code_branch),
-        "code_branch": code_branch,
-        "code_commit": code_commit,
-        "state_branch": state_branch,
-        "report_assets": report_assets,
-    }
-    write_yaml(manifest_path(root), manifest)
-    update_status(root, id=finalization_id, sequence=sequence, state="captured", created_at=manifest["created_at"])
-    return response(root, manifest, state="captured")
-
-
-def prior_tickets(root: Path, manifest: dict[str, Any]) -> list[Path]:
-    tickets: list[tuple[int, Path]] = []
-    for candidate in root.parent.iterdir():
-        if candidate == root or not manifest_path(candidate).is_file() or not status_path(candidate).is_file():
-            continue
-        other = safe_load_yaml(manifest_path(candidate))
-        if other.get("work_branch") != manifest.get("work_branch"):
-            continue
-        sequence = int(other.get("sequence") or 0)
-        if sequence < int(manifest["sequence"]):
-            tickets.append((sequence, candidate))
-    return [ticket for _, ticket in sorted(tickets)]
-
-
-def ready(request: dict[str, Any]) -> dict[str, object]:
-    root, manifest = load_ticket(request.get("root"))
-    timeout_seconds = float(request.get("timeout_seconds", 1800))
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        blocking = [
-            ticket
-            for ticket in prior_tickets(root, manifest)
-            if safe_load_yaml(status_path(ticket)).get("state") not in TERMINAL_STATES
-        ]
-        if not blocking:
-            break
-        if time.monotonic() >= deadline:
-            raise CommandError("timed out waiting for earlier finalizations: " + ", ".join(path.name for path in blocking))
-        time.sleep(0.5)
-
-    work_state_dir = Path(str(manifest["work_state_dir"]))
-    state_dir = root / "state"
-    workspace = create_temporary_worktree(work_state_dir, state_dir)
-    if workspace["branch"] != manifest["state_branch"]:
-        remove_temporary_worktree(work_state_dir, state_dir)
-        raise CommandError("work-state branch changed since finalization capture")
-    for relative in manifest.get("report_assets", []):
-        copy_asset(root / "assets", state_dir, str(relative))
-    manifest["state_base_commit"] = workspace["base_commit"]
-    manifest["ready_at"] = now_iso()
-    write_yaml(manifest_path(root), manifest)
-    update_status(root, state="active", active_at=manifest["ready_at"])
-    return response(
-        root,
-        manifest,
-        state="active",
-        state_dir=str(state_dir),
-        state_base_commit=workspace["base_commit"],
-    )
-
-
-def commit(request: dict[str, Any]) -> dict[str, object]:
-    root, manifest = load_ticket(request.get("root"))
-    if safe_load_yaml(status_path(root)).get("state") != "active":
-        raise CommandError("finalization must be active before state commit")
-    try:
-        result = publish_temporary_worktree(
-            Path(str(manifest["work_state_dir"])),
-            root / "state",
-            str(manifest["state_branch"]),
-            str(manifest["state_base_commit"]),
-            str(request.get("message") or "work-state: finalize research result"),
-            push=True,
-        )
-    except Exception as error:
-        update_status(root, state="failed", error=str(error), failed_at=now_iso())
-        raise
-    update_status(root, state="committed", state_commit=result["commit"], state_changed=result["changed"])
-    return response(
-        root,
-        manifest,
-        state="committed",
-        state_dir=str(root / "state"),
-        state_base_commit=manifest["state_base_commit"],
-        state_commit=result["commit"],
-        state_changed=result["changed"],
-    )
-
-
-def finish(request: dict[str, Any]) -> dict[str, object]:
-    root, manifest = load_ticket(request.get("root"))
-    state = str(request.get("state") or "complete")
-    if state not in TERMINAL_STATES:
-        raise CommandError("finish state must be complete or failed")
-    current = str(safe_load_yaml(status_path(root)).get("state") or "")
-    if current in TERMINAL_STATES:
-        if current != state:
-            raise CommandError(f"finalization is already terminal with state {current}")
-        if state == "complete":
-            remove_temporary_worktree(Path(str(manifest["work_state_dir"])), root / "state")
-            shutil.rmtree(root / "assets", ignore_errors=True)
-        return response(root, manifest, state=current)
-    if state == "complete" and current != "committed":
-        raise CommandError("only a committed finalization can be completed")
-    values: dict[str, object] = {"state": state, "finished_at": now_iso()}
-    if request.get("error"):
-        values["error"] = str(request["error"])
-    status = update_status(root, **values)
-    if state == "complete":
-        remove_temporary_worktree(Path(str(manifest["work_state_dir"])), root / "state")
-        shutil.rmtree(root / "assets", ignore_errors=True)
-    return response(root, manifest, state=state, error=status.get("error"))
-
-
-def parse_time(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def matching_experiment_is_logged(manifest: dict[str, Any]) -> bool:
-    """Recognize a post-capture experiment record for this frozen code commit."""
-
-    state_dir = Path(str(manifest["work_state_dir"]))
-    state_branch = str(manifest["state_branch"])
-    paths = git_text(
-        state_dir,
-        "ls-tree",
-        "-r",
-        "--name-only",
-        state_branch,
-        "--",
-        "experiment-log/experiments",
-    ).splitlines()
-    captured_at = parse_time(manifest.get("created_at"))
-    for relative in paths:
-        if not relative.endswith((".yaml", ".yml")):
-            continue
-        raw = git_text(state_dir, "show", f"{state_branch}:{relative}")
-        value = yaml.safe_load(raw)
-        if not isinstance(value, dict):
-            continue
-        code = value.get("code")
-        if not isinstance(code, dict) or code.get("commit") != manifest.get("code_commit"):
-            continue
-        if value.get("work_branch") != manifest.get("work_branch"):
-            continue
-        logged_at = parse_time(value.get("created_at"))
-        if captured_at is None or logged_at is None or logged_at >= captured_at:
-            return True
-    return False
-
-
-def reconcile(request: dict[str, Any]) -> dict[str, object]:
-    """Complete only tickets whose state and experiment record are already durable."""
-
-    project_dir = Path(
-        str(request.get("project_dir") or os.environ.get("AR_PROJECT_DIR") or ".")
-    ).expanduser().resolve()
-    branch = str(
-        request.get("work_branch")
-        or os.environ.get("AR_WORK_BRANCH")
-        or git_text(project_dir, "branch", "--show-current")
-    )
-    roots_dir = runtime_root(project_dir) / "finalizations"
-    recovered: list[dict[str, object]] = []
-    unresolved: list[dict[str, object]] = []
-    if not roots_dir.is_dir():
-        return {"recovered": recovered, "unresolved": unresolved}
-
-    candidates: list[tuple[int, Path, dict[str, Any]]] = []
-    for root in roots_dir.iterdir():
-        if not manifest_path(root).is_file() or not status_path(root).is_file():
-            continue
-        manifest = safe_load_yaml(manifest_path(root))
-        if manifest.get("work_branch") != branch:
-            continue
-        candidates.append((int(manifest.get("sequence") or 0), root, manifest))
-
-    for _sequence, root, manifest in sorted(candidates):
-        state = str(safe_load_yaml(status_path(root)).get("state") or "")
-        if state in TERMINAL_STATES:
-            continue
-        if state == "committed" and matching_experiment_is_logged(manifest):
-            finish({"root": str(root), "state": "complete"})
-            recovered.append(ticket_response(root, manifest))
-        else:
-            unresolved.append(ticket_response(root, manifest))
-    return {"recovered": recovered, "unresolved": unresolved}
-
-
-def show_status(request: dict[str, Any]) -> dict[str, object]:
-    root, manifest = load_ticket(request.get("root"))
-    return {**response(root, manifest), **safe_load_yaml(status_path(root))}
-
-
-def dispatch(command: str) -> None:
-    request = load_request()
-    functions = {
-        "capture": capture,
-        "ready": ready,
-        "commit": commit,
-        "finish": finish,
-        "status": show_status,
-        "reconcile": reconcile,
-    }
-    print_json({"command": f"research-coordinator-finalization {command}", **functions[command](request)})
-
-
-def cli() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "command",
-        choices=["capture", "ready", "commit", "finish", "status", "reconcile"],
-    )
-    args = parser.parse_args()
-    return main(lambda: dispatch(args.command))
+def main() -> int:
+    command = sys.argv[1] if len(sys.argv) > 1 else ""
+    if command in {"", "-h", "--help"}:
+        print("Usage: research-coordinator-finalization {capture|ready|commit|finish|status|reconcile}")
+        print("Read JSON/YAML from stdin and write JSON.")
+        return 0 if command else 2
+    reference = TOOLS.get(command)
+    if reference is None:
+        print(f"research-coordinator-finalization: unknown subcommand: {command}", file=sys.stderr)
+        return 2
+    sys.argv = [f"research-coordinator-finalization {command}", reference, *sys.argv[2:]]
+    return tool_cli()
 
 
 if __name__ == "__main__":
-    raise SystemExit(cli())
+    raise SystemExit(main())

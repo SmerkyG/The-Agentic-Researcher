@@ -149,6 +149,11 @@ agentic-notes update-note < request.yaml
 agentic-notes rewrite-note < request.yaml
 ```
 
+Callback-managed workflows use the corresponding native `PythonTool`
+operations from `agentic_notes.tools` in-process. The public command is a thin
+compatibility and convenience wrapper that accepts the same JSON/YAML records;
+note behavior lives in the package tools rather than in the command wrapper.
+
 `agentic-notes rewrite-note` is for the `note-updater` cleanup pass after normal note
 capture. Setup, refresh, rendering, and note-state maintenance are internal
 capability mechanics invoked by launcher hooks or the `note-updater` subagent,

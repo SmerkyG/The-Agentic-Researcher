@@ -1,0 +1,24 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["mcp>=1.25,<2", "PyYAML>=6.0"]
+# ///
+
+"""Bootstrap the Agentic Team package-native tool MCP server."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import runpy
+import sys
+
+
+INSTALL_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(INSTALL_ROOT / "scripts" / "package"))
+for package_root in reversed(
+    [item for item in os.environ.get("AR_TOOL_PATH", "").split(os.pathsep) if item]
+):
+    sys.path.insert(0, package_root)
+
+if __name__ == "__main__":
+    runpy.run_module("agentic_tools.mcp_server", run_name="__main__")

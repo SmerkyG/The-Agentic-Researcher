@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from agentic_workflows.contract import CommandResult, ExecutableWorkflow, Value
-from agentic_workflows.research.finalization import FinalizationTicket
-from agentic_workflows.research.finalization_capture import FinalizationCaptureTool
-from agentic_workflows.research.git import (
+from agentic_workflows.branch import (
     BranchCommitResult,
     BranchCommitTool,
     BranchSnapshotTool,
-    GitStatusPathsTool,
     Snapshot,
 )
+from agentic_workflows.contract import CommandResult, ExecutableWorkflow, Value
+from agentic_workflows.research.git import GitStatusPathsTool
+from research_finalization.records import FinalizationTicket
+from research_finalization.tools.capture import FinalizationCaptureTool
 
 
 class FinalizationStart(ExecutableWorkflow[FinalizationTicket]):

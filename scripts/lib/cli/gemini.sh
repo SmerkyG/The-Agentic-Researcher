@@ -282,6 +282,43 @@ EOF
     fi
 }
 
+cli_gemini_setup_tool_transport() {
+    local tool_mcp_command workflow_mcp_command patch_json tool_server workflow_server
+    if enabled_capabilities_have_tools; then
+        tool_mcp_command="$(agentic_tools_mcp_runtime_command)"
+        tool_server=$(cat <<EOF
+{
+      "command": $(json_string "$tool_mcp_command"),
+      "timeout": 3600000,
+      "trust": false
+}
+EOF
+)
+    else
+        tool_server=null
+    fi
+    if workflow_mcp_command="$(imperative_workflows_mcp_runtime_command)"; then
+        workflow_server=$(cat <<EOF
+{
+  "command": $(json_string "$workflow_mcp_command"),
+  "timeout": 3600000,
+  "trust": false
+}
+EOF
+)
+    else
+        workflow_server=null
+    fi
+    patch_json=$(cat <<EOF
+{"mcpServers":{"agentic_tools":$tool_server,"agentic_workflows":$workflow_server}}
+EOF
+)
+    merge_managed_hook_json \
+        "$WORKSPACE_DIR/.gemini/settings.json" \
+        "agentic-team-tools" \
+        "$patch_json"
+}
+
 cli_gemini_translate_cli_args() {
     if [[ "$MODEL_SPECIFIED" == "false" && -n "${AR_DEFAULT_MODEL:-}" ]]; then
         CLI_ARGS+=("--model" "$AR_DEFAULT_MODEL")

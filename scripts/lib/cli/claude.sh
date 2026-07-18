@@ -123,11 +123,23 @@ EOF
 }
 
 cli_claude_translate_cli_args() {
+    local tool_mcp_command workflow_mcp_command mcp_config mcp_entries=""
     if [[ "$MODEL_SPECIFIED" == "false" && -n "${AR_DEFAULT_MODEL:-}" ]]; then
         CLI_ARGS+=("--model" "$AR_DEFAULT_MODEL")
     fi
     if [[ "$YOLO_MODE" == "true" ]]; then
         CLI_ARGS+=("--dangerously-skip-permissions")
+    fi
+    if enabled_capabilities_have_tools; then
+        tool_mcp_command="$(agentic_tools_mcp_runtime_command)"
+        mcp_entries="\"agentic_tools\":{\"command\":$(json_string "$tool_mcp_command")}"
+    fi
+    if workflow_mcp_command="$(imperative_workflows_mcp_runtime_command)"; then
+        mcp_entries="${mcp_entries:+$mcp_entries,}\"agentic_workflows\":{\"command\":$(json_string "$workflow_mcp_command")}"
+    fi
+    if [[ -n "$mcp_entries" ]]; then
+        mcp_config="{\"mcpServers\":{$mcp_entries}}"
+        CLI_ARGS+=("--mcp-config" "$mcp_config")
     fi
 }
 

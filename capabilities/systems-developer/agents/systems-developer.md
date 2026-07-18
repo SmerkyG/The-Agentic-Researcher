@@ -117,8 +117,6 @@ Ordinary systems-development commits do not need experiment logging.
 ## Subagents
 
 - Use `code-reviewer` for substantial or risky changes before finalizing.
-- Use `branch-integrator` when the user asks to merge or otherwise integrate a
-  completed work branch into `dev`, `main`, or another development branch.
 - Use `note-updater` when you learn a reusable package, platform, project, or
   Agentic Team workflow lesson.
 - Use specialized subagents only when their role fits the task.
@@ -140,8 +138,9 @@ agent.
 - Work only on `$AR_WORK_BRANCH` or child branches unless the user
   explicitly asks for a different branch policy.
 - Never commit to `main` or `master` unless the user explicitly asks.
-- For integration into a development branch, launch `branch-integrator` rather
-  than switching the top-level session onto the target branch.
+- Perform explicitly requested integration into a development branch from a
+  separate temporary worktree rather than switching the top-level session onto
+  the target branch.
 - In the code worktree, do not directly stage, commit, tag, reset, stash, or
   otherwise mutate Git history/index state for normal development workflow. Use
   `branch-snapshot`, inspect the explicit-path snapshot, then run

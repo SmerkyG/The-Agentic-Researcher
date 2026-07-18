@@ -81,7 +81,7 @@ ALLOWED_SELF_METHODS = {
     "fire_and_forget",
     "launch",
     "lock",
-    "observe",
+    "queue_agent_observation",
     "timeout",
     "wait",
     "wait_all",
@@ -294,7 +294,14 @@ def _is_schema_field(node: ast.AnnAssign, schema_names: set[str]) -> bool:
 
 def _is_workflow_record(node: ast.ClassDef) -> bool:
     return any(
-        _call_name(base) in {"WorkflowRecord", "WorkflowTool", "YAMLArgvTool", "ArgvTool", "ExecutableWorkflow"}
+        _call_name(base) in {
+            "WorkflowRecord",
+            "WorkflowTool",
+            "PythonTool",
+            "YAMLArgvTool",
+            "ArgvTool",
+            "ExecutableWorkflow",
+        }
         for base in node.bases
     )
 
@@ -312,6 +319,10 @@ def _is_executable_workflow(node: ast.ClassDef) -> bool:
 
 def _is_user_facing_workflow(node: ast.ClassDef) -> bool:
     return any(_call_name(base) == "UserFacingWorkflow" for base in node.bases)
+
+
+def _is_agent_request(node: ast.ClassDef) -> bool:
+    return any(_call_name(base) == "AgentRequest" for base in node.bases)
 
 
 def _workflow_record_names(tree: ast.AST) -> set[str]:
@@ -355,6 +366,8 @@ class WorkflowVisitor(ast.NodeVisitor):
         self._workflow_method_stack: list[set[str]] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        if _is_agent_request(node):
+            self._check_agent_request_class(node)
         self._check_workflow_entrypoint(node)
         self._check_workflow_config_fields(node)
         is_agent_workflow = _is_agent_workflow(node)
@@ -391,6 +404,59 @@ class WorkflowVisitor(ast.NodeVisitor):
             if is_executable_workflow:
                 self._workflow_method_stack.pop()
                 self._executable_workflow_depth -= 1
+
+    def _check_agent_request_class(self, node: ast.ClassDef) -> None:
+        def check_statements(
+            statements: Sequence[ast.stmt],
+            *,
+            allow_docstring: bool,
+        ) -> None:
+            for index, statement in enumerate(statements):
+                if (
+                    allow_docstring
+                    and index == 0
+                    and isinstance(statement, ast.Expr)
+                    and isinstance(statement.value, ast.Constant)
+                    and isinstance(statement.value.value, str)
+                ):
+                    continue
+                if isinstance(statement, ast.AnnAssign):
+                    call = statement.value
+                    if (
+                        isinstance(statement.target, ast.Name)
+                        and isinstance(call, ast.Call)
+                        and _call_name(call.func) in {"local", "result"}
+                    ):
+                        continue
+                if (
+                    isinstance(statement, ast.Expr)
+                    and isinstance(statement.value, ast.Call)
+                    and _call_name(statement.value.func) == "step"
+                ):
+                    continue
+                if (
+                    isinstance(statement, ast.With)
+                    and len(statement.items) == 1
+                    and isinstance(statement.items[0].context_expr, ast.Call)
+                    and _call_name(statement.items[0].context_expr.func) == "guidance"
+                    and statement.items[0].optional_vars is None
+                ):
+                    check_statements(statement.body, allow_docstring=False)
+                    continue
+                self.findings.append(
+                    Finding(
+                        path=self.path,
+                        line=statement.lineno,
+                        col=statement.col_offset,
+                        code="WF950",
+                        message=(
+                            "AgentRequest classes may contain only annotated local()/result() "
+                            "declarations, step(), and guidance scopes"
+                        ),
+                    )
+                )
+
+        check_statements(node.body, allow_docstring=True)
 
     def visit_Call(self, node: ast.Call) -> None:
         if (self._agent_workflow_depth > 0 or self._executable_workflow_depth > 0) and self._is_self_method_call(node):
@@ -757,14 +823,28 @@ class WorkflowVisitor(ast.NodeVisitor):
                 )
             )
             return
-        if len(node.args) != 1 or node.keywords:
+        visibility_keywords = [
+            keyword for keyword in node.keywords if keyword.arg == "agent_visibility"
+        ]
+        valid_visibility = (
+            len(node.keywords) == len(visibility_keywords) <= 1
+            and all(
+                isinstance(keyword.value, ast.Constant)
+                and keyword.value.value in {"shown", "hidden"}
+                for keyword in visibility_keywords
+            )
+        )
+        if len(node.args) != 1 or not valid_visibility:
             self.findings.append(
                 Finding(
                     path=self.path,
                     line=node.lineno,
                     col=node.col_offset,
                     code="WF802",
-                    message=f"self.{node.func.attr}(...) requires exactly one positional operation",
+                    message=(
+                        f"self.{node.func.attr}(...) requires exactly one positional operation "
+                        "and optionally agent_visibility='shown' or 'hidden'"
+                    ),
                 )
             )
             return
@@ -1114,7 +1194,7 @@ class WorkflowVisitor(ast.NodeVisitor):
                     col=node.args[2].col_offset,
                     code="WF704",
                     message=(
-                        "self.fill accepts one WorkflowRecord, WorkflowTool, "
+                        "self.fill accepts one WorkflowRecord, WorkflowTool, PythonTool, "
                         "YAMLArgvTool or ArgvTool schema type plus optional guidance"
                     ),
                 )
@@ -1164,7 +1244,7 @@ class WorkflowVisitor(ast.NodeVisitor):
                     col=node.col_offset,
                     code="WF704",
                     message=(
-                        "self.fill accepts exactly one WorkflowRecord, WorkflowTool, "
+                        "self.fill accepts exactly one WorkflowRecord, WorkflowTool, PythonTool, "
                         "YAMLArgvTool or ArgvTool schema type"
                     ),
                 )

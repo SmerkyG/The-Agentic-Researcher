@@ -3,151 +3,113 @@
 # dependencies = ["PyYAML>=6.0"]
 # ///
 
+"""Named command wrapper for Experiment Log structured Python tools."""
+
 from __future__ import annotations
 
 import argparse
-import os
+import json
 from pathlib import Path
 import sys
 
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib" / "commands"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-
-from agentic_state import AgenticStateError, parse_yaml_mapping, safe_load_yaml, work_branch  # noqa: E402
-from command_common import CommandError, load_request, main, print_json  # noqa: E402
-from experiment_log_models import (  # noqa: E402
-    ExperimentLogAppendResult,
-    ExperimentLogAppendRequest,
-    ExperimentLogCorrectResult,
-    ExperimentLogCorrectRequest,
-    ModelError,
-    decode_model,
-    model_data,
-)
-from experiment_log_common import (  # noqa: E402
-    ExperimentLogError,
-    log_correction,
-    log_experiment,
-    read_summary,
-)
+import yaml
 
 
-def request_from_path(path: str) -> dict[str, object]:
-    if path == "-":
-        return parse_yaml_mapping(sys.stdin.read(), "stdin request")
-    return safe_load_yaml(Path(path))
+CAPABILITY_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = CAPABILITY_ROOT.parents[1]
+sys.path[:0] = [
+    str(CAPABILITY_ROOT / "package"),
+    str(REPO_ROOT / "scripts" / "package"),
+]
+
+from agentic_tools import record_data  # noqa: E402
+from agentic_tools.runner import cli as tool_cli, execute  # noqa: E402
 
 
-def command_project_dir(explicit: str | None) -> Path:
-    if explicit:
-        return Path(explicit).resolve()
-    return Path(os.environ.get("AR_PROJECT_DIR") or ".").resolve()
+TOOLS = {
+    "append": "experiment_log.tools.append:ExperimentLogAppendTool",
+    "correct": "experiment_log.tools.correct:ExperimentLogCorrectTool",
+    "summary": "experiment_log.tools.summary:ExperimentLogSummaryTool",
+}
 
 
-def print_result(result: ExperimentLogAppendResult | ExperimentLogCorrectResult) -> None:
-    print_json(model_data(result))
+def _mapping(text: str) -> dict[str, object]:
+    data = yaml.safe_load(text) or {}
+    if not isinstance(data, dict):
+        raise TypeError("request JSON/YAML must be a mapping")
+    return data
 
 
-def append_request(
-    request: ExperimentLogAppendRequest,
-    *,
-    project_dir: Path,
-    branch_name: str | None,
-) -> None:
-    experiment_ref = log_experiment(request, project_dir, branch_name)
-    print_result(ExperimentLogAppendResult(experiment_id=experiment_ref))
+def _request(path: str | None) -> dict[str, object]:
+    if path and path != "-":
+        return _mapping(Path(path).read_text(encoding="utf-8"))
+    return _mapping(sys.stdin.read())
 
 
-def correct_request(
-    request: ExperimentLogCorrectRequest,
-    *,
-    project_dir: Path,
-    branch_name: str | None,
-) -> None:
-    correction_ref = log_correction(request, project_dir, branch_name)
-    print_result(ExperimentLogCorrectResult(correction_id=correction_ref))
+def _write_result(reference: str, data: dict[str, object]) -> object:
+    result = execute(reference, yaml.safe_dump(data, sort_keys=False))
+    print(json.dumps(record_data(result), sort_keys=True))
+    return result
 
 
-def add_request_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--request", help="YAML request file, or '-' for stdin. Defaults to stdin.")
-    parser.add_argument("--project-dir", default=None)
-    parser.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH"))
+def _mutating_command(command: str, arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog=f"experiment-log {command}")
+    parser.add_argument("--request", help="JSON/YAML request file, or - for stdin")
+    parser.add_argument("--project-dir")
+    parser.add_argument("--work-branch")
+    options = parser.parse_args(arguments)
+    data = _request(options.request)
+    if options.project_dir is not None:
+        data["project_dir"] = options.project_dir
+    if options.work_branch is not None:
+        data["work_branch"] = options.work_branch
+    _write_result(TOOLS[command], data)
+    return 0
 
 
-def run_append(argv: list[str]) -> None:
-    parser = argparse.ArgumentParser(description="Append an Agentic Team experiment log entry.")
-    add_request_args(parser)
-    args = parser.parse_args(argv)
-
-    try:
-        request = decode_model(
-            ExperimentLogAppendRequest,
-            request_from_path(args.request) if args.request else load_request(),
-        )
-        append_request(
-            request,
-            project_dir=command_project_dir(args.project_dir),
-            branch_name=args.work_branch or request.work_branch,
-        )
-    except (AgenticStateError, ExperimentLogError, ModelError) as exc:
-        raise CommandError(str(exc)) from exc
-
-
-def run_correct(argv: list[str]) -> None:
-    parser = argparse.ArgumentParser(description="Append a correction to an Agentic Team experiment log entry.")
-    add_request_args(parser)
-    args = parser.parse_args(argv)
-
-    try:
-        request = decode_model(
-            ExperimentLogCorrectRequest,
-            request_from_path(args.request) if args.request else load_request(),
-        )
-        correct_request(
-            request,
-            project_dir=command_project_dir(args.project_dir),
-            branch_name=args.work_branch,
-        )
-    except (AgenticStateError, ExperimentLogError, ModelError) as exc:
-        raise CommandError(str(exc)) from exc
-
-
-def run_summary(argv: list[str]) -> None:
-    parser = argparse.ArgumentParser(description="Read the active work-branch experiment summary.")
-    parser.add_argument("--project-dir", default=".")
-    parser.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH"))
-    args = parser.parse_args(argv)
-
-    try:
-        print(read_summary(Path(args.project_dir).resolve(), work_branch(args.work_branch)))
-    except (AgenticStateError, ExperimentLogError) as exc:
-        raise CommandError(str(exc)) from exc
-
-
-def dispatch() -> None:
-    command = sys.argv[1] if len(sys.argv) > 1 else ""
-    args = sys.argv[2:]
-
-    if command in {"--help", "-h", ""}:
-        print("Usage: experiment-log SUBCOMMAND [OPTIONS]\n")
-        print("Subcommands:")
-        print("  append    Append a completed experiment result")
-        print("  correct   Append a correction to an existing experiment")
-        print("  summary   Read the active work-branch summary")
-        if not command:
-            raise CommandError("subcommand is required")
-        return
-    if command == "append":
-        run_append(args)
-    elif command == "correct":
-        run_correct(args)
-    elif command == "summary":
-        run_summary(args)
+def _summary(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="experiment-log summary")
+    parser.add_argument("--project-dir")
+    parser.add_argument("--work-branch")
+    options = parser.parse_args(arguments)
+    human_mode = options.project_dir is not None or options.work_branch is not None
+    data = {} if human_mode else _request(None)
+    if options.project_dir is not None:
+        data["project_dir"] = options.project_dir
+    if options.work_branch is not None:
+        data["work_branch"] = options.work_branch
+    result = execute(TOOLS["summary"], yaml.safe_dump(data, sort_keys=False))
+    if human_mode:
+        if not result.exists:
+            print(result.error or "experiment summary does not exist", file=sys.stderr)
+            return 1
+        print(result.content, end="" if result.content.endswith("\n") else "\n")
     else:
-        raise CommandError(f"unknown experiment-log subcommand: {command}")
+        print(json.dumps(record_data(result), sort_keys=True))
+    return 0
+
+
+def main() -> int:
+    command = sys.argv[1] if len(sys.argv) > 1 else ""
+    if command in {"", "-h", "--help"}:
+        print("Usage: experiment-log {append|correct|summary} [--schema]")
+        print("Reads a JSON or YAML mapping from stdin and writes JSON to stdout.")
+        return 0 if command else 2
+    reference = TOOLS.get(command)
+    if reference is None:
+        print(f"experiment-log: unknown subcommand: {command}", file=sys.stderr)
+        return 2
+    if sys.argv[2:] == ["--schema"]:
+        sys.argv = [f"experiment-log {command}", reference, "--schema"]
+        return tool_cli()
+    try:
+        if command in {"append", "correct"}:
+            return _mutating_command(command, sys.argv[2:])
+        return _summary(sys.argv[2:])
+    except (OSError, RuntimeError, TypeError, ValueError, yaml.YAMLError) as error:
+        print(f"experiment-log {command}: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(dispatch))
+    raise SystemExit(main())

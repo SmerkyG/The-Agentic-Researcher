@@ -348,11 +348,13 @@ def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str]
     assert f"{REPO_ROOT}:/opt/agentic-team:ro" in podman_log
     assert "AR_SANDBOX=podman" in podman_log
     assert "AR_INSTALL_DIR=/opt/agentic-team" in podman_log
+    assert "AR_TOOL_PATH=" in podman_log
     assert "AR_WORKFLOW_PATH=" in podman_log
     assert "/opt/agentic-team/capabilities/imperative-workflows/package" in podman_log
     assert "/opt/agentic-team/capabilities/research-coordinator/package" in podman_log
     assert "PATH=" in podman_log
     assert "/opt/agentic-team/scripts/bin" in podman_log
+    assert "/opt/agentic-team/scripts/package" in podman_log
     assert "/opt/agentic-team/scripts/lib/commands" in podman_log
     assert "--entrypoint /bin/bash" in podman_log
     assert "/test_sandbox.sh" in podman_log
@@ -462,9 +464,14 @@ def test_launcher_native_runs_host_cli__without_container(
     cli__log_text = cli__log.read_text()
     assert f"cwd:{workspace}" in cli__log_text
     assert "--model gpt-test" in cli__log_text
+    assert "mcp_servers.agentic_tools.command=" in cli__log_text
+    assert "agentic-tools-mcp" in cli__log_text
+    assert "mcp_servers.agentic_tools.env_vars=" in cli__log_text
+    assert "mcp_servers.agentic_tools.required=true" in cli__log_text
     assert "mcp_servers.agentic_workflows.command=" in cli__log_text
     assert "imperative-workflows-mcp" in cli__log_text
     assert "mcp_servers.agentic_workflows.env_vars=" in cli__log_text
+    assert '"AR_TOOL_PATH"' in cli__log_text
     assert '"AR_WORKFLOW_PATH"' in cli__log_text
     assert '"AR_RUNTIME_ROOT"' in cli__log_text
     assert '"AR_WORK_STATE_DIR"' in cli__log_text
@@ -984,7 +991,11 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
 ) -> None:
     workspace = tmp_path / "ws-claude-cluster"
     init_work_branch_workspace(workspace)
-    make_executable(fake_bin / "claude", "#!/bin/sh\nexit 0\n")
+    claude_log = tmp_path / "claude.log"
+    make_executable(
+        fake_bin / "claude",
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"${FAKE_CLAUDE_LOG:?}\"\n",
+    )
     make_executable(fake_bin / "cluster-run", "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nexit 0\n")
 
     result = run(
@@ -997,15 +1008,22 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
             "cluster-run",
             *at_launch_args(workspace),
         ],
-        base_env,
+        {**base_env, "FAKE_CLAUDE_LOG": str(claude_log)},
     )
 
     assert result.returncode == 0
     assert (workspace / ".claude" / "skills" / "cluster-run" / "SKILL.md").exists()
-    assert (workspace / ".claude" / "skills" / "do_research" / "SKILL.md").exists()
+    research_skill = workspace / ".claude" / "skills" / "do_research" / "SKILL.md"
+    assert research_skill.exists()
+    assert "## Callback-Managed Skill" in research_skill.read_text()
     claude_agent = workspace / ".claude" / "agents" / "research-finalizer.md"
     assert claude_agent.exists()
     assert "codex_reasoning_effort" not in claude_agent.read_text()
+    assert "## Callback-Managed Imperative Workflow" in claude_agent.read_text()
+    claude_args = claude_log.read_text()
+    assert "--mcp-config" in claude_args
+    assert "agentic_workflows" in claude_args
+    assert "imperative-workflows-mcp" in claude_args
     claude_hook = workspace / ".claude" / "hooks" / "agentic-team-compaction.py"
     assert claude_hook.exists()
     assert not (workspace / ".agents" / "hooks" / "agentic-team-compaction-refresh.py").exists()
@@ -1049,6 +1067,7 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     gemini_agent = workspace / ".gemini" / "agents" / "research-finalizer.md"
     assert gemini_agent.exists()
     assert "codex_reasoning_effort" not in gemini_agent.read_text()
+    assert "## Callback-Managed Imperative Workflow" in gemini_agent.read_text()
     assert not (workspace / ".agents" / "skills" / "cluster-run" / "SKILL.md").exists()
     gemini_hook = workspace / ".gemini" / "hooks" / "agentic-team-compaction.py"
     assert gemini_hook.exists()
@@ -1061,6 +1080,13 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     assert gemini_steering_hook.exists()
     assert "steering-message" in gemini_steering_hook.read_text()
     gemini_settings = json.loads((workspace / ".gemini" / "settings.json").read_text())
+    assert gemini_settings["mcpServers"]["agentic_tools"]["command"].endswith(
+        "/agentic-tools-mcp"
+    )
+    assert gemini_settings["mcpServers"]["agentic_tools"]["trust"] is False
+    assert gemini_settings["mcpServers"]["agentic_workflows"]["command"].endswith(
+        "/imperative-workflows-mcp"
+    )
     precompress_command = gemini_settings["hooks"]["PreCompress"][0]["hooks"][0]["command"]
     before_model_commands = [
         hook["command"]
@@ -1106,6 +1132,7 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     opencode_agent_text = opencode_agent.read_text()
     assert "mode: subagent" in opencode_agent_text
     assert "codex_reasoning_effort" not in opencode_agent_text
+    assert "## Callback-Managed Imperative Workflow" in opencode_agent_text
     assert not (workspace / ".agents" / "skills" / "cluster-run" / "SKILL.md").exists()
     opencode_plugin = workspace / ".opencode" / "plugins" / "agentic-team-compaction.ts"
     assert opencode_plugin.exists()
@@ -1116,6 +1143,14 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     assert "execFileSync" in opencode_plugin_text
     assert "capability-refresh" in opencode_plugin_text
     assert str(workspace / "AGENTS.md") in opencode_plugin_text
+    opencode_settings = json.loads((workspace / "opencode.json").read_text())
+    tool_server = opencode_settings["mcp"]["agentic_tools"]
+    assert tool_server["type"] == "local"
+    assert tool_server["enabled"] is True
+    assert tool_server["command"][0].endswith("/agentic-tools-mcp")
+    assert opencode_settings["mcp"]["agentic_workflows"]["command"][0].endswith(
+        "/imperative-workflows-mcp"
+    )
 
 
 def test_install_script_auto_detects_podman_when_docker_is_absent(
@@ -1216,6 +1251,17 @@ def test_launcher_podman_runs_pi_cli_(base_env: dict[str, str], tmp_path: Path) 
     assert "execFileSync" in pi_extension_text
     assert "capability-refresh" in pi_extension_text
     assert "/workspace/AGENTS.md" in pi_extension_text
+    pi_mcp = json.loads((workspace / ".pi" / "mcp.json").read_text())
+    tool_server = pi_mcp["mcpServers"]["agentic_tools"]
+    assert tool_server["transport"] == "stdio"
+    assert tool_server["lifecycle"] == "eager"
+    assert tool_server["command"] == "/opt/agentic-team/scripts/bin/agentic-tools-mcp"
+    assert pi_mcp["mcpServers"]["agentic_workflows"]["command"] == (
+        "/opt/agentic-team/capabilities/imperative-workflows/bin/imperative-workflows-mcp"
+    )
+    pi_research_skill = workspace / ".agents" / "skills" / "do_research" / "SKILL.md"
+    assert "## Callback-Managed Skill" in pi_research_skill.read_text()
+    assert "npm:pi-mcp-extension@1.5.0" in podman_log
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
 
@@ -1246,6 +1292,7 @@ def test_pi_translates_resume_to_session_and_warns_on_yolo(
     # --debug-launch enables pi's verbose startup.
     assert "--verbose" in result.stdout
     assert "-e /workspace/.pi/extensions/agentic-team-compaction.ts" in result.stdout
+    assert "-e npm:pi-mcp-extension@1.5.0" in result.stdout
     # pi has no permission system, so --yolo is a no-op with a warning.
     assert "--yolo has no effect in pi mode" in result.stdout
 

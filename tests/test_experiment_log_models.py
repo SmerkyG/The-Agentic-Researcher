@@ -8,20 +8,19 @@ from typing import ClassVar, Literal, Union, get_args, get_origin, get_type_hint
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "package"))
 sys.path.insert(0, str(REPO_ROOT / "capabilities" / "experiment-log" / "lib"))
 sys.path.insert(0, str(REPO_ROOT / "capabilities" / "experiment-log" / "package"))
-sys.path.insert(0, str(REPO_ROOT / "capabilities" / "imperative-workflows" / "package"))
 
-from agentic_workflows.contract import WorkflowRecord  # noqa: E402
-from agentic_workflows.research.experiment_log_append import (  # noqa: E402
-    ExperimentCode as WorkflowExperimentCode,
-    ExperimentLogAppendResult as WorkflowAppendResult,
+from agentic_tools import PythonTool, Record  # noqa: E402
+from experiment_log.tools import (  # noqa: E402
+    ExperimentCode as ToolExperimentCode,
+    ExperimentLogAppendResult as ToolAppendResult,
     ExperimentLogAppendTool,
-    ExperimentMetric as WorkflowExperimentMetric,
-)
-from agentic_workflows.research.experiment_log_correct import (  # noqa: E402
-    ExperimentLogCorrectResult as WorkflowCorrectResult,
+    ExperimentLogCorrectResult as ToolCorrectResult,
     ExperimentLogCorrectTool,
+    ExperimentLogSummaryTool,
+    ExperimentMetric as ToolExperimentMetric,
 )
 from experiment_log_models import (  # noqa: E402
     ExperimentCode,
@@ -53,19 +52,40 @@ def shape(annotation: object) -> object:
         return ("literal", args)
     if origin is list:
         return ("list", shape(args[0]))
-    if isinstance(annotation, type) and (is_dataclass(annotation) or issubclass(annotation, WorkflowRecord)):
+    if isinstance(annotation, type) and (is_dataclass(annotation) or issubclass(annotation, Record)):
         return ("record", {name: shape(value) for name, value in record_fields(annotation).items()})
     return annotation
 
 
-def test_agent_adapter_matches_experiment_log_command_contract() -> None:
-    pairs = [
-        (ExperimentCode, WorkflowExperimentCode),
-        (ExperimentMetric, WorkflowExperimentMetric),
-        (ExperimentLogAppendRequest, ExperimentLogAppendTool),
-        (ExperimentLogCorrectRequest, ExperimentLogCorrectTool),
-        (ExperimentLogAppendResult, WorkflowAppendResult),
-        (ExperimentLogCorrectResult, WorkflowCorrectResult),
+def test_native_tool_fields_match_experiment_log_domain_models() -> None:
+    assert issubclass(ExperimentLogAppendTool, PythonTool)
+    assert issubclass(ExperimentLogCorrectTool, PythonTool)
+    assert issubclass(ExperimentLogSummaryTool, PythonTool)
+
+    exact_pairs = [
+        (ExperimentCode, ToolExperimentCode),
+        (ExperimentMetric, ToolExperimentMetric),
+        (ExperimentLogAppendResult, ToolAppendResult),
+        (ExperimentLogCorrectResult, ToolCorrectResult),
     ]
-    for command_model, workflow_adapter in pairs:
-        assert shape(command_model) == shape(workflow_adapter)
+    for domain_model, tool_record in exact_pairs:
+        assert shape(domain_model) == shape(tool_record)
+
+    append_domain = record_fields(ExperimentLogAppendRequest)
+    append_tool = record_fields(ExperimentLogAppendTool)
+    append_shape = {
+        name: shape(value)
+        for name, value in append_tool.items()
+        if name != "project_dir"
+    }
+    assert append_shape == {
+        name: shape(value) for name, value in append_domain.items()
+    }
+
+    correction_domain = record_fields(ExperimentLogCorrectRequest)
+    correction_tool = record_fields(ExperimentLogCorrectTool)
+    assert {
+        name: shape(value)
+        for name, value in correction_tool.items()
+        if name not in {"project_dir", "work_branch"}
+    } == {name: shape(value) for name, value in correction_domain.items()}

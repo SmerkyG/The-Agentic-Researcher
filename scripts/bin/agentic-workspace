@@ -14,7 +14,9 @@ import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMMAND_LIB = REPO_ROOT / "scripts" / "lib" / "commands"
+CORE_PACKAGE = REPO_ROOT / "scripts" / "package"
 sys.path.insert(0, str(COMMAND_LIB))
+sys.path.insert(0, str(CORE_PACKAGE))
 
 from agentic_state import (  # noqa: E402
     AgenticStateError,
@@ -29,6 +31,7 @@ from agentic_state import (  # noqa: E402
     state_root,
     work_state_branch,
 )
+from agentic_tools.hook_runner import execute_hook, hook_reference  # noqa: E402
 
 
 def run(command: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -202,9 +205,6 @@ def run_capability_create_work_hooks(
         root = capability_root(capability)
         if root is None:
             continue
-        hook = root / "hooks" / "create-work"
-        if not hook.is_file() or not os.access(hook, os.X_OK):
-            continue
         env = os.environ.copy()
         env.update(
             {
@@ -220,7 +220,29 @@ def run_capability_create_work_hooks(
                 "AT_CREATE_PROJECT_STATE_DIR": str(project_state_dir),
             }
         )
-        result = subprocess.run([str(hook)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        if hook_reference(root, "create-work") is not None:
+            try:
+                status = execute_hook(root, "create-work", environment=env)
+            except Exception as error:
+                raise AgenticStateError(
+                    f"Capability '{capability}' create-work hook failed: {error}"
+                ) from error
+            if status != 0:
+                raise AgenticStateError(
+                    f"Capability '{capability}' create-work hook failed with status {status}"
+                )
+            continue
+
+        hook = root / "hooks" / "create-work"
+        if not hook.is_file() or not os.access(hook, os.X_OK):
+            continue
+        result = subprocess.run(
+            [str(hook)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip()
             raise AgenticStateError(f"Capability '{capability}' create-work hook failed: {detail}")

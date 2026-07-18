@@ -1,2 +1,7 @@
 description = "Record durable experiment results and corrections."
-requires = ["imperative-workflows"]
+requires = []
+
+[tools]
+experiment_log_append = "experiment_log.tools.append:ExperimentLogAppendTool"
+experiment_log_correct = "experiment_log.tools.correct:ExperimentLogCorrectTool"
+experiment_log_summary = "experiment_log.tools.summary:ExperimentLogSummaryTool"
