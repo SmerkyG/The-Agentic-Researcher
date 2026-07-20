@@ -1,5 +1,8 @@
 # Callback-Managed Agent Workflows
 
+For a shorter source-to-model-output tour, see
+[Imperative Workflows by Example](imperative-workflows-by-example.md).
+
 The selected CLI executes an agent workflow in a persistent local
 Python worker and uses structured MCP calls only at agent boundaries. It does
 not take over the user's first turn: the agent receives the first user or
@@ -56,6 +59,11 @@ class Iteration(AgentRequest):
 iteration = self.agent_request(Iteration)
 ticket = iteration.finalization.run()
 ```
+
+Selected registered PythonTools can be granted with the `tools=` argument;
+`detachable_tools=` is an explicitly authorized subset. The model can request a
+tool wave and continue this same aggregate boundary after Python returns the
+results. It never receives the enabled tool catalog as a global MCP surface.
 
 Python executes the complete class body once and its metaclass freezes the
 request. Nodes are processed in source order, although the agent may inspect
@@ -196,6 +204,44 @@ The active agent calls `resume_workflow` with those exact values and an event-sp
 ```
 
 for `agent_request`, and:
+
+```json
+{
+  "kind": "tool_requests",
+  "requests": [
+    {"id": "status", "tool": "git_status", "arguments": {}, "mode": "await"}
+  ]
+}
+```
+
+when the current event grants request-scoped PythonTools. The worker validates
+the packet, launches independent requests concurrently, and returns another
+`agent_request` event containing `tool_results`. `await` calls complete before
+that continuation; an explicitly permitted `detach` call returns only launcher
+acceptance and must not be depended on later.
+
+Every request repeats its current `available_tools` grant. Full definitions are
+sent in `tool_definitions` only when a name is new or its schema changed in the
+retained agent context. Remembering a definition never grants authority: the
+worker rejects any name or mode absent from the current event. PythonTools are
+not separately exposed to callback agents over MCP.
+
+After CLI context compaction, call `reset_workflow_context` once with the active
+run ID. It clears the worker's definition cache and returns the unchanged
+pending boundary with every currently granted definition restored. It does not
+consume or replay that boundary.
+
+Workflow Python grants tools at the call site:
+
+```python
+response = self.agent_request(
+    InspectState,
+    tools=[GitStatusTool, ReadArtifactTool, RefreshNotesTool],
+    detachable_tools=[RefreshNotesTool],
+)
+```
+
+The ordinary user response payload is:
 
 ```json
 {"answer": "user response"}

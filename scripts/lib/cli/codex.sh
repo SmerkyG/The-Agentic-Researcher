@@ -196,7 +196,7 @@ cli_codex_workflow_mcp_env_vars_json() {
 
 cli_codex_translate_cli_args() {
     local translated=()
-    local i arg next workflow_root workflow_runtime mcp_command mcp_env_vars tool_mcp_command
+    local i arg next workflow_root workflow_runtime mcp_command mcp_env_vars
 
     for ((i=0; i<${#CLI_ARGS[@]}; i++)); do
         arg="${CLI_ARGS[$i]}"
@@ -224,17 +224,6 @@ cli_codex_translate_cli_args() {
     if [[ "$YOLO_MODE" == "true" ]]; then
         CLI_ARGS+=("--dangerously-bypass-approvals-and-sandbox")
     fi
-    if enabled_capabilities_have_tools; then
-        tool_mcp_command="$(agentic_tools_mcp_runtime_command)"
-        mcp_env_vars="$(cli_codex_workflow_mcp_env_vars_json)"
-        CLI_ARGS+=(
-            --config "mcp_servers.agentic_tools.command=$(json_string "$tool_mcp_command")"
-            --config "mcp_servers.agentic_tools.env_vars=$mcp_env_vars"
-            --config 'mcp_servers.agentic_tools.required=true'
-            --config 'mcp_servers.agentic_tools.startup_timeout_sec=60'
-            --config 'mcp_servers.agentic_tools.tool_timeout_sec=3600'
-        )
-    fi
     if capability_enabled imperative-workflows && \
         workflow_root="$(capability_root imperative-workflows)"; then
         workflow_runtime="$(capability_runtime_root imperative-workflows "$workflow_root")"
@@ -246,7 +235,7 @@ cli_codex_translate_cli_args() {
             --config 'mcp_servers.agentic_workflows.required=true'
             --config 'mcp_servers.agentic_workflows.startup_timeout_sec=60'
             --config 'mcp_servers.agentic_workflows.tool_timeout_sec=3600'
-            --config 'mcp_servers.agentic_workflows.enabled_tools=["start_workflow","resume_workflow","workflow_status","cancel_workflow"]'
+            --config 'mcp_servers.agentic_workflows.enabled_tools=["start_workflow","resume_workflow","workflow_status","cancel_workflow","reset_workflow_context"]'
         )
     fi
     CLI_ARGS+=("${translated[@]}")

@@ -18,7 +18,7 @@ def Value(
     default_factory: object = MISSING,
 ) -> object:
     """
-    Describe one WorkflowRecord field that a non-mutating workflow evaluation fills.
+    Describe one typed structured field and its human-facing contract.
 
     The Python annotation supplies the field type. The Value description supplies
     the model-facing field contract. When neither default nor default_factory is
@@ -167,7 +167,7 @@ class OperationNotice(WorkflowRecord):
 
 
 class Operation(WorkflowRecord):
-    """A tool or subagent invocation interpreted by the current agent."""
+    """A typed tool, executable-workflow, or subagent invocation."""
 
     guidance: ClassVar[str] = ""
     agent_visibility: ClassVar[AgentVisibility] = "shown"
@@ -269,57 +269,32 @@ class ExecutableWorkflow(YAMLArgvTool, Workflow):
 
 class AgentWorkflow(Workflow):
     """
-    Agent-followed workflow vocabulary.
+    Callback-executed workflow with explicit model and user boundaries.
 
-    The methods below describe how the agent interprets workflow source; they
-    are not local implementations of the workflow.
+    A persistent Python worker executes workflow source. The active CLI agent
+    handles only emitted agent-request, user-input, and subagent boundaries.
     """
 
     def on_startup(self) -> None:
-        """Lifecycle hook followed once before workflow() at session startup."""
+        """Execute once before workflow() at session startup."""
 
     def on_compaction(self) -> None:
-        """Lifecycle hook followed after compaction before resuming workflow()."""
+        """Execute after compaction before resuming the interrupted boundary."""
 
     def workflow(self) -> Any:
-        """Follow or execute this agent context's workflow body."""
+        """Execute this workflow body in the persistent worker."""
 
         raise NotImplementedError
 
-    def do(self, actions: Sequence[str], guidance: str | None = None) -> None:
-        """
-        Synchronously give the current agent one or more related plain-language
-        side-effecting actions.
-
-        The actions argument must be a literal list or tuple of strings in
-        workflow source and must contain at least one string. Multiple strings
-        are prompt decomposition inside one model-facing task, not workflow
-        control flow.
-
-        Guidance is optional literal declarative context for the action group.
-        It is not a hidden return channel and not workflow control flow.
-        """
-        raise NotImplementedError
-
-    def evaluate(self, subject: str, guidance: str | None = None) -> Any:
-        """
-        Non-mutating model judgment over current context.
-
-        Subject is one declarative string. Conditional use in if/while is
-        implicitly boolean. Assigned results must use an explicit annotation:
-        bool, int, float, str, Literal[...] or list[...] over a basic scalar
-        type. Guidance is optional literal declarative context for the judgment.
-        """
-        raise NotImplementedError
-
-    def fill(self, record_type: type[WorkflowRecord], guidance: str | None = None) -> Any:
-        """
-        Construct an instance of the passed record type and fill its fields from
-        current context.
-
-        Record fields use Value(...) descriptions for field semantics. Guidance
-        is optional literal declarative context for the whole fill request.
-        """
+    def agent_request(
+        self,
+        request_type: type[Any],
+        name: str | None = None,
+        *,
+        tools: Sequence[type[PythonTool]] = (),
+        detachable_tools: Sequence[type[PythonTool]] = (),
+    ) -> Any:
+        """Execute one ordered aggregate model boundary."""
         raise NotImplementedError
 
     def launch(
@@ -337,12 +312,23 @@ class AgentWorkflow(Workflow):
         *,
         agent_visibility: AgentVisibility | None = None,
     ) -> None:
-        """Start asynchronously, discard its platform handle, and continue now.
+        """Detach a natively admitted subagent and continue now.
 
-        Immediately follow the next Python statement. Never wait for, poll,
-        list, message, follow up with, or otherwise inspect this operation. No
-        later action or response may depend on its completion or result.
+        The current callback runtime rejects ordinary detached operations.
         """
+        raise NotImplementedError
+
+    def admit(
+        self,
+        operation: Operation,
+        *,
+        agent_visibility: AgentVisibility | None = None,
+    ) -> Job:
+        """Wait for receiver-side acceptance of an asynchronous subagent."""
+        raise NotImplementedError
+
+    def detach(self, job: Job) -> None:
+        """Transfer lifecycle ownership of an admitted child to the launcher."""
         raise NotImplementedError
 
     def queue_agent_observation(
@@ -378,15 +364,9 @@ class AgentWorkflow(Workflow):
 class SubagentWorkflow(AgentWorkflow):
     """A workflow that must run in a separately started subagent context.
 
-    The child follows the contract named by agent_name and receives the typed
-    constructor fields as its request. The caller resolves agent_name through
-    the Available Subagents catalog and uses its matching Contract path; it
-    must not search the filesystem or installation for an agent contract.
-    Preserve inherited history when the platform supports it. If a native named
-    role cannot inherit history, a history fork must receive that exact rendered
-    contract path and be explicitly directed to follow it. The child reads that
-    path directly and must not search for another contract. The caller must
-    never execute this workflow's body.
+    The runtime emits a native boundary containing agent_name and the typed
+    constructor fields. The adapter starts the child; the caller never executes
+    this workflow's body.
     """
 
 

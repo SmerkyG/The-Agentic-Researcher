@@ -4,14 +4,15 @@ An imperative workflow is valid Python executed by a conforming runtime.
 Ordinary Python ordering, scope, branches, loops, calls, and return values are
 authoritative.
 
-Codex agent definitions now use the initial persistent callback runtime: Codex
-receives the first request normally, then a local worker executes Python and
-yields only aggregate agent, user-input, and native-subagent boundaries. See
+Callback-capable Codex, Claude, Gemini, OpenCode, and Pi sessions receive the
+first request normally. A local worker then executes Python and yields only
+aggregate agent, user-input, and native-subagent boundaries. See
 [Callback-Managed Agent Workflows](../callback-managed-agent-workflows.md) for
 the protocol, class-declared `AgentRequest` syntax, current limitations, and
-migration path. Codex skills activate their receiver's callback workflow.
-Imperative workflows require a callback-capable execution adapter; unsupported
-CLIs can still use plain Markdown agents but do not interpret Python workflows.
+migration path, and [Imperative Workflows by Example](../imperative-workflows-by-example.md)
+for a compact model-visible walkthrough. Skills activate their receiver's
+callback workflow. A CLI without the callback adapter can still use plain
+Markdown agents but does not execute Python agent workflows.
 
 Each imperative agent is one Python class containing its typed fields and
 `workflow()` implementation. Its optional Markdown manifest points to that
@@ -43,13 +44,14 @@ behind the outer operation. Use `queue_agent_observation()` only for derived or
 external values that are not already operation results.
 
 Use `self.launch(operation)` only for tracked asynchronous work and assign its
-result to an annotated `Job[...]`. Use bare `self.fire_and_forget(operation)`
-to start a tool or subagent asynchronously, discard its platform handle, and
-immediately execute the next statement. The caller must never wait, poll, list,
-message, follow up with, or depend on that operation. A `SubagentWorkflow`
-emits a native subagent boundary containing its `agent_name` and typed fields.
-The callback adapter starts the child and never executes its `workflow()` body
-inside the caller's worker or model context.
+result to an annotated `Job[...]`. For a detached subagent, use `admit()` then
+`detach()`, or the `fire_and_forget()` shorthand; the caller must never wait,
+poll, message, follow up with, or depend on that child. Detached ordinary
+operations are not supported by the current callback runtime unless the tool
+itself owns durable background execution. A `SubagentWorkflow` emits a native
+subagent boundary containing its `agent_name` and typed fields. The callback
+adapter starts the child and never executes its `workflow()` body inside the
+caller's worker or model context.
 
 Detached workflows must not discover their inputs from mutable caller
 worktrees. Commit durable code inputs before launch, freeze any remaining

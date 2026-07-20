@@ -10,6 +10,7 @@ import re
 import tomllib
 
 from agentic_tools.contract import PythonTool
+from agentic_tools.data import record_schema
 
 
 TOOL_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -20,6 +21,15 @@ class ToolRegistration:
     name: str
     reference: str
     tool_type: type[PythonTool[object]]
+
+    def definition(self) -> dict[str, object]:
+        """Return the stable agent-facing definition for this registration."""
+
+        return {
+            "name": self.name,
+            "description": (self.tool_type.__doc__ or "").strip(),
+            "input_schema": record_schema(self.tool_type),
+        }
 
 
 def load_python_tool(reference: str) -> type[PythonTool[object]]:
@@ -74,3 +84,31 @@ def discover_tools(value: str | None = None) -> dict[str, ToolRegistration]:
                 tool_type=load_python_tool(reference),
             )
     return registrations
+
+
+def registrations_for_types(
+    tool_types: list[type[PythonTool[object]]] | tuple[type[PythonTool[object]], ...],
+    *,
+    registrations: dict[str, ToolRegistration] | None = None,
+) -> dict[str, ToolRegistration]:
+    """Resolve registered public names for a collection of PythonTool classes."""
+
+    catalog = discover_tools() if registrations is None else registrations
+    by_type: dict[type[PythonTool[object]], list[ToolRegistration]] = {}
+    for registration in catalog.values():
+        by_type.setdefault(registration.tool_type, []).append(registration)
+
+    resolved: dict[str, ToolRegistration] = {}
+    for tool_type in tool_types:
+        matches = by_type.get(tool_type, [])
+        reference = f"{tool_type.__module__}:{tool_type.__qualname__}"
+        if not matches:
+            raise ValueError(f"PythonTool is not registered in an enabled capability: {reference}")
+        if len(matches) != 1:
+            names = ", ".join(sorted(item.name for item in matches))
+            raise ValueError(
+                f"PythonTool has multiple public registrations ({names}): {reference}"
+            )
+        registration = matches[0]
+        resolved[registration.name] = registration
+    return resolved

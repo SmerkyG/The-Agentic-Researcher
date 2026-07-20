@@ -464,10 +464,8 @@ def test_launcher_native_runs_host_cli__without_container(
     cli__log_text = cli__log.read_text()
     assert f"cwd:{workspace}" in cli__log_text
     assert "--model gpt-test" in cli__log_text
-    assert "mcp_servers.agentic_tools.command=" in cli__log_text
-    assert "agentic-tools-mcp" in cli__log_text
-    assert "mcp_servers.agentic_tools.env_vars=" in cli__log_text
-    assert "mcp_servers.agentic_tools.required=true" in cli__log_text
+    assert "mcp_servers.agentic_tools" not in cli__log_text
+    assert "agentic-tools-mcp" not in cli__log_text
     assert "mcp_servers.agentic_workflows.command=" in cli__log_text
     assert "imperative-workflows-mcp" in cli__log_text
     assert "mcp_servers.agentic_workflows.env_vars=" in cli__log_text
@@ -1080,10 +1078,7 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     assert gemini_steering_hook.exists()
     assert "steering-message" in gemini_steering_hook.read_text()
     gemini_settings = json.loads((workspace / ".gemini" / "settings.json").read_text())
-    assert gemini_settings["mcpServers"]["agentic_tools"]["command"].endswith(
-        "/agentic-tools-mcp"
-    )
-    assert gemini_settings["mcpServers"]["agentic_tools"]["trust"] is False
+    assert "agentic_tools" not in gemini_settings["mcpServers"]
     assert gemini_settings["mcpServers"]["agentic_workflows"]["command"].endswith(
         "/imperative-workflows-mcp"
     )
@@ -1144,10 +1139,7 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     assert "capability-refresh" in opencode_plugin_text
     assert str(workspace / "AGENTS.md") in opencode_plugin_text
     opencode_settings = json.loads((workspace / "opencode.json").read_text())
-    tool_server = opencode_settings["mcp"]["agentic_tools"]
-    assert tool_server["type"] == "local"
-    assert tool_server["enabled"] is True
-    assert tool_server["command"][0].endswith("/agentic-tools-mcp")
+    assert "agentic_tools" not in opencode_settings["mcp"]
     assert opencode_settings["mcp"]["agentic_workflows"]["command"][0].endswith(
         "/imperative-workflows-mcp"
     )
@@ -1252,10 +1244,7 @@ def test_launcher_podman_runs_pi_cli_(base_env: dict[str, str], tmp_path: Path) 
     assert "capability-refresh" in pi_extension_text
     assert "/workspace/AGENTS.md" in pi_extension_text
     pi_mcp = json.loads((workspace / ".pi" / "mcp.json").read_text())
-    tool_server = pi_mcp["mcpServers"]["agentic_tools"]
-    assert tool_server["transport"] == "stdio"
-    assert tool_server["lifecycle"] == "eager"
-    assert tool_server["command"] == "/opt/agentic-team/scripts/bin/agentic-tools-mcp"
+    assert "agentic_tools" not in pi_mcp["mcpServers"]
     assert pi_mcp["mcpServers"]["agentic_workflows"]["command"] == (
         "/opt/agentic-team/capabilities/imperative-workflows/bin/imperative-workflows-mcp"
     )

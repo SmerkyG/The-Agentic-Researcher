@@ -189,6 +189,12 @@ def cancel(run_id: str) -> dict[str, object]:
     return _request(_read_state(run_id), {"action": "cancel"})
 
 
+def reset_context(run_id: str) -> dict[str, object]:
+    """Reset retained-context caches and refresh the current pending event."""
+
+    return _request(_read_state(run_id), {"action": "reset_context"})
+
+
 def status(run_id: str) -> dict[str, object]:
     """Return public worker state without connection credentials."""
 
@@ -304,6 +310,15 @@ def serve(run_id: str, implementation: str) -> int:
                 elif action == "cancel":
                     event = {"status": "cancelled", "boundary_id": None}
                     should_exit = True
+                elif action == "reset_context":
+                    if workflow_thread is None:
+                        raise OperationExecutionError("callback workflow has not started")
+                    pending_event = worker_state.get("pending_event")
+                    if not isinstance(pending_event, dict) or pending_boundary is None:
+                        raise OperationExecutionError(
+                            "callback workflow has no pending event to refresh"
+                        )
+                    event = workflow_thread.reset_agent_context(pending_event)
                 else:
                     raise OperationExecutionError(f"unknown callback action: {action!r}")
                 event = _attach_control(event, run_id)
@@ -365,6 +380,8 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument("boundary_id")
     cancel_parser = commands.add_parser("cancel")
     cancel_parser.add_argument("run_id")
+    reset_parser = commands.add_parser("reset-context")
+    reset_parser.add_argument("run_id")
     status_parser = commands.add_parser("status")
     status_parser.add_argument("run_id")
     serve_parser = commands.add_parser("_serve")
@@ -382,6 +399,8 @@ def cli(argv: Sequence[str] | None = None) -> int:
             event = resume(args.run_id, args.boundary_id, _read_json_stdin())
         elif args.command == "cancel":
             event = cancel(args.run_id)
+        elif args.command == "reset-context":
+            event = reset_context(args.run_id)
         elif args.command == "status":
             event = status(args.run_id)
         else:

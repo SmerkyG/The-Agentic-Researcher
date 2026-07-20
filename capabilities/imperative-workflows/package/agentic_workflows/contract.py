@@ -170,17 +170,32 @@ class AgentWorkflow(Workflow[ResultT], Generic[ResultT]):
         """Fill one typed record from current scope and field descriptions."""
         ...
 
-    def agent_request(self, request_type: type[Any], name: str | None = None) -> Any:
+    def agent_request(
+        self,
+        request_type: type[Any],
+        name: str | None = None,
+        *,
+        tools: Sequence[type[PythonTool[Any]]] = (),
+        detachable_tools: Sequence[type[PythonTool[Any]]] = (),
+    ) -> Any:
         """Execute a class-declared aggregate model boundary.
 
         ``request_type`` is an ``AgentRequest`` subclass whose ordered class body
         contains ``step``, ``local``, ``result``, and nested ``guidance``
         declarations. Returned results are available as attributes on the
         resulting request instance. Previously queued external observations are
-        supplied as a preamble to this boundary.
+        supplied as a preamble to this boundary. ``tools`` grants request-scoped
+        access to registered PythonTools. ``detachable_tools`` must be a subset
+        of that grant and permits the agent to request executor-owned detached
+        launch instead of waiting for a result.
 
         """
-        return _current_executor().agent_request(request_type, name=name)
+        return _current_executor().agent_request(
+            request_type,
+            name=name,
+            tools=tools,
+            detachable_tools=detachable_tools,
+        )
 
     def queue_agent_observation(
         self,

@@ -108,9 +108,9 @@ remote-run node1 --bg -- uv run python train.py
 
 Keep `bin/` primarily for human-oriented commands and compatibility entrypoints.
 Structured agent actions normally do not need one executable per tool: declare
-the Python tool in `capability.toml` and the launcher exposes it through one MCP
-server. A command wrapper remains useful for shell users or CLIs without native
-MCP support:
+the Python tool in `capability.toml` and grant it to the relevant
+`agent_request()`. A command wrapper remains useful for shell users and explicit
+automation:
 
 ```bash
 experiment-log append <<'YAML'
@@ -176,13 +176,11 @@ Register the tool under a stable, globally unique snake-case name:
 check_metadata = "my_capability.tools:CheckMetadata"
 ```
 
-For Codex, Claude, Gemini, OpenCode, and Pi, the launcher registers a single `agentic_tools`
-MCP server containing every `[tools]` entry from the enabled capabilities. The
-MCP input schema is derived from the same annotations and `Value` descriptions,
-and results are returned as structured content. Pi loads the pinned
-`pi-mcp-extension` package for this transport; override its package spec with
-`AR_PI_MCP_EXTENSION_SPEC` when testing an upgrade. This does not require the
-`imperative-workflows` capability.
+The callback runtime uses `[tools]` entries as stable public names when workflow
+Python explicitly grants PythonTools to one `agent_request()`. Its input schema
+is derived from the same annotations and `Value` descriptions. Enabled tools
+are not globally registered as MCP tools for Codex, Claude, Gemini, OpenCode, or
+Pi.
 
 The same tool can be invoked from a shell or a CLI without MCP through the
 generic compatibility adapter:

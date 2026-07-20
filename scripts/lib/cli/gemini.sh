@@ -283,20 +283,7 @@ EOF
 }
 
 cli_gemini_setup_tool_transport() {
-    local tool_mcp_command workflow_mcp_command patch_json tool_server workflow_server
-    if enabled_capabilities_have_tools; then
-        tool_mcp_command="$(agentic_tools_mcp_runtime_command)"
-        tool_server=$(cat <<EOF
-{
-      "command": $(json_string "$tool_mcp_command"),
-      "timeout": 3600000,
-      "trust": false
-}
-EOF
-)
-    else
-        tool_server=null
-    fi
+    local workflow_mcp_command patch_json workflow_server
     if workflow_mcp_command="$(imperative_workflows_mcp_runtime_command)"; then
         workflow_server=$(cat <<EOF
 {
@@ -310,7 +297,7 @@ EOF
         workflow_server=null
     fi
     patch_json=$(cat <<EOF
-{"mcpServers":{"agentic_tools":$tool_server,"agentic_workflows":$workflow_server}}
+{"mcpServers":{"agentic_tools":null,"agentic_workflows":$workflow_server}}
 EOF
 )
     merge_managed_hook_json \

@@ -14,6 +14,7 @@ from agentic_workflows import callback_runner
 SERVER_INSTRUCTIONS = """Use these tools only for callback-managed imperative workflows.
 Call start_workflow once after the user's first request, then process each returned event
 and call resume_workflow with the exact run_id, boundary_id, and event-specific payload.
+After context compaction, call reset_workflow_context once for the active run before resuming.
 Never replace a structured tool call with an interactive shell callback."""
 
 
@@ -115,6 +116,20 @@ async def cancel_workflow(
         lambda: callback_runner.cancel(run_id),
         context=context,
         label=f"Cancelling workflow {run_id}",
+    )
+
+
+@mcp.tool()
+async def reset_workflow_context(
+    run_id: str,
+    context: Context,
+) -> dict[str, Any]:
+    """After context compaction, resend the pending boundary's cached definitions."""
+
+    return await _run_blocking(
+        lambda: callback_runner.reset_context(run_id),
+        context=context,
+        label=f"Resetting retained-context cache for workflow {run_id}",
     )
 
 

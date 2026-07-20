@@ -202,24 +202,6 @@ capability_package_runtime_path() {
     capability_package_runtime_paths | join_colon_paths
 }
 
-enabled_capabilities_have_tools() {
-    local capability_name root manifest
-
-    for capability_name in $(enabled_capability_names); do
-        root="$(capability_root "$capability_name")" || continue
-        manifest="$root/capability.toml"
-        [[ -f "$manifest" ]] || continue
-        if grep -Eq '^\[tools(\.|\])' "$manifest"; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-agentic_tools_mcp_runtime_command() {
-    printf '%s/agentic-tools-mcp\n' "$(ar_core_bin_env_path)"
-}
-
 imperative_workflows_mcp_runtime_command() {
     local root runtime_root
     capability_enabled imperative-workflows || return 1

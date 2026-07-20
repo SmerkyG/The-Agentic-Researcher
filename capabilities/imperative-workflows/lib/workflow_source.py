@@ -626,18 +626,31 @@ returned-operation lifecycles.
 Process every JSON event returned by `start_workflow` or `resume_workflow`
 immediately:
 
+- After context compaction during an active run, call `reset_workflow_context`
+  once with its run ID before continuing the pending event. Process the returned
+  refreshed event at the same boundary; it resends definitions that may have
+  been removed from retained context.
+
 - If an MCP tool call is interrupted or its outcome is unknown, call
   `workflow_status` with the run ID. If it reports `waiting_resume`, process its
   complete `pending_event`; do not replay the previously submitted boundary.
 - If `workflow_status` reports `executing`, do not submit another callback.
   Check status again after doing useful independent work or a brief wait.
 
-- `agent_request`: follow its complete `instructions` in order, using native
-  tools where requested. Return every declared assignment, including context
-  variables, in one JSON object matching `response_schema`. Then call the
-  `resume_workflow` MCP tool with the event's exact `run_id`, `boundary_id`, and
-  `payload={{"assignments": {{...}}}}`, and process the next event. If
-  `validation_error` is present, correct the assignments and resume again.
+- `agent_request`: follow its complete `instructions` in order, using ordinary
+  CLI-native filesystem, shell, web, or other agent tools for the requested
+  work. If the event contains `available_tools`, those are the only PythonTools
+  permitted in this request. Definitions in `tool_definitions` are new or
+  changed; a permitted name without a repeated definition refers to the
+  definition already supplied in this retained agent context. To use them, call
+  `resume_workflow` with a
+  payload matching `tool_request_schema`, then immediately process the returned
+  `tool_results` continuation of the same request. Do not call these PythonTools
+  through another MCP server. Otherwise return every declared assignment,
+  including context variables, in one JSON object matching `response_schema`,
+  then call `resume_workflow` with
+  `payload={{"assignments": {{...}}}}`. If `validation_error` is present,
+  correct the packet or assignments and resume again.
 - `subagent_admission`: start the named subagent with exactly `inputs`. Resume
   through `resume_workflow` with
   `payload={{"accepted": true, "handle": "<native handle>"}}` only after the

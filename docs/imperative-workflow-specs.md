@@ -1,1117 +1,325 @@
-# Imperative Workflow Specs
+# Imperative Workflow Specification
 
-This document specifies how Agentic Team should define agent workflows that need
-to stay analyzable, testable, executable where practical, and usable inside
-agent instructions.
+Imperative workflows are ordinary Python programs whose control flow is
+executed by Agentic Team. Model work is requested through explicit aggregate
+boundaries; tools and subagents are typed operations.
 
-The core rule is simple: workflow control flow belongs in Python code. English
-strings inside that code describe atomic work items or tool requests only. They
-are not allowed to encode ordering, branching, retry policy, blocking policy, or
-concurrency.
-
-For the executable Codex boundary model built on this specification, including
-class-declared `AgentRequest` boundaries and the JSON callback protocol, see
+For a compact walkthrough showing the corresponding model-visible payloads,
+see [Imperative Workflows by Example](imperative-workflows-by-example.md).
+For transport and worker details, see
 [Callback-Managed Agent Workflows](callback-managed-agent-workflows.md).
 
-## Goals
+## Principles
 
-- Make agent workflows readable as normal imperative programs.
-- Keep ordering, conditions, loops, concurrency, and failure handling visible to
-  static review and tests.
-- Execute workflow source in a persistent runtime while extracting deterministic
-  steps into executable operation workflows or tools where practical.
-- Avoid maintaining a second, drifting English-language version of the same
-  flow.
-- Preserve enough English for model-facing task prompts, but keep that English
-  out of the control-flow layer.
+1. Python owns ordering, branches, loops, retries, concurrency, and returns.
+2. An `AgentRequest` owns model judgment and agent-native actions.
+3. An `Operation` owns a typed tool, executable workflow, or subagent call.
+4. Only explicit boundaries and visible operation observations are sent to the
+   model.
+5. Workflow source is the executable source of truth. Markdown supplies role
+   metadata and standing declarative guidance, not duplicate control flow.
 
-## Normative Keywords
+The terms `MUST`, `MUST NOT`, `SHOULD`, and `MAY` are normative.
 
-The keywords `MUST`, `MUST NOT`, `SHOULD`, `SHOULD NOT`, and `MAY` are used with
-their ordinary RFC-style meanings in this spec. They are not workflow API names.
+## Workflow Classes
 
-Required work in a workflow is represented by ordinary imperative statements,
-for example `self.do(["create branch-snapshot"])`. Conditional work is represented
-by `if` statements. Failure policy is represented by exceptions, `try` /
-`except`, explicit fallback calls, or explicit blocker returns.
-
-## Workflow Source
-
-Agent definition YAML frontmatter is outside the workflow language. It MUST be
-consumed by the launcher as role metadata and MUST NOT be interpreted as tool
-input or imperative agent behavior. The Markdown body supplies standing
-declarative guidance; the embedded workflow supplies control flow.
-
-A workflow spec MUST be written as normal Python control flow. The workflow
-source may use helper methods supplied by the runtime, but it should still read
-like an ordinary function. Workflows that invoke subagents or tools SHOULD
-construct the exact operation object. Call `operation.run()` for synchronous
-work, `self.launch(operation)` for tracked asynchronous work, or
-`self.fire_and_forget(operation)` when no handle or result is needed:
+One class contains a workflow's typed inputs, result type, and implementation:
 
 ```python
-def complete_result(self, result) -> None:
-    self.do(["update work-state report page and TODO.md"])
+from typing import ClassVar
 
-    snapshot = None
-    if result.has_code_changes:
-        snapshot = BranchSnapshot(
-            paths=result.snapshot_paths,
-            commit_message=result.snapshot_commit_message,
-            checks=result.snapshot_checks,
-        ).run()
-        status = snapshot.name_status
+from agentic_workflows.contract import AgentWorkflow, WorkflowRecord
 
-        if status.has_unexpected_files:
-            decision = self.ask_user(
-                "Snapshot includes unexpected files. Continue, revise, or stop?",
-                choices=["revise", "continue", "stop"],
-            )
-            if decision.choice == "revise":
-                self.do(["revise branch-snapshot request"])
-            elif decision.choice == "stop":
-                self.do(
-                    ["prepare final response"],
-                    guidance="The user stopped after reviewing unexpected snapshot files.",
-                )
-                return
 
-    self.fire_and_forget(
-        ResearchFinalizer(
-            experiment_log=experiment_log,
-            note_update=note_update,
-            code_snapshot=snapshot,
-        )
-    )
+class ReviewResult(WorkflowRecord):
+    summary: str
+
+
+class Reviewer(AgentWorkflow[ReviewResult]):
+    agent_name: ClassVar[str] = "reviewer"
+    target: str
+
+    def workflow(self) -> ReviewResult:
+        ...
 ```
 
-Examples use `self` intentionally. The receiver represents the active workflow
-or agent object. Class-backed subagents or subworkflows are configured by
-constructing the workflow object with typed fields, e.g.
-`self.fire_and_forget(ResearchFinalizer(...))` or
-`workflow = ResearchFinalizer(...)`.
-Implementations may still delegate to a separate context object internally, but
-the published workflow should read like ordinary Python agent behavior.
+Do not create a separate interface or header class merely to hide
+`workflow()`. A workflow class MUST be a top-level importable symbol. Constructor
+fields and results MUST have concrete typed schemas rather than unstructured
+`dict` or `Any` values.
 
-The order of these statements is the order of the workflow. No English string in
-the example is responsible for establishing the ordering.
+The optional Markdown agent file points to the same class:
 
-## Aggregate Agent Requests
-
-Model reasoning and agent-native actions MUST be grouped in an `AgentRequest`
-class and executed with `self.agent_request(RequestType)`. Python executes the
-class body in declaration order; its metaclass freezes that sequence before the
-callback is submitted:
-
-```python
-class Iteration(AgentRequest):
-    with guidance("Prefer one cheap variable change."):
-        experiment: str = local("next focused experiment")
-        hypothesis: str = local(f"testable hypothesis for {experiment}")
-        step(f"Implement and verify {experiment}.")
-
-    finalization: FinalizationStart = result("finalization request")
-
-iteration = self.agent_request(Iteration)
-ticket = iteration.finalization.run()
+```yaml
+renderer: imperative-workflows
+workflow: my_package.review:Reviewer
 ```
 
-`local()` and `result()` declarations MUST use an explicit annotation. The
-annotation is the response type. `local()` values remain in retained agent
-context; `result()` values are also exposed as attributes on the returned
-request instance. `step()` has no structured return.
+Plain Markdown agents remain valid without a `workflow` field. This permits a
+piecemeal migration from prose instructions to executed Python.
 
-Top-level operation invocations are queued automatically outside the request.
-Their operation type, one-line action, typed inputs, lifecycle status, and
-result appear in chronological order at the next request. Authors MUST NOT
-manually re-queue an operation result merely to explain which operation
-produced it.
+## Agent Requests
 
-Other external values MAY be queued with
-`self.queue_agent_observation(value, desc=None)`. Repeated calls preserve order
-with operation entries. The optional `desc` MUST be presentation prose and MUST
-NOT create a symbolic identifier or parallel naming system. Explicit queued
-values MUST be consumed by a later request. Trusted scalar Python values needed
-by one instruction MAY instead be interpolated directly into its f-string.
-
-An earlier declaration MAY be interpolated into a later description or step
-with a plain f-string expression. Its declaration placeholder formats as the
-exact Python identifier surrounded by backticks. Format specifications are not
-allowed. Request classes MUST contain only declarations, steps, guidance scopes,
-and an optional docstring; observations, runtime branches, loops, tools, and
-subagent calls remain outside the class in ordinary workflow Python.
-
-`with guidance(...)` groups its enclosed declarations but does not create a
-Python name scope. Names MUST be unique throughout one request class. A request
-schema is fixed by successful class construction and is submitted as one model
-boundary.
-
-Every function and method in workflow source MUST declare an explicit return
-type annotation. Use `-> None` for side-effect-only workflow steps. Helper
-functions that return domain values MUST name those values in the type system,
-not only through function names or comments.
-
-Every `AgentWorkflow.workflow` override MUST take only `self`. Workflow launch
-configuration belongs in typed constructor fields on the workflow class. Those
-fields and the return annotation MUST NOT use `Any`, `dict`, `Dict`, or
-`dict[...]`. Use explicit scalar fields for simple values and `WorkflowRecord`
-request/result contracts for structured values.
-
-Workflow code SHOULD NOT extract a single-use phase into a helper method merely
-to name the phase. Inline one-off control flow at the caller. Extract a helper
-only when it is reused, deterministic and testable, or represents a real
-workflow/subagent boundary with its own `run` entrypoint.
-
-Workflow code SHOULD prefer linear statements over redirects through small
-classes, helper methods, or named phases. A human should be able to read the
-workflow top to bottom and understand the intent and recipe without jumping
-elsewhere, except when crossing a real tool, subagent, or durable data-contract
-boundary.
-
-Deterministic multi-tool regions SHOULD be extracted into an
-`ExecutableWorkflow` before creating a new monolithic helper command. An
-executable workflow preserves ordinary Python dataflow while allowing a generic
-runtime to dispatch its child tools without model turns. See
-`docs/executable-operation-workflows.md` for its execution boundary and the
-recommended migration path.
-
-## Execution Interface
-
-Workflow source MUST be valid Python against the declared `AgentWorkflow`
-interface, not pseudocode with ad hoc fake functions. A conforming runtime
-executes the workflow and pauses only at declared model, user, tool, or subagent
-boundaries. Method semantics belong in the interface docstrings and runtime
-protocol:
+Model work MUST be declared in an `AgentRequest` class and submitted as one
+boundary:
 
 ```python
-def Value(description: str, *, default=MISSING, default_factory=MISSING):
-    """Describe one WorkflowRecord field filled by self.evaluate(SchemaType)."""
+from agentic_workflows.request_spec import (
+    AgentRequest,
+    guidance,
+    local,
+    result,
+    step,
+)
 
 
-class WorkflowRecord:
-    """Base class for structured workflow values."""
+class Investigation(AgentRequest):
+    with guidance("Prefer the cheapest decisive check."):
+        hypothesis: str = local("testable hypothesis")
+        command: str = local(f"command that tests {hypothesis}")
+    step(f"Run {command} and inspect the result.")
+    conclusion: str = result("conclusion supported by the observed result")
 
 
-class Job(WorkflowRecord):
-    """
-    Opaque handle returned by an asynchronous tool or workflow launch.
-
-    Workflow code passes Job values to wait_all, wait_any, or cancel to track
-    progress and receive results. Workflow code must not inspect implementation
-    details such as process IDs, backend IDs, or status file paths.
-    """
-
-
-class OperationNotice(WorkflowRecord):
-    """Out-of-band instructions followed before an operation's normal result."""
-
-    instructions: str
-
-
-class Operation(WorkflowRecord):
-    """A runnable workflow operation, implemented by a tool or subagent."""
-
-    guidance: ClassVar[str] = ""
-    agent_visibility: ClassVar[Literal["shown", "hidden"]] = "shown"
-
-    def run(self, *, agent_visibility=None):
-        """Start this tool or subagent synchronously and return its result."""
-
-    def agent_observation(self, result):
-        """Project a completed result for automatic agent-visible provenance."""
-
-
-class WorkflowTool(Operation):
-    """Generic tool operation."""
-
-
-class PythonTool(Operation):
-    """Launcher-level structured tool implemented directly in Python."""
-
-    def execute(self):
-        """Execute in the operation runtime and return a typed result."""
-
-
-class ArgvTool(WorkflowTool):
-    """Command-backed tool whose invocation is represented as argv."""
-
-    argv_template: ClassVar[tuple[str, ...]]
-
-    def argv(self):
-        """Return command argv for this invocation."""
-
-
-class YAMLArgvTool(ArgvTool):
-    """Run exact argv with declared fields serialized as YAML stdin.
-
-    The operation owns serialization. Do not invent fields or hand-format YAML.
-    Encode the declared field values as JSON stdin, which is valid YAML and
-    safely quotes strings.
-    """
-
-
-class AgentWorkflow(Operation):
-    def on_startup(self):
-        """Lifecycle hook executed once before workflow() at session startup."""
-
-    def on_compaction(self):
-        """Lifecycle hook executed after compaction before resuming workflow()."""
-
-    def workflow(self):
-        """Execute this agent context's workflow body."""
-
-    def do(self, actions: Sequence[str], guidance: str | None = None):
-        """
-        Synchronously give the current agent one or more related plain-language
-        side-effecting actions.
-
-        The actions argument must be a literal list or tuple of strings in
-        workflow source and must contain at least one string.
-
-        The optional guidance argument is literal declarative context for the
-        action group. It may contain explanatory policy wording, but it is not
-        workflow control flow.
-        """
-
-    def evaluate(self, subject: str | type[Any], guidance: str | None = None):
-        """
-        Non-mutating model judgment over current context.
-
-        For direct facts, subject is one declarative string and the assigned
-        variable annotation must be bool, int, float, str, Literal[...] or
-        list[...] over a basic scalar type. For structured facts, subject is a
-        WorkflowRecord schema whose fields use Value(...) descriptions, and the
-        assigned variable annotation must match the schema.
-
-        The optional guidance argument is literal declarative context for the
-        judgment. It is not a second subject and not a place to pass hidden
-        structured inputs.
-        """
-
-    def fill(self, record_type: type[WorkflowRecord], guidance: str | None = None):
-        """
-        Construct and fill one typed record from current context.
-
-        The optional guidance argument is literal declarative context for
-        filling the record. Field meanings still belong on Value(...)
-        descriptions.
-        """
-
-    def launch(self, operation: Operation, *, agent_visibility=None):
-        """Start a tool or named subagent asynchronously and return its tracked Job."""
-
-    def fire_and_forget(self, operation: Operation, *, agent_visibility=None) -> None:
-        """Start asynchronously, discard its platform handle, and continue now.
-
-        Immediately follow the next Python statement. Never wait for, poll,
-        list, message, follow up with, or otherwise inspect this operation. No
-        later action or response may depend on its completion or result.
-        """
-
-    def wait_all(self, jobs, timeout_seconds=None):
-        """Wait for every job and return completion/progress results."""
-
-    def wait_any(self, jobs, timeout_seconds=None):
-        """Return completed jobs without cancelling unfinished jobs."""
-
-    def cancel(self, job):
-        """Request cancellation and record the cancellation attempt."""
-
-    def lock(self, name):
-        """Serialize a critical section for the named runtime scope."""
-
-    def timeout(self, seconds):
-        """Bound the enclosed operation with an explicit timeout policy."""
-
-
-class SubagentWorkflow(AgentWorkflow):
-    """A workflow that must run in a separately started subagent context.
-
-    The runtime emits a native subagent boundary containing agent_name and the
-    typed constructor fields. The adapter starts the child and must never
-    execute this workflow body in the caller's worker or model context.
-    """
-
-
-class UserFacingWorkflow(AgentWorkflow):
-    """Top-level workflow that can pause for visible user input."""
-
-    def ask_user(self, question: str, **kwargs):
-        """
-        Suspend for user input, then resume with the user's response.
-
-        The question is the model-facing contract for what to ask. It should be
-        specific enough to render a user-facing prompt from current context:
-        describe the blocker or choice, why autonomous workflow should not
-        decide it alone, what input shape is useful, and any stop/skip choices.
-        """
+investigation = self.agent_request(Investigation)
+print(investigation.conclusion)
 ```
 
-Workflow specs MUST NOT call methods that are neither part of the declared
-workflow contract nor defined on the current workflow class. Reused ordinary
-Python helper methods are valid; invented runtime primitives are not.
+The class body is a declarative sequence:
 
-Every imperative agent class MUST define `workflow` as its entrypoint. Its typed
-constructor fields and implementation belong on that same class; authors MUST
-NOT create a separate interface/header class solely to hide the implementation.
-`Operation.run()` dispatches a tool or subagent and MUST NOT enter the called
-agent's workflow body in the current context.
+- `step(...)` requests one or more ordered agent-native actions and returns no
+  value.
+- `local(...)` declares a typed answer retained in the agent's context for
+  later nodes in this request.
+- `result(...)` declares a typed answer that is also returned to Python as an
+  attribute on the request instance.
+- `with guidance(...)` adds trailing policy to its enclosed sequence. It does
+  not create a name scope.
 
-Operation invocations default to agent-visible provenance. Definitions MAY set
-`agent_visibility` to `"hidden"`; `run`, `launch`, `admit`, and
-`fire_and_forget` MAY override it per invocation. Callback runtimes show only
-top-level operations, so nested tools called by an `ExecutableWorkflow` remain
-encapsulated behind that workflow's typed inputs and result. This visibility is
-presentation policy, not security redaction.
-Do not make the launcher know about role-specific method names such as
-`finalize`, `review`, `append`, or `integrate`. Deterministic helper logic
-SHOULD be plain functions or tested helper classes rather than extra `self`
-methods that blur the workflow contract.
+Every `local()` and `result()` MUST have an explicit annotation. Names MUST be
+unique across the entire request. A request class may contain only these
+declarations, steps, guidance scopes, and an optional docstring. Runtime loops,
+branches, observations, tool calls, and subagent calls belong outside it.
 
-Workflow specs MUST NOT invent domain-specific method names as stand-ins for
-English instructions. Use a declarative evaluation string and a suggestive
-return value:
+Formatting a prior `local()` or `result()` declaration in an f-string emits its
+exact identifier surrounded by backticks. It does not access an as-yet unfilled
+Python value. Format specifications are forbidden. Ordinary Python values that
+already exist may be interpolated directly and produce their concrete string
+representation.
+
+The agent processes nodes in declaration order, but MAY consider later
+requirements while filling earlier values. It MUST NOT assume the results of
+operations that have not executed. After completing the request it returns one
+assignments object containing every `local` and `result`. The runtime validates
+the complete object and returns only `result` values to Python.
+
+The legacy `do()`, `evaluate()`, and `fill()` vocabulary is not the current
+callback authoring surface. New and migrated workflows SHOULD aggregate such
+model work into `agent_request()`.
+
+## Observations
+
+An external or derived value can be queued for exactly the next request:
 
 ```python
-usable_gpu_count: int = self.evaluate("Number of usable local GPUs.")
+capacity = inspect_capacity()
+self.queue_agent_observation(capacity, desc="normalized compute capacity")
+decision = self.agent_request(ChooseBackend)
 ```
 
-The following violates the contract because `determine_local_gpu_status` is an
-undeclared domain-specific workflow method:
+The optional `desc` is presentation prose, not a variable name. Repeated calls
+preserve order. Explicit observations MUST be consumed by a subsequent agent
+request before the workflow returns.
+
+Do not queue the agent's own prior answers back to it. They remain in retained
+conversation context. Do not manually queue an operation result that the
+runtime already exposes automatically.
+
+## Operations and Visibility
+
+An operation is a typed unit of executable work:
 
 ```python
-gpu_status = self.determine_local_gpu_status()
+result = CheckTool(path="result.json").run()
+
+job = self.launch(BuildTool(target="release"))
+result = self.wait(job)
 ```
 
-Concrete implementations may record traces for tests or execute deterministic
-helper commands. The same workflow source should be importable by tests, even
-when operations are mocked by the workflow runtime.
+Operation semantics are:
 
-## Actions And Evaluations
+- `operation.run()` executes synchronously.
+- `self.launch(operation)` starts tracked asynchronous work and returns a
+  `Job`.
+- `self.wait(job)` returns one result.
+- `self.wait_all(jobs)` returns results in input order.
+- `self.wait_any(jobs)` returns currently completed results without cancelling
+  unfinished jobs.
+- `self.cancel(job)` requests best-effort cancellation.
 
-`self.do(...)` is deliberately side-effect-only. It describes synchronous
-workflow work such as updating a report, creating a snapshot, or recording a
-warning:
+Top-level operations default to `agent_visibility = "shown"`. Their operation
+type, one-line docstring action, typed inputs, lifecycle status, and result are
+queued for the next agent request. A definition or invocation may select
+`agent_visibility = "hidden"` to suppress that observation:
 
 ```python
-self.do(["update condensed report"])
+class NoisyProbe(PythonTool[ProbeResult]):
+    agent_visibility = "hidden"
+    ...
+
+NoisyProbe().run()
+AuditTool().run(agent_visibility="hidden")
 ```
 
-`self.do(...)` MUST NOT be assigned, returned, or used as an expression value.
-When the workflow needs a model-derived fact, use `self.evaluate(...)` instead.
+Visibility is presentation control, not secret redaction. Sensitive data MUST
+NOT be placed in operation inputs or results merely because visibility is
+hidden.
 
-The optional `guidance=` argument supplies related declarative policy or
-background for the whole `self.do(...)` action group:
+Nested operations inside an `ExecutableWorkflow` are encapsulated. An agent
+workflow observes only the outer executable workflow operation.
+
+## Python Tools Requested by the Agent
+
+A `PythonTool` is implemented by `execute()` and registered under a stable name
+in an enabled capability:
+
+```toml
+[tools]
+read_artifact = "my_package.tools:ReadArtifactTool"
+```
+
+Registration does not globally expose the tool over MCP. Workflow Python grants
+selected tool classes to one request:
 
 ```python
-self.do(
-    ["evaluate tiered experiment commands"],
-    guidance=(
-        "Use small-scale runs to catch implementation bugs. Draw conclusions "
-        "only at the project-defined minimum scale."
-    ),
+review = self.agent_request(
+    Review,
+    tools=[ReadArtifactTool, RefreshIndexTool],
+    detachable_tools=[RefreshIndexTool],
 )
 ```
 
-Unlike `actions`, `guidance` is not linted for words such as `if`, `when`,
-`before`, or `after`, because declarative policy often needs that language.
-However, `guidance` MUST NOT be the only place that workflow ordering,
-branching, retry behavior, or concurrency is defined. Those still belong in
-Python control flow, declared tool implementations, or launched subworkflows.
+`detachable_tools` MUST be a subset of `tools`. The request always receives the
+current allowed names and modes. Full JSON Schema definitions are sent only
+when new or changed in the retained context, and are resent after compaction.
+Remembering a definition never preserves authorization for a later request.
 
-`self.evaluate(...)` is non-mutating. Boolean evaluations may be used directly
-as `if` or `while` tests when the result is not needed elsewhere:
+The agent may return a `tool_requests` packet before its final assignments. The
+runtime validates names, arguments, and modes, runs independent `await` calls
+concurrently, and resumes the same agent request with structured results. A
+permitted `detach` request returns acceptance only; later work MUST NOT depend
+on its completion or result.
+
+## Executable Workflows
+
+An `ExecutableWorkflow` composes deterministic operations without model turns:
 
 ```python
-if self.evaluate("True when research continuation needs user input."):
-    user_direction: str = self.ask_user(
-        "Ask for the research-continuation input needed right now. Describe the blocker or choice, explain why autonomous research should not decide it alone, list the kind of answer needed, and say the user may reply stop.",
-    )
+class Publish(ExecutableWorkflow[PublishResult]):
+    paths: list[str]
 
-while not self.evaluate("True when no actionable autonomous work remains."):
-    self.do(["continue research loop"])
+    def workflow(self) -> PublishResult:
+        checked = CheckPathsTool(paths=self.paths).run()
+        return PublishTool(paths=checked.paths).run()
 ```
 
-Adjacent assigned evaluations are also valid because they are independent
-declarative judgments, not hidden side-effect ordering.
+It MAY use ordinary Python dataflow and tracked tool concurrency. The generic
+executor supports tools and nested executable workflows, but not agent
+requests, subagents, or detached work. See
+[Executable Operation Workflows](executable-operation-workflows.md).
 
-Use `guidance=` on `self.evaluate(...)` when a scalar judgment needs a policy
-constraint that would make the subject string too crowded:
+## Subagents
+
+A `SubagentWorkflow` is a typed operation that MUST run in a separate native
+agent context. The caller never executes its `workflow()` body.
 
 ```python
-experiment: str = self.evaluate(
-    "The next experiment to run.",
-    guidance=(
-        "Change exactly one experimental variable. If two things change and "
-        "the metric improves, the cause is unknown."
-    ),
+result = Reviewer(target="report.md").run()
+```
+
+Synchronous `run()` waits for the typed result. For a validated asynchronous
+handoff:
+
+```python
+job = self.admit(Reviewer(target="report.md"))
+self.detach(job)
+```
+
+`admit()` resumes only after the launcher accepts the child. `detach()` then
+transfers lifecycle ownership to the launcher. For subagents,
+`fire_and_forget()` is the shorthand for admission followed by detach. The
+caller MUST NOT wait, poll, message, or otherwise depend on a detached child.
+The current callback runtime rejects detached ordinary operations; a tool that
+needs background execution must own a durable launch or be explicitly granted
+as a detachable agent-request tool.
+
+## User Input
+
+Only a `UserFacingWorkflow` may call `ask_user()`:
+
+```python
+answer = self.ask_user(
+    "Ask which baseline is authoritative and explain why the choice matters."
 )
 ```
 
-Direct `self.evaluate("...")` calls MUST either be used directly as an `if` or
-`while` condition, or use annotated assignment. Conditional evaluations are
-implicitly boolean. Assigned direct evaluations MUST annotate the target as
-`bool`, `int`, `float`, `str`, `Literal[...]`, or `list[...]` / `List[...]`
-over a basic scalar type. The evaluation description MUST be a literal
-declarative string. It describes the value to produce, not a workflow action to
-perform:
+The argument is a model-facing question contract, not necessarily the literal
+visible prompt. The active agent uses its retained context to formulate the
+question, asks the user, and resumes Python with the answer. Subagents MUST NOT
+ask the user directly.
 
-```python
-relevant_note_topics: list[str] = self.evaluate(
-    "On-demand Agentic Notes topics relevant to the active work.",
-)
-backend_capacity_status: Literal["available", "unavailable", "unknown"] = self.evaluate(
-    "Backend GPU capacity classification from the active backend status/list output.",
-)
+## Lifecycle and Control Flow
+
+`on_startup()` executes once before `workflow()`. `on_compaction()` executes
+after CLI context compaction before the interrupted model boundary resumes.
+Normal Python locals, calls, branches, loops, exceptions, and returns are
+authoritative and produce no model prose by themselves.
+
+Workflow functions SHOULD have explicit return annotations. Retry and failure
+policy MUST be represented with Python loops, exceptions, typed results, or
+user boundaries—not encoded implicitly inside English action strings.
+
+The callback worker retains the live Python stack while waiting at a boundary.
+Its current pending event is durable enough to recover an interrupted callback
+response, but the Python stack is not currently replayable after worker death.
+Durable operations SHOULD therefore be idempotent or expose explicit
+reconciliation.
+
+## Source and Registration
+
+The launcher exposes enabled workflow package roots through
+`$AR_WORKFLOW_PATH` and tool package roots through `$AR_TOOL_PATH`. It MUST load
+the exact registered import reference and MUST NOT search the installation for
+a similarly named implementation.
+
+Skills may activate a receiver workflow without becoming separate agents:
+
+```yaml
+renderer: imperative-workflows
+workflow: my_package.skills:run_research
+workflow_receiver: my_package.coordinator:Coordinator
 ```
 
-Use direct evaluations when named variables make the recipe clearer than a
-temporary schema. When one evaluation truly needs a durable bundle of related
-fields, define a `WorkflowRecord` schema and pass the schema to
-`self.evaluate(...)`. Every schema field MUST have a real Python type and a
-`Value(...)` description:
-
-```python
-from typing import Literal
-
-class ExperimentResultAnalysis(WorkflowRecord):
-    has_code_changes: bool = Value(
-        "True when code files changed in the completed experiment.",
-    )
-    intended_variable: str = Value(
-        "Single experimental variable changed by this experiment.",
-    )
-    baseline_metric_text: str = Value(
-        "Baseline metric value from matching baseline evidence, or missing.",
-    )
-    candidate_metric_text: str = Value(
-        "Candidate metric value from the current run evidence, or missing.",
-    )
-    eval_config_status: Literal["matched", "changed", "unknown"] = Value(
-        "Evaluation configuration match status for benchmark, scale, seeds, metric, and evaluation flags.",
-    )
-    evidence_paths: list[str] = Value(
-        "List of evidence file paths for the completed experiment.",
-    )
-
-analysis: ExperimentResultAnalysis = self.evaluate(ExperimentResultAnalysis)
-```
-
-Schema field names, types, and `Value(...)` descriptions define the individual
-values to fill. This mirrors structured JSON/tool-call behavior: the model
-receives one coherent request plus a typed field schema, and the runtime
-validates the resulting object shape.
-
-`Value(...)` descriptions are comments about the value, not commands to the
-agent. Prefer declarative noun phrases such as `Experiment log title`, `List of
-explicit code snapshot paths`, or `True when code files changed`. Avoid
-imperative descriptions such as `Write the experiment log title` or `List
-explicit code snapshot paths`.
-
-Allowed evaluation schema field types are `bool`, `int`, `float`, `str`,
-`Literal[...]` over basic scalar values, and `list[...]` / `List[...]` of basic
-scalar values. Use list-valued fields for arrays instead of serializing them
-into newline-separated strings. Boundary `WorkflowRecord` classes that are
-never passed to `self.evaluate(...)` may use richer ordinary Python types when
-the workflow needs them.
-
-When a structured evaluation needs to mention several evidence sources or
-criteria, put that grounding in the field descriptions rather than in sequential
-`do(...)` calls:
-
-```python
-class ResultsAnalysis(WorkflowRecord):
-    summary: str = Value(
-        "Results analysis summary grounded in scoped experiment records, condensed report, relevant report pages, TODO records, baseline metric comparison, valid/invalid run separation, and missing-control analysis.",
-    )
-    recommendation: str = Value(
-        "Next recommended research action, or explanation that no autonomous action remains, grounded in the same scoped records and controls.",
-    )
-
-analysis: ResultsAnalysis = self.evaluate(ResultsAnalysis)
-```
-
-The evaluation descriptions are for non-mutating judgment. They MUST NOT encode
-workflow ordering, branching, retry behavior, or concurrency; those remain
-Python control flow.
-
-Workflow control still belongs in Python after schema validation:
-
-```python
-baseline_metric = parse_optional_float(analysis.baseline_metric_text)
-candidate_metric = parse_optional_float(analysis.candidate_metric_text)
-
-if analysis.eval_config_status != "matched":
-    conclusion = "inconclusive"
-elif baseline_metric is None or candidate_metric is None:
-    conclusion = "inconclusive"
-elif candidate_metric < baseline_metric:
-    conclusion = "improved"
-else:
-    conclusion = "not_improved"
-
-result = ExperimentResult(
-    baseline_metric=baseline_metric,
-    candidate_metric=candidate_metric,
-    conclusion=conclusion,
-)
-```
-
-Structured evaluations MUST NOT use an undeclared aggregate type, an
-unannotated assignment, an untyped dictionary, or a `WorkflowRecord` whose
-fields lack `Value(...)` descriptions. The model supplies scalar facts and
-schema fields. Python owns branching, validation, aggregation, and side effects.
-
-Workflow specs MUST NOT hide structured state in string packets such as
-`context_packet: str`. If several facts need to cross a workflow boundary, define
-a `WorkflowRecord` with typed fields for those facts and pass that record
-directly.
-
-Avoid one-use structured evaluations when direct annotated variables are
-clearer. If a one-use structured evaluation is still warranted, define the
-`WorkflowRecord` schema in the same Python block immediately before the single
-statement that consumes it. No unrelated workflow statement, tool call,
-assignment, branch, or loop may appear between the schema definition and the
-consuming `self.evaluate(...)` statement:
-
-```python
-def workflow(self) -> None:
-    relevant_note_topics: list[str] = self.evaluate(
-        "Relevant on-demand Agentic Notes topics.",
-    )
-    for topic in relevant_note_topics:
-        AgenticNotesReadTopic(topic=topic).run()
-
-    next_research_step: str = self.evaluate(
-        "Immediate autonomous research step implied by loaded notes, records, Git status, and capacity.",
-    )
-```
-
-Module-level `WorkflowRecord` schemas SHOULD be reserved for reusable contracts,
-cross-method values, or subagent/tool boundaries. When a local schema is still
-clearer than direct annotated variables, keep it adjacent to the exact call site
-without inventing an additional inline schema language.
-
-`self.evaluate(...)` with a structured subject MUST name a `WorkflowRecord`
-schema as its first argument, and the assigned variable annotation MUST match
-that schema:
-
-```python
-analysis: ExperimentResultAnalysis = self.evaluate(ExperimentResultAnalysis)
-```
-
-Normal Python lexical scope is the default context for `self.evaluate(...)`.
-Prefer nearby named variables over explicit context wrappers:
-
-```python
-next_research_step: str = self.evaluate(
-    "Immediate autonomous research step implied by loaded notes, records, Git status, and capacity.",
-)
-experiment_plan: ExperimentRunnerPlan = self.evaluate(ExperimentRunnerPlan)
-```
-
-`self.evaluate(...)` MUST NOT accept arbitrary context keywords such as
-`backend_capacity_status=...`, `runner_result=...`, or `context=dict(...)`.
-Use nearby lexical variables. If a fact is already known and should be part of the
-output, construct the output `WorkflowRecord` in ordinary Python; do not also ask the
-model to fill it.
-
-`self.do([])` is never valid. Side-effect calls, scalar returns, and structured
-actions MUST include at least one literal action string.
-
-Do not define a local `WorkflowRecord` schema and then immediately copy the
-same fields into an equivalent module-level `WorkflowRecord`. If a reusable
-return type already exists, put the `Value(...)` field descriptions on that
-reusable `WorkflowRecord` and assign the `self.evaluate(...)` result directly
-to it.
-
-## Explicit Tool Calls
-
-Use a typed operation object's `run()` method for synchronous execution. Use
-`self.launch(operation)` or `self.fire_and_forget(operation)` for asynchronous
-execution. Do not pass tool names as strings, loose keyword arguments, argv
-lists, or untyped dictionaries from workflow code:
-
-```python
-note_update.run()
-self.fire_and_forget(experiment_log)
-self.fire_and_forget(BranchCommit(snapshot_dir=snapshot.snapshot_dir, background=True))
-```
-
-A command-backed tool MUST subclass `ArgvTool`. Use `YAMLArgvTool` when the
-tool's fields become YAML stdin. `argv_template` MUST identify a real command
-known to the runtime. Tool input SHOULD be structured `WorkflowRecord` values, not untyped
-dictionaries, ad hoc shell snippets, or prose. YAML examples may still be
-rendered for human-facing docs, but JSON Schema generated from the
-`WorkflowRecord` is the preferred agent-facing invocation contract.
-
-`YAMLArgvTool.run()` owns request serialization. Workflow-following agents MUST
-NOT invent request fields or interpolate raw values into hand-written YAML. If
-the CLI lacks native structured dispatch, invoke the exact argv and send the
-declared field values as JSON stdin; JSON is valid YAML and safely represents
-strings containing colons, newlines, quotes, and other YAML syntax.
-
-An `ArgvTool` or `YAMLArgvTool` class is an agent-facing adapter, not part of the
-external command implementation. Executable commands and their runtime
-libraries MUST NOT import `agentic_workflows` or depend on `WorkflowRecord`,
-`Value`, workflow rendering, or workflow interpretation. The adapter MAY mirror
-that external command contract and tests SHOULD detect drift, but dependency
-flow is one-way: imperative workflows know how to invoke external commands;
-external commands do not know that imperative workflows exist.
-
-A `PythonTool` is a launcher-level structured operation: its annotated fields,
-`execute()` implementation, and typed result are canonical. It is defined with
-the launcher-owned `agentic_tools` contract and does not require imperative
-workflows. A non-workflow agent MAY invoke it through `agentic-tool
-module:Class`, sending a JSON or YAML mapping on stdin and receiving JSON on
-stdout; `--schema` returns the input JSON Schema. Capabilities MAY provide a
-thin named `bin/` wrapper around that generic adapter. Do not create a second
-command implementation or duplicate validation merely to expose a native tool
-on PATH. Imperative workflows consume the same object in-process.
-
-Repeated deterministic Python work SHOULD be extracted into a `PythonTool` or
-`ExecutableWorkflow` rather than spelled out as workflow-level tool calls. Use
-a capability command when the operation also needs an independently useful
-external interface. The workflow should show the semantic boundary; one
-canonical implementation should own the exact operation sequence.
-
-## Workflow Consumption Modes
-
-The workflow source is not merely a Markdown generator. It is the canonical
-contract for how the workflow should proceed. Agentic Team may expose that
-contract in three forms.
-
-### Executable Helpers
-
-When a workflow step can be made reliable and fast enough, Agentic Team SHOULD
-extract it into real executable code or a helper command. Examples include:
-
-- validating a branch snapshot request
-- inspecting `branch-snapshot` name-status output
-- appending to and paginating numbered report pages
-- committing and pushing work-state records
-- fetching, merging or cherry-picking, checking, and optionally pushing an
-  integration worktree
-- appending structured experiment-log entries
-- checking whether a work-state checkout has uncommitted record changes
-
-Executable workflow code is preferred for deterministic bookkeeping, schema
-validation, file movement, Git safety checks, and any task where a model would
-otherwise be asked to simulate a small program by reading prose.
-
-### Executed Workflow Code
-
-When the agent must make judgment calls, coordinate subagents, or use multiple
-tools, the persistent runtime executes the registered Python workflow and emits
-only the necessary callback boundaries. The model does not mentally simulate
-Python control flow. Tools, subagents, and subworkflows appear as ordinary
-constructor-configured operation objects:
-`job: Job[SomeResult] = self.launch(SomeWorkflow(config=config))`.
-
-### Rendered Prose
-
-Generated prose is a convenience layer for readability, not the source of truth.
-It SHOULD be used to summarize the workflow, define helper meanings, and provide
-model-facing prompts. It SHOULD NOT be the only representation of a high-risk
-workflow whose ordering or failure behavior matters.
-
-## English Work Items
-
-English strings passed to imperative execution helpers are action descriptions.
-Each string in a `self.do([...])` actions list MUST describe one atomic work
-item at the level of the workflow interface.
-
-Valid atomic work-item strings include `update work-state report page and
-TODO.md`, `create branch-snapshot`, `inspect branch-snapshot name-status`, and
-`append experiment-log correction`.
-
-An English work item MUST NOT contain workflow control such as:
-
-- ordering: `before`, `after`, `then`, `next`, `first`, `last`, `once`
-- conditions: `if`, `when`, `unless`, `only if`, `provided that`
-- loops: `while`, `until`, `repeat`, `for each`
-- failure policy: `try`, `retry`, `fallback`, `otherwise`, `on failure`
-- concurrency policy: `background`, `parallel`, `wait for`, `fire and forget`
-
-The normative `MUST NOT` rule above is enforced by
-`imperative-workflows-lint`, which parses workflow Python source and checks
-literal strings passed to `self.do(...)`.
-The linter is an implementation of this rule, not a replacement for it.
-
-Rule violations:
-
-- `self.do(["create branch-snapshot before launching finalizer"])` violates the
-  ordering rule.
-- `self.do(["if code changed, inspect the snapshot"])` violates the condition
-  rule.
-- `self.do(["update TODO.md after writing the report page"])` violates the ordering
-  rule.
-- `self.do(["try note-updater unless no reusable lesson exists"])` violates both
-  the failure-policy rule and the condition rule.
-
-If an operation genuinely has internal order, either split it into multiple
-workflow statements or call a declared tool/helper whose implementation owns
-that internal order. When a specific tool is required for correctness,
-construct the typed tool and call its `run()` method or pass it to
-`self.launch(...)` / `self.fire_and_forget(...)` instead of describing the
-tool call in English.
-
-`self.do(...)` statements MUST NOT be adjacent in the same Python statement
-block. Adjacent opaque model-facing actions usually mean related work has been
-split across calls without a typed contract tying the pieces together. Use one
-`self.do([...])` call with multiple actions for related prompt decomposition, or
-put a real Python/tool/subworkflow boundary between truly separate operations.
-
-## Synchronous and Asynchronous Actions
-
-Workflow code SHOULD distinguish blocking and non-blocking work through
-declared runtime primitives, not through prose inside the work-item string.
-
-Use `self.do(...)` for synchronous work. The operation must finish, fail, or
-return a blocker before the next workflow statement runs:
-
-```python
-snapshot = BranchSnapshot(
-    paths=snapshot_paths,
-    commit_message=snapshot_commit_message,
-    checks=snapshot_checks,
-).run()
-status = snapshot.name_status
-```
-
-Construct a workflow object and call `run()` for synchronous subagent
-invocations. Pass it to `self.launch(...)` or `self.fire_and_forget(...)` for
-asynchronous invocation. Use typed tool objects for structured background tool
-handoffs:
-
-```python
-finalizer_job: Job[ResearchFinalizerResult] = self.launch(
-    ResearchFinalizer(
-        experiment_log=experiment_log,
-        note_update=note_update,
-        code_snapshot=snapshot,
-    )
-)
-commit_job: Job[BranchCommitResult] = self.launch(
-    BranchCommit(snapshot_dir=snapshot.snapshot_dir, background=True)
-)
-```
-
-An operation may emit an `OperationNotice` separately from its normal return
-value. The calling agent MUST suspend the call, follow the notice instructions,
-and then resume the call to receive its normal result. Notices do not change the
-declared result type and do not permit a subagent to address the user directly.
-
-Wait on an individual job, or use `self.wait_all(...)` / `self.wait_any(...)`,
-only when a later workflow step mechanically needs the result:
-
-```python
-commit_result = self.wait_all([commit_job])
-self.do(["prepare integration handoff"], commit=commit_result.commit)
-```
-
-The parent workflow waits for background completion only by calling
-`self.wait_all(...)` / `self.wait_any(...)` or another explicit status helper.
-
-## Conditions and Returned Facts
-
-Workflow applicability MUST be represented with code-level conditionals:
-
-```python
-if lesson_kind != "none":
-    self.fire_and_forget(NoteUpdater(note_update=note_update))
-```
-
-If deciding the condition requires model judgment, the workflow SHOULD bind the
-result to a suggestive variable name. Use `self.evaluate(...)` for non-mutating
-facts:
-
-```python
-class GpuStatus(WorkflowRecord):
-    has_local_gpus: bool = Value(
-        "True when the local GPU probe found usable NVIDIA or ROCm devices.",
-    )
-    has_backend_gpus: bool = Value(
-        "True when the configured external GPU backend reports usable GPU capacity.",
-    )
-
-gpu_status: GpuStatus = self.evaluate(GpuStatus)
-
-if gpu_status.has_local_gpus:
-    self.do(["launch local GPU experiments"])
-elif gpu_status.has_backend_gpus:
-    self.do(["launch backend GPU experiments"])
-```
-
-Use a typed tool operation when the exact tool is part of the workflow contract:
-
-```python
-nvidia_status = NvidiaSmiGpuIds().run()
-```
-
-Each action string still describes one atomic side-effecting work item. The
-variable name and structured evaluation result explain what facts later branches
-expect.
-
-## SHOULD and MAY Behavior
-
-`SHOULD` and `MAY` requirements are not special execution primitives.
-
-A SHOULD-level action is represented by a condition plus an explicit failure
-response:
-
-```python
-if lesson_kind != "none":
-    note_job: Job[NoteUpdaterResult] = self.launch(NoteUpdater(note_update=note_update))
-    note_status = self.wait_all([note_job])
-    if note_status.failed:
-        self.do(["record note-updater blocker"])
-```
-
-A MAY-level action is represented by a condition where skipping the action is a
-valid branch:
-
-```python
-can_queue_finalizer: bool = self.evaluate("True when finalizer handoff can be queued independently.")
-if can_queue_finalizer:
-    self.fire_and_forget(
-        ResearchFinalizer(
-            experiment_log=experiment_log,
-            note_update=note_update,
-            code_snapshot=snapshot,
-        )
-    )
-```
-
-Generated instructions may use the words `SHOULD` and `MAY` when rendering these
-branches for a model, but the source of truth remains the code branch and its
-failure behavior.
-
-## Action, Tool, and Subagent Use
-
-Tools and subagents are workflow operations.
-
-Use `self.do(...)` when the agent owns an action and the exact tool is not part
-of the contract:
-
-```python
-self.do(["inspect branch-snapshot name-status"])
-```
-
-Use a typed `WorkflowTool` when the exact operation and input shape are part of
-the contract. Use `YAMLArgvTool` or `ArgvTool` for command-backed tools:
-
-```python
-snapshot = BranchSnapshot(
-    paths=snapshot_paths,
-    commit_message=snapshot_commit_message,
-    checks=snapshot_checks,
-).run()
-status = snapshot.name_status
-
-commit = BranchCommit(snapshot_dir=snapshot.snapshot_dir, background=False).run()
-if commit.state == "committed" and commit.commit is not None:
-    experiment_log.code.branch = snapshot.branch
-    experiment_log.code.commit = commit.commit
-    experiment_log.run()
-```
-
-Use `self.fire_and_forget(operation)` when the workflow only needs the request
-to be durably queued:
-
-```python
-self.fire_and_forget(
-    BranchCommit(snapshot_dir=snapshot.snapshot_dir, background=True)
-)
-self.fire_and_forget(
-    ResearchFinalizer(
-        experiment_log=experiment_log,
-        note_update=note_update,
-        code_snapshot=snapshot,
-    )
-)
-```
-
-`self.launch(operation)` starts tracked asynchronous work. Its direct return
-value MUST be assigned to an explicitly annotated `Job[...]` variable that
-later workflow code may wait on or cancel. `self.fire_and_forget(operation)`
-MUST be a bare expression. The launching workflow MUST discard the underlying
-platform handle and immediately execute the next Python statement. It MUST NOT
-wait for, poll, list, message, follow up with, or otherwise inspect that
-operation, and no later action or parent response may depend on its completion
-or result. The operation MUST independently record enough status information
-for later troubleshooting.
-
-A subagent contract MUST subclass `SubagentWorkflow`. Starting one through
-`run()`, `self.launch(...)`, or `self.fire_and_forget(...)` MUST use the
-platform's subagent mechanism. The child MUST follow the contract named by
-`agent_name` and receive the typed constructor fields as its invocation
-request. The launcher SHOULD preserve inherited history. If a native named
-role cannot inherit history, the caller MUST pass the exact rendered contract
-path to the history-forked child and explicitly direct it to follow that file.
-The child MUST read that exact path and MUST NOT search the filesystem or
-installation for another copy. The caller MUST NOT execute the subagent's
-workflow body itself.
-
-Subagent requests MUST be typed at the workflow boundary. The subagent's prompt
-or contract may be English, but the parent workflow's decision to launch it,
-wait for it, ignore it, or handle failure belongs in code.
-
-## Failure Handling
-
-Expected workflow blockers SHOULD be represented as ordinary Python branches,
-loops, status values, and calls to `self.ask_user(...)`. Asking the user is a
-continuation point: `self.ask_user(...)` suspends the workflow and resumes at
-the next statement when the user answers.
-
-Only `UserFacingWorkflow` subclasses may call `ask_user`. Subagents often run
-behind CLI/tooling boundaries where the user will never see their prompts, so a
-subagent that needs user input MUST return a typed status/request for its parent
-to surface. It must not call `ask_user` itself.
-
-Use `ask_user` in a user-facing workflow when a bounded decision or missing
-value is needed. The question argument MUST describe what the user-facing prompt
-must contain: the blocker or choice, why the workflow should not decide it
-autonomously, what kind of answer is needed, and any stop/skip choices. It may
-refer to current lexical variables or tool outputs; the workflow does not need a
-separate `self.evaluate(...)` just to draft the prompt:
-
-```python
-decision = self.ask_user(
-    "Ask how to handle unexpected branch snapshot files. Describe the unexpected files, explain why committing them may be unsafe, and ask for one of revise, accept, or stop.",
-    choices=["revise", "accept", "stop"],
-)
-
-if decision.choice == "revise":
-    self.do(["revise branch-snapshot request"])
-elif decision.choice == "stop":
-    self.do(
-        ["prepare final response"],
-        guidance="The user stopped after reviewing unexpected snapshot files.",
-    )
-    return
-```
-
-Blocking preconditions MUST be checked before durable side effects such as
-commits, pushes, background commit handoffs, external job submissions, or
-state/log writes. A workflow should not discover that a required
-`snapshot`, `experiment_log`, or `note_update` is missing only after it has
-already committed work-state records or queued other irreversible bookkeeping.
-
-Workflows SHOULD handle expected operation failures near the point where the
-policy is clear:
-
-```python
-snapshot = BranchSnapshot(
-    paths=snapshot_paths,
-    commit_message=snapshot_commit_message,
-    checks=snapshot_checks,
-).run()
-
-if snapshot.name_status.has_unexpected_files:
-    decision = self.ask_user(
-        "Snapshot includes unexpected files. Revise, accept, or stop?",
-        choices=["revise", "accept", "stop"],
-    )
-    if decision.choice == "revise":
-        self.do(["revise branch-snapshot request"])
-    elif decision.choice == "stop":
-        self.do(["prepare final response"])
-        return
-```
-
-Unexpected Python exceptions may still occur from implementation bugs, broken
-tools, or violated invariants, but they are not the normal workflow language for
-asking the user, retrying, or continuing after a decision.
-
-## Publishing Workflow Contracts
-
-Agent-facing instructions may include workflow contracts in several forms:
-
-- executable command names for deterministic pieces
-- embedded workflow code for model-stepped procedures
-- generated prose summaries for readability
-
-The rendered instructions may contain prose like:
-
-```text
-If code changes exist, create a branch snapshot and inspect its name-status.
-Commit the accepted snapshot, capture explicit work-state-relative report
-asset paths in an ordered finalization ticket, then launch the
-research-finalizer with that ticket.
-```
-
-That prose is a presentation target, not the source of truth. If the prose, the
-embedded code, and the executable helper disagree, the most executable form is
-authoritative: real helper code beats embedded code, and embedded code beats
-prose. The disagreement should be treated as a bug in the weaker presentation
-layer.
-
-Published workflow sections SHOULD include a marker showing the workflow source
-file and generator version so stale hand-edited instructions are easier to spot.
-
-## Static Checks
-
-Agentic Team SHOULD provide tests or linters for at least these properties:
-
-- English work-item strings do not contain forbidden flow-control terms.
-- `self.do([...])` uses only literal lists or tuples of literal strings, and
-  those strings do not contain forbidden flow-control terms.
-- `self.do([...])` action lists are non-empty.
-- `self.do([...])` is side-effect-only and is not assigned, returned, or used as
-  an expression value.
-- Direct `self.evaluate("...")` calls are assigned to variables annotated as
-  `bool`, `int`, `float`, `str`, `Literal[...]`, or `list[...]` over a basic
-  scalar type.
-- `self.evaluate(SchemaType, ...)` is assigned to a variable annotated with the
-  same schema type, and that schema has declarative `Value(...)` field
-  descriptions using only allowed evaluation field types.
-- `self.evaluate(...)` accepts only the subject and optional guidance;
-  evaluations use ordinary Python lexical scope.
-- Local `WorkflowRecord` schemas appear immediately before the `self.evaluate(...)`
-  statement that consumes them.
-- Adjacent `self.do(...)` statements in the same Python statement block are
-  rejected; related model-facing substeps use one grouped actions list.
-- Adjacent `self.evaluate(...)` statements are allowed because evaluations are
-  non-mutating.
-- Required trace order is produced by the workflow code.
-- Conditional branches produce the expected traces for true and false cases.
-- Failure branches produce explicit blockers or fallback work.
-- Blocking preconditions are checked before durable side effects such as
-  commits, pushes, external submissions, background commit handoffs, or
-  state/log writes.
-- Subagents that must not own an operation do not have access to that operation
-  in their workflow.
-- Embedded code and rendered prose contain the expected operations and
-  conditions from the workflow source.
-- Executable helpers enforce the deterministic invariants they replace.
-- Synchronous or asynchronous execution policy is represented by helper choice
-  such as `self.do(...)`, `operation.run()`, `self.launch(operation)`,
-  `self.fire_and_forget(operation)`, `self.wait_all(...)`, or
-  `self.wait_any(...)`, not by words in the work-item string.
-- Additional runtime primitives are declared in the base workflow contract and
-  are generic workflow controls, not domain-specific hidden procedures.
-- Workflow source calls only methods declared by the base workflow contract.
-- `YAMLArgvTool.argv_template` and `ArgvTool.argv_template` values resolve
-  to real command-backed tools in the target runtime.
-- `AgentWorkflow.workflow` overrides take only `self`; launch configuration is
-  represented by typed constructor fields.
-- `AgentWorkflow` constructor fields and return types do not use `Any` or
-  dictionary annotations; structured launch and result data use
-  `WorkflowRecord` or `WorkflowTool` contracts.
-- Workflow schemas do not use `context_packet` or similar string packet fields
-  to smuggle structured state across boundaries.
-
-For example, the research finalization workflow should have tests proving:
-
-- code changes cause `branch-snapshot` and synchronous `branch-commit` before finalization capture
-- snapshot inspection happens before finalizer launch
-- the coordinator freezes explicit report assets using paths relative to the work-state directory before continuing
-- the finalizer authors reports and TODOs only in its temporary state worktree
-- finalizers create and publish state worktrees in capture order
-- code checks and the code commit complete before detached reporting begins
-- durable finalization status survives the discarded child handle
-- replaying already-committed `code_paths` is a clean no-op rather than a snapshot failure
-- required state and experiment-log publication reaches terminal status before optional note work
-- startup reconciliation completes only tickets whose matching durable experiment record can be proven
-- the coordinator does not poll or wait for the detached finalizer
+The selected CLI receives the user's first turn normally. It then starts or
+resumes the registered workflow through the callback adapter and follows each
+returned boundary until the workflow completes, fails, is cancelled, or pauses
+for user input.
+
+## Validation
+
+Static and runtime validation SHOULD reject:
+
+- missing or duplicate request assignment names;
+- request annotations without `local()` or `result()`;
+- request classes containing arbitrary public statements;
+- invalid f-string format specifications on declaration placeholders;
+- unknown or missing assignments in a response;
+- unregistered or ungranted PythonTools;
+- `detach` modes not explicitly allowed for the request;
+- unconsumed explicit observations;
+- `detach()` applied to a job not returned by `admit()`;
+- attempts to execute a subagent body in the caller context; and
+- unsupported agent or detached operations inside an `ExecutableWorkflow`.
+
+The runtime validates structured data at every boundary. English guidance does
+not override Python control flow, typed operation contracts, or authorization.

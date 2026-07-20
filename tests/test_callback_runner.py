@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -158,6 +159,149 @@ workflow: demo_workflow:Demo
         "run_id": first["run_id"],
         "status": "complete",
     }
+
+
+def test_agent_request_runs_granted_python_tools_and_reuses_definitions(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "demo"
+    package = bundle / "package"
+    agents = bundle / "agents"
+    package.mkdir(parents=True)
+    agents.mkdir()
+    (bundle / "capability.toml").write_text(
+        '[tools]\nadd_numbers = "demo_tools:AddNumbers"\n'
+        'touch_file = "demo_tools:TouchFile"\n',
+        encoding="utf-8",
+    )
+    (package / "demo_tools.py").write_text(
+        "from pathlib import Path\n"
+        "from agentic_tools import PythonTool, Record, Value\n\n"
+        "class Sum(Record):\n"
+        "    total: int\n\n"
+        "class AddNumbers(PythonTool[Sum]):\n"
+        "    \"\"\"Add two integers.\"\"\"\n"
+        "    left: int = Value('Left operand')\n"
+        "    right: int = Value('Right operand')\n\n"
+        "    def execute(self) -> Sum:\n"
+        "        return Sum(total=self.left + self.right)\n\n"
+        "class TouchFile(PythonTool[Sum]):\n"
+        "    \"\"\"Write one detached marker.\"\"\"\n"
+        "    path: str = Value('Marker path')\n\n"
+        "    def execute(self) -> Sum:\n"
+        "        Path(self.path).write_text('detached', encoding='utf-8')\n"
+        "        return Sum(total=1)\n",
+        encoding="utf-8",
+    )
+    (package / "demo_workflow.py").write_text(
+        "from agentic_workflows.contract import UserFacingWorkflow\n"
+        "from agentic_workflows.request_spec import AgentRequest, result\n"
+        "from demo_tools import AddNumbers, TouchFile\n\n"
+        "class Demo(UserFacingWorkflow[str]):\n"
+        "    def workflow(self) -> str:\n"
+        "        class First(AgentRequest):\n"
+        "            answer: str = result('first answer')\n"
+        "        first = self.agent_request(\n"
+        "            First, tools=[AddNumbers, TouchFile], detachable_tools=[TouchFile]\n"
+        "        )\n"
+        "        class Second(AgentRequest):\n"
+        "            answer: str = result('second answer')\n"
+        "        second = self.agent_request(Second, tools=[AddNumbers])\n"
+        "        return first.answer + ':' + second.answer\n",
+        encoding="utf-8",
+    )
+    (agents / "demo.md").write_text(
+        "---\nname: demo\nkind: main\nrenderer: imperative-workflows\n"
+        "workflow: demo_workflow:Demo\n---\n",
+        encoding="utf-8",
+    )
+    marker = tmp_path / "detached.txt"
+    env = os.environ.copy()
+    env["AR_WORKFLOW_PATH"] = os.pathsep.join(
+        [str(package), str(IMPERATIVE_PACKAGE)]
+    )
+    env["AR_TOOL_PATH"] = str(package)
+    env["AR_RUNTIME_ROOT"] = str(tmp_path / "runtime")
+
+    started, first = _invoke(env, "start", "demo_workflow:Demo", payload={})
+    assert started.returncode == 0, started.stderr
+    assert first["status"] == "agent_request"
+    assert {item["name"] for item in first["available_tools"]} == {
+        "add_numbers",
+        "touch_file",
+    }
+    assert set(first["tool_definitions"]) == {"add_numbers", "touch_file"}
+    assert first["tool_definitions"]["add_numbers"]["input_schema"]["required"] == [
+        "left",
+        "right",
+    ]
+
+    resumed, continued = _invoke(
+        env,
+        "resume",
+        str(first["run_id"]),
+        str(first["boundary_id"]),
+        payload={
+            "kind": "tool_requests",
+            "requests": [
+                {
+                    "id": "sum",
+                    "tool": "add_numbers",
+                    "arguments": {"left": 19, "right": 23},
+                    "mode": "await",
+                },
+                {
+                    "id": "marker",
+                    "tool": "touch_file",
+                    "arguments": {"path": str(marker)},
+                    "mode": "detach",
+                },
+            ],
+        },
+    )
+    assert resumed.returncode == 0, resumed.stderr
+    assert continued["status"] == "agent_request"
+    assert continued["tool_definitions"] == {}
+    by_id = {item["id"]: item for item in continued["tool_results"]}
+    assert by_id["sum"]["result"] == {"total": 42}
+    assert by_id["marker"]["status"] == "accepted"
+
+    resumed, second = _invoke(
+        env,
+        "resume",
+        str(continued["run_id"]),
+        str(continued["boundary_id"]),
+        payload={"assignments": {"answer": "first"}},
+    )
+    assert resumed.returncode == 0, resumed.stderr
+    assert second["status"] == "agent_request"
+    assert second["available_tools"] == [{"name": "add_numbers", "modes": ["await"]}]
+    assert second["tool_definitions"] == {}
+
+    reset, refreshed = _invoke(
+        env,
+        "reset-context",
+        str(second["run_id"]),
+        payload={},
+    )
+    assert reset.returncode == 0, reset.stderr
+    assert refreshed["boundary_id"] == second["boundary_id"]
+    assert set(refreshed["tool_definitions"]) == {"add_numbers"}
+
+    completed, final = _invoke(
+        env,
+        "resume",
+        str(refreshed["run_id"]),
+        str(refreshed["boundary_id"]),
+        payload={"assignments": {"answer": "second"}},
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert final["status"] == "complete"
+    assert final["result"] == "first:second"
+    deadline = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert marker.read_text(encoding="utf-8") == "detached"
 
 
 def test_callback_start_validates_typed_inputs_before_first_boundary(tmp_path: Path) -> None:
@@ -393,6 +537,7 @@ workflow: demo_workflow:Demo
                     "resume_workflow",
                     "workflow_status",
                     "cancel_workflow",
+                    "reset_workflow_context",
                 }
 
                 started = await session.call_tool(

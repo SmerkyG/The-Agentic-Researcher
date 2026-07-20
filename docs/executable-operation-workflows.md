@@ -7,8 +7,8 @@ into a monolithic command.
 
 An executable workflow uses ordinary Python ordering, branches, loops, typed
 results, and exceptions. Its body may call command-backed tools and nested
-executable workflows. It must not call model primitives such as `do`,
-`evaluate`, `fill`, or `ask_user`.
+executable workflows. It must not call `agent_request`, `ask_user`, or any other
+model or user boundary.
 
 One deterministic operation implemented directly in Python should use
 `PythonTool`, not an `ExecutableWorkflow` and not a Python command wrapped in
@@ -36,19 +36,18 @@ still invoke true external programs such as Git through `subprocess`; the point
 is to avoid launching another Python interpreter, serializing YAML, and
 reinstalling script dependencies merely to run Python code.
 
-Any importable `PythonTool` can also be exposed to non-workflow agents by
-declaring it in its capability manifest:
+Any importable `PythonTool` that may be granted inside an agent request needs a
+stable public name in its capability manifest:
 
 ```toml
 [tools]
 read_metadata = "package.module:ReadMetadata"
 ```
 
-The launcher combines enabled declarations into one `agentic_tools` MCP server
-for Codex, Claude, Gemini, OpenCode, and Pi. This is the primary agent-facing surface: the
-model receives the derived JSON Schema and native structured result without
-discovering or invoking a command wrapper. The generic command adapter remains
-available for shell callers and CLIs without MCP:
+The callback runtime resolves enabled declarations when workflow Python grants
+a tool to one `agent_request()`. Registration is a naming catalog, not a global
+agent capability, and the launcher does not mount it as an MCP server. The
+generic command adapter remains available for explicit shell callers:
 
 ```bash
 agentic-tool package.module:ToolClass <<'JSON'
@@ -147,8 +146,10 @@ The generic CLI currently supports:
 - fail-fast propagation of command and decoding errors.
 
 `imperative-workflows-run` is the `ExecutableWorkflow` adapter. The
-`agentic_tools` MCP server and core `agentic-tool` compatibility command are two
-transports over the same `PythonTool` records and result encoding.
+request-scoped tool packet and core `agentic-tool` compatibility command are two
+transports over the same `PythonTool` records and result encoding. The legacy
+`agentic-tools-mcp` adapter can still be started explicitly by another
+integration, but Agentic Team does not register it for agents by default.
 
 It intentionally does not support:
 
