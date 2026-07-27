@@ -1,5 +1,5 @@
-description = "Provide Git-backed reusable agent notes."
-requires = []
+description = "Provide Git-backed reusable agent notes, their updater, and a generic main agent."
+requires = ["imperative-workflows"]
 
 [tools]
 agentic_notes_read_topic = "agentic_notes.tools.read:AgenticNotesReadTopicTool"

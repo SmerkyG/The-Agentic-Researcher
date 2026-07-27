@@ -278,16 +278,16 @@ echo ""
 # ── 8. Main agent ────────────────────────────────────────────────────
 echo "─── Main Agent ───"
 echo "  Top-level agent definition to render into the workspace instruction file."
-echo "  Keep the default unless your Agentic Team install or org repo provides another"
-echo "  capability agents/*.md definition with kind: main."
+echo "  Choose a capability agents/*.md definition with kind: main."
+echo "  Built-in choices include: bibtex-verifier, general, research-coordinator, systems-developer."
 echo ""
-AR_MAIN_AGENT_DEFAULT="research-coordinator"
-read -rp "Main agent [$AR_MAIN_AGENT_DEFAULT]: " AR_MAIN_AGENT
-AR_MAIN_AGENT="${AR_MAIN_AGENT:-$AR_MAIN_AGENT_DEFAULT}"
-if [[ ! "$AR_MAIN_AGENT" =~ ^[A-Za-z0-9._-]+$ ]]; then
-    echo "Invalid main agent name, defaulting to $AR_MAIN_AGENT_DEFAULT"
-    AR_MAIN_AGENT="$AR_MAIN_AGENT_DEFAULT"
-fi
+while true; do
+    read -rp "Main agent (required): " AR_MAIN_AGENT
+    if [[ "$AR_MAIN_AGENT" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        break
+    fi
+    echo "Enter a valid main agent name."
+done
 echo "  → $AR_MAIN_AGENT"
 echo ""
 

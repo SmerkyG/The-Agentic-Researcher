@@ -231,7 +231,7 @@ capability_hook_call() {
     AT_PROJECT_DIR="${CAPABILITY_HOOK_PROJECT_DIR:-$WORKSPACE_DIR}" \
     AT_BRANCH="${CAPABILITY_HOOK_BRANCH:-${WORKSPACE_GIT_BRANCH:-}}" \
     AT_SESSION_ID="${CAPABILITY_HOOK_SESSION_ID:-${AR_SESSION_ID:-}}" \
-    AT_AGENT_TYPE="${CAPABILITY_HOOK_AGENT_TYPE:-${AR_MAIN_AGENT:-research-coordinator}}" \
+    AT_AGENT_TYPE="${CAPABILITY_HOOK_AGENT_TYPE:-$AR_MAIN_AGENT}" \
     AT_WORK_BRANCH="${CAPABILITY_HOOK_WORK_BRANCH:-${AR_WORK_BRANCH:-}}" \
     AT_CLI="${CAPABILITY_HOOK_CLI:-$AR_CLI}" \
     AT_OUTPUT_DIR="${CAPABILITY_HOOK_OUTPUT_DIR:-}" \
@@ -250,7 +250,7 @@ capability_render_command() {
 
     "$SCRIPT_DIR/scripts/lib/launcher/capability_render.py" \
         --project-dir "$WORKSPACE_DIR" \
-        --agent-type "${AR_MAIN_AGENT:-research-coordinator}" \
+        --agent-type "$AR_MAIN_AGENT" \
         --work-branch "${AR_WORK_BRANCH:-}" \
         --cli "$AR_CLI" \
         "$@"

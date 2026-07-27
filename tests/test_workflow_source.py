@@ -129,7 +129,9 @@ def test_coordinator_admits_and_detaches_finalizer_without_waiting() -> None:
     assert "must not search for another contract" in rendered
 
 
-def test_related_workflows_share_one_module_index(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_workflow_renderer_caches_one_module_index_per_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = 0
     index_modules = workflow_source.index_modules
 
@@ -140,12 +142,15 @@ def test_related_workflows_share_one_module_index(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(workflow_source, "index_modules", count_index_modules)
     renderer = WorkflowRenderer(PACKAGE_ROOTS)
-    agents = WORKFLOW_ROOT / "capabilities" / "research-coordinator" / "agents"
+    note_agents = WORKFLOW_ROOT / "capabilities" / "agentic-notes" / "agents"
+    research_agents = WORKFLOW_ROOT / "capabilities" / "research-coordinator" / "agents"
 
-    renderer.render(agents / "note-updater.md")
-    renderer.render(agents / "research-finalizer.md")
+    renderer.render(note_agents / "note-updater.md")
+    renderer.render(note_agents / "note-updater.md")
+    renderer.render(research_agents / "research-finalizer.md")
+    renderer.render(research_agents / "research-finalizer.md")
 
-    assert calls == 1
+    assert calls == 2
 
 
 def test_missing_registered_workflow_reports_searched_registry_roots(tmp_path: Path) -> None:
@@ -219,7 +224,7 @@ def test_subagent_workflow_requires_explicit_subagent_interface(tmp_path: Path) 
 
 
 def test_workflow_source_cli_emits_machine_readable_manifest() -> None:
-    source = WORKFLOW_ROOT / "capabilities" / "research-coordinator" / "agents" / "note-updater.md"
+    source = WORKFLOW_ROOT / "capabilities" / "agentic-notes" / "agents" / "note-updater.md"
 
     result = subprocess.run(
         [

@@ -133,7 +133,7 @@ apply_defaults() {
     AR_DOCKER_GPUS="${AR_DOCKER_GPUS:-auto}"
     AR_CAPABILITIES="${AR_CAPABILITIES:-agentic-notes,experiment-log}"
     AR_ORG_NOTES_REPO="${AR_ORG_NOTES_REPO:-}"
-    AR_MAIN_AGENT="${AR_MAIN_AGENT:-research-coordinator}"
+    AR_MAIN_AGENT="${AR_MAIN_AGENT:-}"
     AR_WORK_BRANCH="${AR_WORK_BRANCH:-}"
     AR_USER_ID="${AR_USER_ID:-$USER}"
     AR_PROJECT_STATE_BRANCH="${AR_PROJECT_STATE_BRANCH:-agentic/project-state}"
@@ -187,6 +187,12 @@ parse_arguments() {
     local sandbox_options cli_options
     sandbox_options="$(registered_sandbox_option_list)"
     cli_options="$(registered_cli_option_list)"
+
+    if [[ $# -eq 0 ]]; then
+        echo "Error: agentic-team requires a project/workspace argument or an explicit mode." >&2
+        show_help >&2
+        exit 2
+    fi
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -423,7 +429,7 @@ Options:
   --resume [ID]       Resume a session (interactive picker, or specify ID)
   --continue, -c      Continue the most recent conversation
   --model MODEL       Override default model
-  PROJECT_DIR         Normal project checkout for first-run setup (default: current directory)
+  PROJECT_DIR         Normal project checkout for first-run setup
   AT_DIR WORK_NAME    Launch or create the named AT work entry at AT_DIR/WORK_NAME/code
   CLI_OPTIONS         Additional options passed to the selected CLI
 
@@ -432,7 +438,6 @@ Examples:
   agentic-team --capability cluster-run
   agentic-team --sandbox apptainer --capability remote-run
   agentic-team --sandbox apptainer --capability remote-run --test
-  agentic-team
   agentic-team --main-agent research-paper-author
   agentic-team --setup                      # Setup wizard
   agentic-team --clean                      # Interactive cleanup of local state
@@ -442,7 +447,6 @@ Examples:
   agentic-team --render-only --cli codex
   agentic-team --render-only --refresh-capabilities --cli codex
   agentic-team --cli opencode --debug-launch
-  agentic-team                              # Current directory; unoccupied work branches start directly
   agentic-team ~/my-project
   agentic-team ~/my-project-at research-main
   agentic-team ~/my-project-at research-main --from main --project-dir ~/my-project

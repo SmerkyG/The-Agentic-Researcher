@@ -1,6 +1,11 @@
 # Agentic Notes
 
-Agentic Notes is the built-in capability for Git-backed learned knowledge. It owns the `agent-notes/` layout, renders `always-injected.md` content into agent startup instructions, lists on-demand note topics, and provides note read/update commands.
+Agentic Notes is the built-in capability for Git-backed learned knowledge. It owns the `agent-notes/` layout, renders `always-injected.md` content into agent startup instructions, lists on-demand note topics, and provides note read/update commands and the `note-updater` subagent.
+
+The capability also provides the Markdown-only `general` main agent for work
+that needs Agentic Notes but no domain-specific or imperative workflow. Select
+it with `agentic-team --main-agent general ...`; selecting the agent
+automatically enables its providing capability.
 
 Agentic Notes uses Agentic State for storage. See [agentic-state.md](agentic-state.md) for workspace naming, org/project/work-branch scopes, orphan state branches, locks, refresh behavior, visible workspace locations, and operational cache locations.
 
@@ -19,9 +24,11 @@ agent-notes/
     evaluation-policy.md
   systems-developer/
     always-injected.md
+  general/
+    always-injected.md
 ```
 
-`agent-notes/all-agents/` applies to every agent in that scope. `agent-notes/<agent_type>/` applies only to that agent type. For top-level launches, the agent type is the selected `AR_MAIN_AGENT` value, which defaults to `research-coordinator`. For subagents, the agent type is the subagent `name`.
+`agent-notes/all-agents/` applies to every agent in that scope. `agent-notes/<agent_type>/` applies only to that agent type. For top-level launches, the agent type is the explicitly selected `AR_MAIN_AGENT` value. For subagents, the agent type is the subagent `name`.
 
 The same layout can appear in:
 
@@ -96,7 +103,7 @@ action. If no notes changed, the hook emits nothing.
 Agents should read rendered notes through `agentic-notes read-note`, not by opening raw note storage files:
 
 ```bash
-agentic-notes read-note --project-dir . --agent-type research-coordinator TOPIC
+agentic-notes read-note --project-dir . --agent-type "$AR_MAIN_AGENT" TOPIC
 ```
 
 `agentic-notes read-note` dynamically combines all available org/project/work-branch and `all-agents`/agent-type portions for the requested topic. This prevents an agent from accidentally reading only one scope's fragment of a note. The rendered output labels each portion's scope, so provenance is visible after the agent reads the note.
@@ -109,23 +116,18 @@ that note since the last compaction.
 
 ## Updating Notes
 
-Working agents update notes through subagents rather than editing note files
-directly. Research-coordinator result reporting and bookkeeping route together
-through `research-finalizer`; standalone lessons route
-through `note-updater` and its rendered contract. The trigger is broader than
+Working agents never edit source note files directly. The capability-neutral
+path uses the structured `agentic-notes update-note` command. The included
+`note-updater` subagent adds triage and an optional cleanup pass, and specialized
+workflows may define when to hand note proposals to it. The trigger is broader than
 mistakes: missing setup requirements, corrected assumptions, undocumented tool
 or platform behavior, project conventions, and user corrections should become
-notes when the lesson would help a future agent. This is a required subagent
-handoff in generated instructions when a note is warranted: the parent agent
-should try to spawn the relevant subagent, retry once if spawning fails, and
-alert the user if it still cannot be spawned rather than silently calling
-`agentic-notes` directly. Notes should be terse reusable guidance, not incident
-reports: prefer one compact sentence and omit timestamps, long command output,
-and rationale unless essential. The updater first runs the normal
-`agentic-notes update-note` path, then reviews the rendered note chain. If that
-made the chain worse through duplication, verbosity, or an obvious scope
-mismatch, it may perform one rare cleanup rewrite of exactly one source note
-with `agentic-notes rewrite-note`. It never force-pushes.
+notes when the lesson would help a future agent. Notes should be terse reusable
+guidance, not incident reports: prefer one compact sentence and omit timestamps,
+long command output, and rationale unless essential. An updater workflow may
+review the rendered note chain after the normal update and perform one rare
+cleanup rewrite when the chain became materially worse through duplication,
+verbosity, or scope mismatch. It must never force-push.
 
 Agents choose the note scope when they create a note; Agentic Team does not
 automatically promote notes between scopes. Use the narrowest useful scope:
@@ -154,10 +156,9 @@ operations from `agentic_notes.tools` in-process. The public command is a thin
 compatibility and convenience wrapper that accepts the same JSON/YAML records;
 note behavior lives in the package tools rather than in the command wrapper.
 
-`agentic-notes rewrite-note` is for the `note-updater` cleanup pass after normal note
-capture. Setup, refresh, rendering, and note-state maintenance are internal
-capability mechanics invoked by launcher hooks or the `note-updater` subagent,
-not commands that main agents should call directly.
+`agentic-notes rewrite-note` is for an explicit cleanup pass after normal note
+capture, not ordinary main-agent use. Setup, refresh, rendering, and note-state
+maintenance are internal capability mechanics invoked by launcher hooks.
 
 Use `agent-notes/all-agents/<topic>.md` for package-specific lessons, architecture notes, and broad organization, project, or work-branch lessons. Use `agent-notes/<agent_type>/always-injected.md` or `agent-notes/<agent_type>/<topic>.md` for guidance that applies only to one main agent or subagent type.
 

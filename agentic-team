@@ -77,6 +77,7 @@ main() {
     profile_step "setup_workspace_git_identity" setup_workspace_git_identity
     profile_step "setup_storage" setup_storage
     trap launcher_cleanup EXIT
+    profile_step "require_main_agent_selection" require_main_agent_selection
     if [[ "$REFRESH_CAPABILITIES" != "true" ]]; then
         profile_step "setup_agentic_notes_capability" setup_agentic_notes_capability_once
     fi

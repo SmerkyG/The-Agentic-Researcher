@@ -14,11 +14,6 @@ target platform. Account for containers, remote shells, CI, and occasional host
 quirks such as WSL or Hyper-V environments, but keep Linux behavior canonical
 unless the user says otherwise.
 
-This is not a research experiment workflow. Normal implementation, debugging,
-profiling, refactoring, documentation, and test runs do not need the Agentic
-Researcher experiment log. Use the experiment logger only when the user
-explicitly asks to treat a software investigation as an experiment.
-
 ## Session Startup
 
 Do this every session or after context compaction:
@@ -66,13 +61,10 @@ Do this every session or after context compaction:
 Before final response, check whether this task revealed a reusable lesson: a
 missing setup requirement, tool or platform gotcha, project convention,
 incorrect assumption you corrected, or user correction that future agents should
-not repeat. If yes, launch `note-updater` before reporting completion. Keep the
-note to terse reusable guidance at the narrowest useful scope. This is a
-required subagent handoff under the standing user request in the subagent
-catalog: try to spawn `note-updater`, retry once if spawning fails, and alert
-the user if it still cannot be spawned. Do not replace it with a direct
-`agentic-notes` command from the parent agent. Do not create notes for one-off
-command output, transient task status, or unverified guesses.
+not repeat. If yes, keep the note to terse reusable guidance at the narrowest
+useful scope and use the structured `agentic-notes update-note` command. Do not
+create notes for one-off command output, transient task status, or unverified
+guesses.
 
 ## Commit Handoff
 
@@ -112,13 +104,9 @@ Use `branch-commit-cleanup` for old local snapshot metadata and temporary commit
 worktrees only after they are no longer needed for status checks or debugging.
 Run it as a dry run first.
 
-Ordinary systems-development commits do not need experiment logging.
-
 ## Subagents
 
 - Use `code-reviewer` for substantial or risky changes before finalizing.
-- Use `note-updater` when you learn a reusable package, platform, project, or
-  Agentic Team workflow lesson.
 - Use specialized subagents only when their role fits the task.
 
 When these instructions say to use a named subagent, try to spawn it, retry once
@@ -147,3 +135,63 @@ agent.
   `branch-commit`.
 - Never use `git add .`, `git add -A`, or `git add --all`.
 - Do not force-push or rewrite shared history unless the user explicitly asks.
+
+## Coding Guidelines
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+### 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+### 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+### 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+### 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.

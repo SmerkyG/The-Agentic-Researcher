@@ -34,7 +34,7 @@ TOOLS = {
 def _read_note(arguments: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="agentic-notes read-note")
     parser.add_argument("--project-dir", default=os.environ.get("AR_PROJECT_DIR", "."))
-    parser.add_argument("--agent-type", default="research-coordinator")
+    parser.add_argument("--agent-type", default=os.environ.get("AR_MAIN_AGENT"))
     parser.add_argument("note_name")
     options = parser.parse_args(arguments)
     result = AgenticNotesReadTopicTool(

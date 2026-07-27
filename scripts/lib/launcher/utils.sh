@@ -199,7 +199,7 @@ ar_core_env_pairs() {
 
 ar_agent_context_env_pairs() {
     printf 'AR_PROJECT_DIR=%s\n' "$(workspace_root_runtime_path)"
-    printf 'AR_MAIN_AGENT=%s\n' "${AR_MAIN_AGENT:-research-coordinator}"
+    printf 'AR_MAIN_AGENT=%s\n' "$AR_MAIN_AGENT"
     printf 'AR_WORK_BRANCH=%s\n' "${AR_WORK_BRANCH:-}"
     printf 'AR_WORK_BRANCH_ID=%s\n' "${AR_WORK_BRANCH_ID:-}"
     printf 'AR_WORK_NAME=%s\n' "${AR_WORK_NAME:-}"

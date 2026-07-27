@@ -94,7 +94,7 @@ cli_claude_setup_compaction_hooks() {
     instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
     capability_refresh_runtime="$(ar_core_bin_env_path)/capability-refresh"
     project_runtime="$(workspace_root_runtime_path)"
-    agent_type_runtime="${AR_MAIN_AGENT:-research-coordinator}"
+    agent_type_runtime="$AR_MAIN_AGENT"
     cli_runtime="$AR_CLI"
     python_runtime="$(python_runtime_command_string)"
     command="$python_runtime $(shell_quote "$script_runtime") $(shell_quote "$instruction_runtime") $(shell_quote "$capability_refresh_runtime") $(shell_quote "$project_runtime") $(shell_quote "$agent_type_runtime") $(shell_quote "$cli_runtime")"

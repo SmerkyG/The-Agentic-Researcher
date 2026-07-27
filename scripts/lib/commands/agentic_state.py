@@ -87,7 +87,10 @@ def work_state_branch(branch: str) -> str:
 
 
 def agent_type(value: str | None = None) -> str:
-    return value or os.environ.get("AR_MAIN_AGENT") or "research-coordinator"
+    selected = value or os.environ.get("AR_MAIN_AGENT")
+    if not selected:
+        raise AgenticStateError("agent type is required; pass it explicitly or set AR_MAIN_AGENT")
+    return selected
 
 
 def user_id(value: str | None = None) -> str:

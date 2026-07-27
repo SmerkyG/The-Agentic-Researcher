@@ -78,7 +78,7 @@ cli_opencode_setup_compaction_hooks() {
     instruction_runtime="$(workspace_runtime_path "$INSTRUCTION_TARGET")"
     capability_refresh_runtime="$(ar_core_bin_env_path)/capability-refresh"
     project_runtime="$(workspace_root_runtime_path)"
-    agent_type_runtime="${AR_MAIN_AGENT:-research-coordinator}"
+    agent_type_runtime="$AR_MAIN_AGENT"
     cli_runtime="$AR_CLI"
     refresh_context="## Agentic Team Post-Compaction Refresh
 

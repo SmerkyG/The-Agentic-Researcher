@@ -20,6 +20,7 @@ REPO_REF="$DEFAULT_REPO_REF"
 SANDBOX=""
 CLI="claude"
 STATE_ROOT="$HOME/.cache/agentic-team"
+MAIN_AGENT=""
 WRITE_CONFIG=false
 FORCE=false
 
@@ -54,6 +55,7 @@ Options:
   --sandbox NAME      Default sandbox in generated config (docker|podman|apptainer|none)
   --cli NAME         Default CLI in generated config (claude|opencode|gemini|codex|pi)
   --state-root DIR    State/cache root in generated config
+  --main-agent NAME   Main agent in generated config (required before launching)
   --write-config      Write initial config at ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-team/config.sh
                       without running the setup wizard
   --force             Overwrite existing install and symlink
@@ -61,10 +63,10 @@ Options:
 
 Examples:
   ./scripts/install.sh
-  ./scripts/install.sh --write-config
-  ./scripts/install.sh --sandbox apptainer --cli codex --write-config
-  ./scripts/install.sh --sandbox podman --write-config
-  ./scripts/install.sh --sandbox none --cli codex --write-config
+  ./scripts/install.sh --main-agent general --write-config
+  ./scripts/install.sh --sandbox apptainer --cli codex --main-agent research-coordinator --write-config
+  ./scripts/install.sh --sandbox podman --main-agent systems-developer --write-config
+  ./scripts/install.sh --sandbox none --cli codex --main-agent general --write-config
 EOF
 }
 
@@ -96,6 +98,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --state-root)
             STATE_ROOT="$2"
+            shift 2
+            ;;
+        --main-agent)
+            MAIN_AGENT="$2"
             shift 2
             ;;
         --write-config)
@@ -141,6 +147,11 @@ case "$CLI" in
         exit 1
         ;;
 esac
+
+if [[ -n "$MAIN_AGENT" && ! "$MAIN_AGENT" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Error: Invalid main agent name: $MAIN_AGENT" >&2
+    exit 1
+fi
 
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
 SCRIPT_DIR=""
@@ -253,7 +264,7 @@ AR_STATE_ROOT="$STATE_ROOT"
 AR_WORKSPACE_ROOT=""
 AR_EXTRA_BIND_DIRS=""
 AR_ORG_NOTES_REPO=""
-AR_MAIN_AGENT="research-coordinator"
+AR_MAIN_AGENT="$MAIN_AGENT"
 AR_USER_ID="\$USER"
 AR_PROJECT_STATE_BRANCH="agentic/project-state"
 AR_NOTES_AUTO_REFRESH="true"

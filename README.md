@@ -40,7 +40,8 @@ Agentic Team is split into a small launcher, a shared Git-backed state substrate
 
 **Capabilities.** Capabilities are selected packages that can add commands, instruction sections, launcher hooks, and stateful workflows. Built-in capabilities include:
 
-- **Agentic Notes** (`agentic-notes`): owns `agent-notes/` layout at org, project, and work-branch scopes; renders `always-injected.md` content and on-demand note topic lists; provides package-native tools plus the `agentic-notes` convenience command with `read-note`, `update-note`, and `rewrite-note` subcommands over the same implementation.
+- **Agentic Notes** (`agentic-notes`): owns `agent-notes/` layout at org, project, and work-branch scopes; renders `always-injected.md` content and on-demand note topic lists; provides the Markdown-only `general` main agent, the `note-updater` subagent, package-native tools, and the `agentic-notes` convenience command.
+- **Code Review** (`code-review`): provides the reusable `code-reviewer` subagent independently of any research or systems-development main agent.
 - **Imperative Workflows** (`imperative-workflows`): lets you script agent workflows in Python with standard control flow while grouping model work into typed aggregate boundaries. See the [short examples](docs/imperative-workflows-by-example.md) and [current specification](docs/imperative-workflow-specs.md).
 - **Experiment Log** (`experiment-log`): owns `experiment-log/` files on the active work state branch; records experiment YAML files, `COUNTER.yaml`, and append-maintained `SUMMARY.md`; provides native workflow tools plus the `experiment-log` convenience command with `append`, `correct`, and `summary` subcommands over the same implementation.
 
@@ -64,7 +65,7 @@ This separation is intentional: the launcher can stay mostly about launching and
 agentic-team --setup
 ```
 
-The installer adds the `agentic-team` launcher. The setup wizard creates local configuration, asks whether to use an org repo, and asks which main agent to use. Keep the default `research-coordinator` unless the Agentic Team install or org repo provides another `kind: main` agent. The org repo is optional. Without it, Agentic Team still maintains project state on the project's `agentic/project-state` branch and work-branch-local records on `agentic/work-state/<work-branch>` branches. Local code and state worktrees live under a visible sibling AT workspace such as `treeattention-at/`. See [Org Repo](#org-repo) for setup guidance.
+The installer adds the `agentic-team` launcher. The setup wizard creates local configuration, asks whether to use an org repo, and requires an explicit main-agent choice. Choose `research-coordinator` for autonomous research, `bibtex-verifier` for a complete source-backed bibliography audit, `systems-developer` for interactive Linux-focused engineering, or `general` for an unspecialized Markdown-only agent with Agentic Notes. The org repo is optional. Without it, Agentic Team still maintains project state on the project's `agentic/project-state` branch and work-branch-local records on `agentic/work-state/<work-branch>` branches. Local code and state worktrees live under a visible sibling AT workspace such as `treeattention-at/`. See [Org Repo](#org-repo) for setup guidance.
 
 ## Workflow
 
@@ -90,6 +91,13 @@ Relaunch Agentic Team by naming the AT workspace and work entry:
 
 ```bash
 agentic-team ~/my-project-at research-main
+```
+
+In an interactive terminal, you may omit the work-entry name. Agentic Team
+lists the existing entries and prompts you to choose one:
+
+```bash
+agentic-team ~/my-project-at
 ```
 
 ### Running More Agents in Parallel
@@ -125,7 +133,7 @@ Run `agentic-team --setup` to create a configuration file at `${XDG_CONFIG_HOME:
 - **Authentication** — OAuth login or API key (with configurable env var name)
 - **Custom API endpoint** — point Claude at an Anthropic-compatible proxy or gateway
 - **Org repo** (`AR_ORG_NOTES_REPO`) — optional shared Git repo for organization-wide notes, agents, and capabilities
-- **Main agent** (`AR_MAIN_AGENT`) — top-level agent definition to render into the workspace instruction file. Defaults to `research-coordinator`
+- **Main agent** (`AR_MAIN_AGENT`) — required top-level agent definition to render into the workspace instruction file; setup does not choose one implicitly
 - **Work branch** (`AR_WORK_BRANCH` or `--work-branch`) — Git branch used by the top-level agent. Each top-level agent requires its own branch.
 - **Git identity** (`AR_GIT_NAME`, `AR_GIT_EMAIL`) — repo-local fallback identity for Agentic Team-created commits when the project checkout does not already have `user.name` / `user.email`
 - **AT workspace root** (`AR_WORKSPACE_ROOT`) — optional override for the visible workspace root that contains linked worktrees for `project-state/` plus `<work-name>/code` and `<work-name>/state`. By default it is a sibling named `<checkout-dir-name>-at`
@@ -184,6 +192,9 @@ agentic-team --main-agent research-paper-author ~/my-project-at paper
 
 # Interactive Linux-focused systems/tooling development
 agentic-team --main-agent systems-developer ~/my-project-at systems
+
+# General-purpose work with Agentic Notes and no imperative workflow
+agentic-team --main-agent general ~/my-project-at general
 
 # Create a parallel AT effort from an existing AT work entry
 agentic-team ~/my-project-at kdtree-bounds --from research-main
@@ -251,7 +262,7 @@ Capability packages can be used for job placement and execution backends, and Ag
 
 Capabilities can provide agents, Python workflow modules, and prompt skills under `agents/`, `package/`, and `skills/`. Enabled capability skills are rendered into the selected CLI's project discovery path: `.claude/skills` for Claude, `.gemini/skills` for Gemini, `.opencode/skills` for OpenCode, and `.agents/skills` for Codex/pi. Selecting a main agent automatically enables its providing capability and dependencies. The built-in `research-coordinator` capability provides that main agent, its research subagents, and the `do_research` and `retro` skills. Capability `INSTRUCTIONS.md` files are injected when that capability is enabled.
 
-Agent definitions are neutral Markdown files supplied by capability `agents/` directories. A `kind: main` definition can be selected with `AR_MAIN_AGENT`; a `kind: subagent` definition is rendered into the selected CLI's project agent path. Built-in providers include `research-coordinator` for experiment-driven research and `systems-developer` for interactive Linux-focused development. The top-level instruction file gets a compact catalog of subagents from enabled capabilities. Project capabilities under `.agentic-team/capabilities/` override configured organization providers, which override built-ins with the same capability name. Add `codex_reasoning_effort: low|medium|high` to render Codex reasoning effort where supported. See [docs/extending-agentic-team.md](docs/extending-agentic-team.md#agents-and-agent-types).
+Agent definitions are neutral Markdown files supplied by capability `agents/` directories. A `kind: main` definition can be selected with `AR_MAIN_AGENT`; a `kind: subagent` definition is rendered into the selected CLI's project agent path. Built-in providers include `general` for unspecialized work with Agentic Notes, `bibtex-verifier` for source-backed bibliography audits, `research-coordinator` for experiment-driven research, and `systems-developer` for interactive Linux-focused development. The top-level instruction file gets a compact catalog of subagents from enabled capabilities. Project capabilities under `.agentic-team/capabilities/` override configured organization providers, which override built-ins with the same capability name. Add `codex_reasoning_effort: low|medium|high` to render Codex reasoning effort where supported. See [docs/extending-agentic-team.md](docs/extending-agentic-team.md#agents-and-agent-types).
 
 ```bash
 agentic-team --capability cluster-run
@@ -301,7 +312,7 @@ agent-notes/
     always-injected.md    # short organization-wide guidance injected every time
     git.md                # on-demand topic note listed for relevant work
   research-coordinator/
-    always-injected.md    # injected for the default main agent
+    always-injected.md    # injected for the selected main agent
   gpu-kernel-engineer/
     always-injected.md    # injected for that agent type
 ```

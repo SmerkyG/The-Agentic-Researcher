@@ -6,9 +6,9 @@ from typing import ClassVar
 
 from agentic_workflows.contract import SubagentWorkflow, WorkflowRecord
 from agentic_workflows.request_spec import AgentRequest, result, step
+from agentic_notes.note_updater import NoteUpdater, NoteUpdaterResult
 from agentic_notes.tools.update import AgenticNotesUpdateTool
 from experiment_log.tools.append import ExperimentLogAppendTool
-from agentic_workflows.research.note_updater import NoteUpdater, NoteUpdaterResult
 from agentic_workflows.research.report import ReportAppendTool
 from research_finalization.records import FinalizationTicket, FinalizationWorkspace
 from research_finalization.tools.commit import FinalizationStateCommitTool

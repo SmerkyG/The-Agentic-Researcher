@@ -12,25 +12,17 @@ On-demand notes are read-before-acting guidance. Before taking an action whose
 tool, package, runtime, backend, architecture, project convention, or work item
 plausibly matches a listed topic or hint, use the generated `agentic-notes
 read-note` command to read the rendered note if you have not read it since the
-last compaction. This applies to setup checks and routine workflow actions too,
-not only implementation work. Avoid re-reading a note already read since the
-last compaction unless you need to verify changed content.
+last compaction. This applies to setup checks and routine workflow actions too.
+Avoid re-reading a note already read since the last compaction unless you need
+to verify changed content.
 Rendered notes dynamically combine all available organization, project, and
 work-branch note portions for `all-agents` plus the current agent type.
 
 After correcting a wrong assumption, failed workflow, missing setup step,
-undocumented tool behavior, or user correction, ask whether the lesson would
-help a future agent. If yes, route the lesson through the configured background
-finalization or `note-updater` flow; for research-coordinator result
-bookkeeping, `research-finalizer` owns report generation and note triage in its
-temporary state worktree. This is a required subagent handoff under the standing user request in
-the subagent catalog when a note is warranted: try to spawn the relevant
-subagent, retry once if spawning fails, and alert the user if it still cannot
-be spawned. Do not replace it with a direct `agentic-notes` command from the
-parent agent. Read the relevant subagent's `Contract:` path from the generated
-Available Subagents catalog. On Codex, those contracts live under
-`.codex/agents/`, not `.agents`. Do not search `.agents` for subagent
-contracts.
+undocumented tool behavior, or user correction, consider whether the lesson
+would help a future agent. If yes, use the structured `agentic-notes
+update-note` command. A more specialized workflow may define its own note
+handoff; follow that policy when present. Never edit source note files directly.
 Do not wait for the user to ask for a note, but also do not pause routine
 progress just to perform speculative note checks. Prefer a terse project or
 work-branch note over losing reusable knowledge. Notes should be
@@ -58,8 +50,8 @@ user/sysadmin instead of creating a project or work-branch note. Use an org note
 only when the workaround is durable across projects and no near-term fix can be
 expected.
 
-Do not edit org, project, or work-branch source notes directly from the main agent.
-Use `note-updater` so pulls, duplicate checks, optional rare cleanup rewrites,
-commits, and pushes happen consistently. Launcher startup and compaction refresh
-own materialized instruction rendering; note updates do not rewrite instruction
+Do not edit org, project, or work-branch source notes directly. Use the
+structured `agentic-notes update-note` command so locking, merging, commits,
+and pushes happen consistently. Launcher startup and compaction refresh own
+materialized instruction rendering; note updates do not rewrite instruction
 files directly.

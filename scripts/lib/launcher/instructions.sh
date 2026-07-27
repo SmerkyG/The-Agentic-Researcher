@@ -121,7 +121,7 @@ find_agent_source_by_name() {
 }
 
 render_main_agent_instruction_part() {
-    local main_agent="${AR_MAIN_AGENT:-research-coordinator}"
+    local main_agent="$AR_MAIN_AGENT"
     local source_path kind
 
     if ! valid_agent_name "$main_agent"; then

@@ -1,5 +1,5 @@
-description = "Provide the research coordinator, its subagents, skills, and state tools."
-requires = ["imperative-workflows", "agentic-notes", "experiment-log", "branch"]
+description = "Provide research-focused main agents, subagents, skills, and state tools."
+requires = ["imperative-workflows", "agentic-notes", "experiment-log", "branch", "code-review"]
 
 [tools]
 research_finalization_capture = "research_finalization.tools.capture:FinalizationCaptureTool"

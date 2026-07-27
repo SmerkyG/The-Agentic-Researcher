@@ -2543,6 +2543,32 @@ def test_main_agent_required_capabilities_are_added_to_empty_selection(tmp_path:
     assert (project / ".codex" / "agents" / "research-finalizer.toml").exists()
 
 
+def test_launcher_requires_an_explicit_main_agent(tmp_path: Path) -> None:
+    project_remote = seed_project_remote(tmp_path)
+    project = clone_project(tmp_path, project_remote)
+    env = base_env(tmp_path)
+    env.pop("AR_MAIN_AGENT")
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "empty-config")
+
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--sandbox",
+            "none",
+            "--cli",
+            "codex",
+            "--render-only",
+            str(project),
+        ],
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "No main agent selected" in result.stdout
+    assert "--main-agent NAME" in result.stdout
+
+
 def test_systems_developer_required_capabilities_do_not_add_experiment_log(tmp_path: Path) -> None:
     project_remote = seed_project_remote(tmp_path)
     project = clone_project(tmp_path, project_remote)
@@ -2572,6 +2598,9 @@ def test_systems_developer_required_capabilities_do_not_add_experiment_log(tmp_p
     text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "## Agentic Notes" in text
     assert "## Experiment Log" not in text
+    assert (project / ".codex" / "agents" / "code-reviewer.toml").exists()
+    assert (project / ".codex" / "agents" / "note-updater.toml").exists()
+    assert not (project / ".codex" / "agents" / "research-finalizer.toml").exists()
 
 
 def test_launcher_refuses_main_branch_without_permission_in_noninteractive_mode(tmp_path: Path) -> None:
@@ -2650,6 +2679,7 @@ def test_launcher_notes_integration_keeps_builtin_skill_rendering(tmp_path: Path
     assert "```python agentic-workflow" not in research_skill_text
     assert not (project / ".agents" / "skills" / "note_usage" / "SKILL.md").exists()
     assert not (project / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
+    assert (project / ".codex" / "agents" / "code-reviewer.toml").exists()
     assert (project / ".codex" / "agents" / "note-updater.toml").exists()
     assert (project / ".codex" / "agents" / "research-finalizer.toml").exists()
     assert not (project / ".codex" / "agents" / "branch-committer.toml").exists()

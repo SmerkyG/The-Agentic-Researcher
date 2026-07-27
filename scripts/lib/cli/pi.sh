@@ -46,7 +46,7 @@ cli_pi_setup_compaction_hooks() {
     extension_runtime="$(workspace_runtime_path ".pi/extensions/agentic-team-compaction.ts")"
     capability_refresh_runtime="$(ar_core_bin_env_path)/capability-refresh"
     project_runtime="$(workspace_root_runtime_path)"
-    agent_type_runtime="${AR_MAIN_AGENT:-research-coordinator}"
+    agent_type_runtime="$AR_MAIN_AGENT"
     cli_runtime="$AR_CLI"
     refresh_message="You have just experienced context compaction. Treat this moment as the new \`since the last compaction\` boundary for Agentic Notes. Agentic Team just refreshed configured capabilities and rematerialized the rendered instruction file. Before continuing, read \`$instruction_runtime\`, the instruction file rendered for this specific Agentic Team invocation, then continue with whatever task was in progress before compaction. Do not restart from scratch."
     mkdir -p "$(dirname "$extension_path")"

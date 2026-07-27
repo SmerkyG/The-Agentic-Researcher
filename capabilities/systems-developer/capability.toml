@@ -1,2 +1,2 @@
 description = "Provide the systems developer main agent."
-requires = ["agentic-notes", "branch"]
+requires = ["agentic-notes", "branch", "code-review"]

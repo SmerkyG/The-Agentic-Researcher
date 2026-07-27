@@ -43,7 +43,7 @@ class AgenticNotesReadTopicTool(PythonTool[AgenticNotesReadResult]):
     """Read one rendered on-demand note topic."""
 
     topic: str = Value("Note topic without .md")
-    agent_type: str = Value("Agent type", default="research-coordinator")
+    agent_type: str | None = Value("Agent type; defaults to the active main agent", default=None)
     project_dir: str = Value("Project directory", default=".")
 
     def execute(self) -> AgenticNotesReadResult:

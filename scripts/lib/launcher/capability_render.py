@@ -205,7 +205,7 @@ def render_bundle(args: argparse.Namespace, base: RenderContext) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-dir", required=True)
-    parser.add_argument("--agent-type", default=os.environ.get("AR_MAIN_AGENT", "research-coordinator"))
+    parser.add_argument("--agent-type", default=os.environ.get("AR_MAIN_AGENT"))
     parser.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH", ""))
     parser.add_argument("--cli", default=os.environ.get("AR_CLI", "codex"))
     sub = parser.add_subparsers(dest="command", required=True)
@@ -236,6 +236,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not args.agent_type:
+        parser.error("--agent-type or AR_MAIN_AGENT is required")
     project_dir = Path(args.project_dir).resolve()
     state_root = Path(os.environ.get("AR_STATE_ROOT", "~/.cache/agentic-team")).expanduser()
     base = RenderContext(

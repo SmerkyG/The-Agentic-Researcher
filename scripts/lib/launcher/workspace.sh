@@ -464,6 +464,26 @@ prompt_at_work_name() {
     printf '%s\n' "${answer:-$default_name}"
 }
 
+list_at_work_names() {
+    local at_root="$1" code_dir
+
+    for code_dir in "$at_root"/*/code; do
+        [[ -d "$code_dir" || -L "$code_dir" ]] || continue
+        basename "$(dirname "$code_dir")"
+    done | LC_ALL=C sort
+}
+
+show_at_work_names() {
+    local work_names="$1" work_name
+
+    [[ -n "$work_names" ]] || return 0
+    echo "Existing AT work entries:" >&2
+    while IFS= read -r work_name; do
+        [[ -n "$work_name" ]] || continue
+        printf '  %s\n' "$work_name" >&2
+    done <<< "$work_names"
+}
+
 prompt_at_project_dir() {
     local default_project="$1" answer
     read -r -p "Project checkout [$default_project]: " answer
@@ -512,6 +532,7 @@ current_branch_for_dir() {
 
 resolve_named_at_work() {
     local at_root work_name work_dir code_dir project_dir default_project source_ref default_ref
+    local existing_work_names default_work_name
     local -a ensure_args
 
     [[ -n "$AT_WORKSPACE_DIR_ARG" ]] || return 0
@@ -526,12 +547,16 @@ resolve_named_at_work() {
 
     work_name="$AT_WORK_NAME_ARG"
     if [[ -z "$work_name" ]]; then
+        existing_work_names="$(list_at_work_names "$at_root")"
+        show_at_work_names "$existing_work_names"
         if ! launch_is_interactive; then
             echo "Error: AT workspace launch requires a work name."
             echo "Example: agentic-team $at_root research-main"
             exit 1
         fi
-        work_name="$(prompt_at_work_name "research-main")"
+        default_work_name="$(printf '%s\n' "$existing_work_names" | sed -n '1p')"
+        default_work_name="${default_work_name:-research-main}"
+        work_name="$(prompt_at_work_name "$default_work_name")"
     fi
     work_name="$(slugify_workspace_name "$work_name")"
     work_dir="$at_root/$work_name"
@@ -774,8 +799,16 @@ prepare_at_work_entry_interactive() {
     create_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
 }
 
+require_main_agent_selection() {
+    if [[ -z "${AR_MAIN_AGENT:-}" ]]; then
+        echo "Error: No main agent selected."
+        echo "Run 'agentic-team --setup AR_MAIN_AGENT=NAME' or pass '--main-agent NAME'."
+        exit 1
+    fi
+}
+
 resolve_main_agent_metadata() {
-    local main_agent="${AR_MAIN_AGENT:-research-coordinator}" kind legacy_ownership
+    local main_agent="$AR_MAIN_AGENT" kind legacy_ownership
 
     if ! valid_agent_name "$main_agent"; then
         echo "Error: Invalid AR_MAIN_AGENT: $main_agent"
@@ -817,7 +850,7 @@ write_branch_guard_file() {
         printf 'branch=%s\n' "$AR_WORK_BRANCH"
         printf 'current_branch=%s\n' "$WORKSPACE_GIT_BRANCH"
         printf 'session_id=%s\n' "$AR_SESSION_ID"
-        printf 'main_agent=%s\n' "${AR_MAIN_AGENT:-research-coordinator}"
+        printf 'main_agent=%s\n' "$AR_MAIN_AGENT"
         printf 'user_id=%s\n' "${AR_USER_ID:-${USER:-user}}"
         printf 'host=%s\n' "$(hostname 2>/dev/null || printf unknown)"
         printf 'pid=%s\n' "$$"

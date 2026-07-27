@@ -91,6 +91,7 @@ def base_env(fake_bin: Path, tmp_path: Path) -> dict[str, str]:
     env["FAKE_PODMAN_LOG"] = str(tmp_path / "podman.log")
     env["FAKE_DOCKER_LOG"] = str(tmp_path / "docker.log")
     env["HOME"] = str(tmp_path / "home")
+    env["AR_MAIN_AGENT"] = "research-coordinator"
     env["AR_WORK_BRANCH"] = "kernel-search"
     env["AR_NOTES_AUTO_REFRESH"] = "false"
     env["AR_CAPABILITIES"] = "none"
@@ -201,6 +202,26 @@ def test_launcher_apply_defaults_keeps_real_auth_defaults(base_env: dict[str, st
     assert 'AR_AUTH_MODE="${AR_AUTH_MODE:-cli-tool}"' in opencode_adapter
 
 
+def test_launcher_without_arguments_shows_help_without_creating_workspace(
+    base_env: dict[str, str],
+) -> None:
+    home = Path(base_env["HOME"])
+    workspace = home.parent / f"{home.name}-at"
+
+    result = subprocess.run(
+        [str(AGENTIC_TEAM)],
+        cwd=home,
+        env=base_env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "agentic-team requires a project/workspace argument" in result.stderr
+    assert "Usage:" in result.stderr
+    assert not workspace.exists()
+
+
 def test_setup_opencode_reads_api_key_from_configured_env_var(base_env: dict[str, str], tmp_path: Path) -> None:
     opencode_adapter = (CLI_ADAPTER_DIR / "opencode.sh").read_text()
     assert 'local api_key_var="${AR_API_KEY_ENV:-OPENAI_API_KEY}"' in opencode_adapter
@@ -262,7 +283,7 @@ def test_setup_writes_config_to_xdg_config_home(base_env: dict[str, str], tmp_pa
     result = run(
         [str(FIRST_SETUP_SCRIPT)],
         {**base_env, "XDG_CONFIG_HOME": str(xdg_config_home)},
-        input="1\n1\n\n\n\n\n\n\n\n\n",
+        input="1\n1\n\n\n\n\n\n\n\ngeneral\n",
     )
 
     assert result.returncode == 0
@@ -270,7 +291,7 @@ def test_setup_writes_config_to_xdg_config_home(base_env: dict[str, str], tmp_pa
     assert config_path.exists()
     config_text = config_path.read_text()
     assert 'AR_ORG_NOTES_REPO=""' in config_text
-    assert 'AR_MAIN_AGENT="research-coordinator"' in config_text
+    assert 'AR_MAIN_AGENT="general"' in config_text
     assert not (Path(base_env["HOME"]) / ".config" / "agentic-team" / "config.sh").exists()
 
 

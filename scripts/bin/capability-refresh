@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 project_dir="."
-agent_type="${AR_MAIN_AGENT:-research-coordinator}"
+agent_type="${AR_MAIN_AGENT:-}"
 cli="${AR_CLI:-codex}"
 instruction_path=""
 
@@ -61,6 +61,11 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -z "$agent_type" ]]; then
+    echo "capability-refresh: --agent-type or AR_MAIN_AGENT is required" >&2
+    exit 2
+fi
 
 default_instruction_path() {
     case "$cli" in
