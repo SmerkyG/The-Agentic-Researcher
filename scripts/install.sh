@@ -280,6 +280,8 @@ EOF
 install_symlink() {
     local target="$INSTALL_DIR/agentic-team"
     local link_path="$BIN_DIR/agentic-team"
+    local client_target="$INSTALL_DIR/scripts/bin/agentic-team-client"
+    local client_link_path="$BIN_DIR/agentic-team-client"
 
     mkdir -p "$BIN_DIR"
 
@@ -294,9 +296,20 @@ install_symlink() {
 
     chmod +x "$target"
     ln -s "$target" "$link_path"
+    chmod +x "$client_target"
+    if [[ -L "$client_link_path" || -e "$client_link_path" ]]; then
+        if [[ "$FORCE" != "true" ]]; then
+            echo "Error: Client dispatcher already exists: $client_link_path" >&2
+            rm -f "$link_path"
+            exit 1
+        fi
+        rm -f "$client_link_path"
+    fi
+    ln -s "$client_target" "$client_link_path"
 
     echo "Installed:"
     echo "  $link_path -> $target"
+    echo "  $client_link_path -> $client_target"
 }
 
 print_path_hint() {

@@ -146,15 +146,17 @@ This preserves the boundary:
 
 ## MCP Protocol
 
-Agentic Team registers the local `agentic_workflows` STDIO MCP server in the
-launch configuration for Codex, Claude, Gemini, OpenCode, and Pi. Pi uses the
-configured `pi-mcp-extension` bridge. Registrations preserve the Agentic Team
-runtime environment, including `AR_WORKFLOW_PATH`, `AR_TOOL_PATH`,
-state/worktree and artifact locations, configured storage caches, and
-user-supplied execution variables. Codex names these explicitly through its
-`env_vars` setting; the other local stdio transports inherit the prepared CLI
-environment. `AR_WORKFLOW_PATH` is the authoritative workflow registry; the
-server must not search an installation to guess missing package roots.
+Agentic Team registers an `agentic_workflows` STDIO MCP endpoint for Codex,
+Claude, Gemini, OpenCode, and Pi. The endpoint is the generic
+`agentic-team-client exec-workflow-mcp` dispatcher, not a work-specific server
+command. It resolves the current project against the user's external context
+registry, restores that work entry's environment, and then executes the real
+workflow server recorded in the manifest. Pi uses the configured
+`pi-mcp-extension` bridge. The manifest preserves `AR_WORKFLOW_PATH`,
+`AR_TOOL_PATH`, state/worktree and artifact locations, configured storage
+caches, and user-supplied execution variables. `AR_WORKFLOW_PATH` remains the
+authoritative workflow registry; the server must not search an installation to
+guess missing package roots.
 
 Rendered instructions call `start_workflow` with the exact implementation
 reference and typed inputs:

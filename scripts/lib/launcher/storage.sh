@@ -119,16 +119,15 @@ setup_storage() {
         [[ -n "${TRITON_CACHE_DIR:-}" ]] && register_storage_dir TRITON_CACHE_DIR "$TRITON_CACHE_DIR"
         [[ -n "${WANDB_DIR:-}" ]] && register_storage_dir WANDB_DIR "$WANDB_DIR"
         register_configured_storage_dirs
-        return
+    else
+        register_storage_dir UV_CACHE_DIR "${UV_CACHE_DIR:-$STATE_ROOT/uv/cache}" /uv-cache
+        register_storage_dir UV_PYTHON_INSTALL_DIR "${UV_PYTHON_INSTALL_DIR:-$STATE_ROOT/uv/python}" /uv-python
+        register_storage_dir UV_TOOL_DIR "${UV_TOOL_DIR:-$STATE_ROOT/uv/tools}" /uv-tools
+        register_storage_dir HF_HOME "${HF_HOME:-$STATE_ROOT/hf_home}"
+        register_storage_dir TRITON_CACHE_DIR "${TRITON_CACHE_DIR:-$STATE_ROOT/triton_cache}"
+        register_storage_dir WANDB_DIR "${WANDB_DIR:-$STATE_ROOT/wandb}"
+        register_configured_storage_dirs
     fi
-
-    register_storage_dir UV_CACHE_DIR "${UV_CACHE_DIR:-$STATE_ROOT/uv/cache}" /uv-cache
-    register_storage_dir UV_PYTHON_INSTALL_DIR "${UV_PYTHON_INSTALL_DIR:-$STATE_ROOT/uv/python}" /uv-python
-    register_storage_dir UV_TOOL_DIR "${UV_TOOL_DIR:-$STATE_ROOT/uv/tools}" /uv-tools
-    register_storage_dir HF_HOME "${HF_HOME:-$STATE_ROOT/hf_home}"
-    register_storage_dir TRITON_CACHE_DIR "${TRITON_CACHE_DIR:-$STATE_ROOT/triton_cache}"
-    register_storage_dir WANDB_DIR "${WANDB_DIR:-$STATE_ROOT/wandb}"
-    register_configured_storage_dirs
 
     AR_CONFIG_STORE="$STATE_ROOT/agentic-team-config"
     mkdir -p "$AR_CONFIG_STORE"

@@ -52,6 +52,10 @@ def at_launch_args(workspace: Path, work_name: str = "kernel-search", source_ref
     ]
 
 
+def client_dir(workspace: Path, client: str, work_name: str = "kernel-search") -> Path:
+    return workspace.parent / f"{workspace.name}-at" / work_name / "client" / client
+
+
 @pytest.fixture
 def fake_bin(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
@@ -91,6 +95,7 @@ def base_env(fake_bin: Path, tmp_path: Path) -> dict[str, str]:
     env["FAKE_PODMAN_LOG"] = str(tmp_path / "podman.log")
     env["FAKE_DOCKER_LOG"] = str(tmp_path / "docker.log")
     env["HOME"] = str(tmp_path / "home")
+    env.pop("CODEX_HOME", None)
     env["AR_MAIN_AGENT"] = "research-coordinator"
     env["AR_WORK_BRANCH"] = "kernel-search"
     env["AR_NOTES_AUTO_REFRESH"] = "false"
@@ -488,7 +493,8 @@ def test_launcher_native_runs_host_cli__without_container(
     assert "mcp_servers.agentic_tools" not in cli__log_text
     assert "agentic-tools-mcp" not in cli__log_text
     assert "mcp_servers.agentic_workflows.command=" in cli__log_text
-    assert "imperative-workflows-mcp" in cli__log_text
+    assert "agentic-team-client" in cli__log_text
+    assert "exec-workflow-mcp" in cli__log_text
     assert "mcp_servers.agentic_workflows.env_vars=" in cli__log_text
     assert '"AR_TOOL_PATH"' in cli__log_text
     assert '"AR_WORKFLOW_PATH"' in cli__log_text
@@ -520,17 +526,16 @@ def test_launcher_native_runs_host_cli__without_container(
     )
     assert "Do not invoke `imperative-workflows-callback` through a shell" in codex_agent_text
     assert not (workspace / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
-    codex_hook = workspace / ".codex" / "hooks" / "agentic-team-compaction.py"
-    assert codex_hook.exists()
+    context_path = client_dir(workspace, "codex") / "context.json"
+    context = json.loads(context_path.read_text())
+    assert context["project_dir"] == str(workspace)
+    assert context["client"] == "codex"
+    assert context["commands"]["workflow_mcp"].endswith("imperative-workflows-mcp")
+    assert context["environment"]["AR_CLIENT_CONTEXT"] == str(context_path)
     assert not (workspace / ".agents" / "hooks" / "agentic-team-compaction-refresh.py").exists()
-    codex_hook_text = codex_hook.read_text()
-    assert "You have just experienced context compaction" in codex_hook_text
-    assert "since the last compaction" in codex_hook_text
-    assert "run_refresh" in codex_hook_text
-    codex_steering_hook = workspace / ".codex" / "hooks" / "agentic-team-steering.py"
-    assert codex_steering_hook.exists()
-    assert "steering-message" in codex_steering_hook.read_text()
-    codex_hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
+    assert not (workspace / ".codex" / "hooks").exists()
+    assert not (workspace / ".codex" / "hooks.json").exists()
+    codex_hooks = json.loads((Path(native_env["HOME"]) / ".codex" / "hooks.json").read_text())
     post_compact_hook = codex_hooks["hooks"]["PostCompact"][0]
     post_compact_command = post_compact_hook["hooks"][0]["command"]
     post_tool_hook = codex_hooks["hooks"]["PostToolUse"][0]
@@ -539,14 +544,9 @@ def test_launcher_native_runs_host_cli__without_container(
     assert post_tool_hook["matcher"] == "*"
     assert codex_hooks["hooks"]["UserPromptSubmit"] == []
     assert not codex_hooks["hooks"]["SessionStart"]
-    assert "agentic-team-compaction.py" in post_compact_command
-    assert "post-compact" in post_compact_command
-    assert "capability-refresh" in post_compact_command
-    assert "agentic-team-steering.py" in post_tool_command
+    assert "agentic-team-client hook codex-post-compact --client codex" == post_compact_command
+    assert "agentic-team-client hook codex-post-tool --client codex" == post_tool_command
     assert "codex-post-tool" in post_tool_command
-    assert "agentic-notes" in post_tool_command
-    assert str(workspace / "AGENTS.md") in post_compact_command
-    assert str(workspace) in post_compact_command
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
@@ -784,7 +784,7 @@ def test_launcher_codex_continue_translates_to_resume_last(
     assert cli_args_line.endswith(" resume --last")
 
 
-def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
+def test_launcher_preserves_existing_project_hooks_and_registers_global_hooks(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-existing-hooks"
@@ -823,16 +823,11 @@ def test_launcher_compaction_hook_merge_preserves_existing_project_hooks(
     assert result_again.returncode == 0
     hooks = json.loads((workspace / ".codex" / "hooks.json").read_text())
     assert hooks["hooks"]["Stop"][0]["hooks"][0]["command"] == "printf existing"
-    event_hooks = hooks["hooks"]["PostCompact"]
-    commands = [hook["command"] for group in event_hooks for hook in group["hooks"]]
-    managed_commands = [cmd for cmd in commands if "agentic-team-compaction.py" in cmd]
-    assert len(managed_commands) == 1
-    steering_hooks = hooks["hooks"]["PostToolUse"]
-    steering_commands = [hook["command"] for group in steering_hooks for hook in group["hooks"]]
-    managed_steering_commands = [cmd for cmd in steering_commands if "agentic-team-steering.py" in cmd]
-    assert len(managed_steering_commands) == 1
-    assert hooks["hooks"]["UserPromptSubmit"] == []
-    assert not hooks["hooks"]["SessionStart"]
+    assert "PostCompact" not in hooks["hooks"]
+    assert "PostToolUse" not in hooks["hooks"]
+    global_hooks = json.loads((Path(env["HOME"]) / ".codex" / "hooks.json").read_text())
+    assert len(global_hooks["hooks"]["PostCompact"]) == 1
+    assert len(global_hooks["hooks"]["PostToolUse"]) == 1
 
 
 def test_build_command_rejects_none_sandbox(base_env: dict[str, str]) -> None:
@@ -1042,21 +1037,18 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
     claude_args = claude_log.read_text()
     assert "--mcp-config" in claude_args
     assert "agentic_workflows" in claude_args
-    assert "imperative-workflows-mcp" in claude_args
-    claude_hook = workspace / ".claude" / "hooks" / "agentic-team-compaction.py"
-    assert claude_hook.exists()
+    assert "agentic-team-client" in claude_args
+    assert "exec-workflow-mcp" in claude_args
+    settings_path = client_dir(workspace, "claude") / "settings.json"
+    assert f"--settings {settings_path}" in claude_args
     assert not (workspace / ".agents" / "hooks" / "agentic-team-compaction-refresh.py").exists()
-    claude_hook_text = claude_hook.read_text()
-    assert "You have just experienced context compaction" in claude_hook_text
-    assert "since the last compaction" in claude_hook_text
-    assert "run_refresh" in claude_hook_text
-    claude_settings = json.loads((workspace / ".claude" / "settings.local.json").read_text())
+    assert not (workspace / ".claude" / "hooks").exists()
+    assert not (workspace / ".claude" / "settings.local.json").exists()
+    claude_settings = json.loads(settings_path.read_text())
     claude_command = claude_settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
     assert claude_settings["hooks"]["SessionStart"][0]["matcher"] == "compact"
-    assert "agentic-team-compaction.py" in claude_command
-    assert "capability-refresh" in claude_command
-    assert str(workspace / "CLAUDE.md") in claude_command
-    assert str(workspace) in claude_command
+    assert "agentic-team-client" in claude_command
+    assert "hook claude-compact --client claude" in claude_command
 
 
 def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
@@ -1088,21 +1080,16 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     assert "codex_reasoning_effort" not in gemini_agent.read_text()
     assert "## Callback-Managed Imperative Workflow" in gemini_agent.read_text()
     assert not (workspace / ".agents" / "skills" / "cluster-run" / "SKILL.md").exists()
-    gemini_hook = workspace / ".gemini" / "hooks" / "agentic-team-compaction.py"
-    assert gemini_hook.exists()
     assert not (workspace / ".agents" / "hooks" / "agentic-team-compaction-refresh.py").exists()
-    gemini_hook_text = gemini_hook.read_text()
-    assert "You have just experienced context compaction" in gemini_hook_text
-    assert "since the last compaction" in gemini_hook_text
-    assert "run_refresh" in gemini_hook_text
-    gemini_steering_hook = workspace / ".gemini" / "hooks" / "agentic-team-steering.py"
-    assert gemini_steering_hook.exists()
-    assert "steering-message" in gemini_steering_hook.read_text()
-    gemini_settings = json.loads((workspace / ".gemini" / "settings.json").read_text())
+    assert not (workspace / ".gemini" / "hooks").exists()
+    assert not (workspace / ".gemini" / "settings.json").exists()
+    settings_path = client_dir(workspace, "gemini") / "settings.json"
+    gemini_settings = json.loads(settings_path.read_text())
     assert "agentic_tools" not in gemini_settings["mcpServers"]
-    assert gemini_settings["mcpServers"]["agentic_workflows"]["command"].endswith(
-        "/imperative-workflows-mcp"
-    )
+    assert gemini_settings["mcpServers"]["agentic_workflows"]["command"].endswith("agentic-team-client")
+    assert gemini_settings["mcpServers"]["agentic_workflows"]["args"] == [
+        "exec-workflow-mcp", "--client", "gemini"
+    ]
     precompress_command = gemini_settings["hooks"]["PreCompress"][0]["hooks"][0]["command"]
     before_model_commands = [
         hook["command"]
@@ -1110,13 +1097,9 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
         for hook in group["hooks"]
     ]
     before_model_command = before_model_commands[0]
-    assert "agentic-team-compaction.py' mark" in precompress_command
-    assert "agentic-team-compaction.py' inject" in before_model_command
-    assert any("agentic-team-steering.py" in command and "gemini-before-model" in command for command in before_model_commands)
-    assert "capability-refresh" in precompress_command
-    assert "capability-refresh" in before_model_command
-    assert str(workspace / "GEMINI.md") in precompress_command
-    assert str(workspace / "GEMINI.md") in before_model_command
+    assert "hook gemini-mark --client gemini" in precompress_command
+    assert "hook gemini-inject --client gemini" in before_model_command
+    assert any("hook gemini-steering --client gemini" in command for command in before_model_commands)
 
 
 def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
@@ -1150,7 +1133,7 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     assert "codex_reasoning_effort" not in opencode_agent_text
     assert "## Callback-Managed Imperative Workflow" in opencode_agent_text
     assert not (workspace / ".agents" / "skills" / "cluster-run" / "SKILL.md").exists()
-    opencode_plugin = workspace / ".opencode" / "plugins" / "agentic-team-compaction.ts"
+    opencode_plugin = client_dir(workspace, "opencode") / "plugins" / "agentic-team-compaction.ts"
     assert opencode_plugin.exists()
     opencode_plugin_text = opencode_plugin.read_text()
     assert "experimental.session.compacting" in opencode_plugin_text
@@ -1159,11 +1142,15 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     assert "execFileSync" in opencode_plugin_text
     assert "capability-refresh" in opencode_plugin_text
     assert str(workspace / "AGENTS.md") in opencode_plugin_text
-    opencode_settings = json.loads((workspace / "opencode.json").read_text())
+    assert not (workspace / "opencode.json").exists()
+    opencode_settings = json.loads((client_dir(workspace, "opencode") / "opencode.json").read_text())
     assert "agentic_tools" not in opencode_settings["mcp"]
     assert opencode_settings["mcp"]["agentic_workflows"]["command"][0].endswith(
-        "/imperative-workflows-mcp"
+        "/agentic-team-client"
     )
+    assert opencode_settings["mcp"]["agentic_workflows"]["command"][1:] == [
+        "exec-workflow-mcp", "--client", "opencode"
+    ]
 
 
 def test_install_script_auto_detects_podman_when_docker_is_absent(
@@ -1224,8 +1211,97 @@ def test_install_script_accepts_native_runtime(base_env: dict[str, str], tmp_pat
     assert 'AR_SANDBOX="none"' in config_text
     assert 'AR_CAPABILITIES="agentic-notes,experiment-log"' in config_text
     assert 'AR_AUTO_BUILD="true"' in config_text
+    assert (bin_dir / "agentic-team-client").is_symlink()
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
+
+
+def test_prepare_codex_client_registers_context_without_launching_session(
+    base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "ws-prepare-codex"
+    init_work_branch_workspace(workspace)
+    codex_log = tmp_path / "prepare-codex.log"
+    make_executable(
+        fake_bin / "codex",
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"${FAKE_CODEX_LOG:?}\"\n",
+    )
+    env = {**base_env, "FAKE_CODEX_LOG": str(codex_log)}
+
+    result = run(
+        [
+            str(AGENTIC_TEAM),
+            "--prepare-client",
+            "--cli", "codex",
+            *at_launch_args(workspace),
+        ],
+        env,
+    )
+
+    assert result.returncode == 0
+    assert "Starting Codex CLI" not in result.stdout
+    context_path = client_dir(workspace, "codex") / "context.json"
+    launcher_path = client_dir(workspace, "codex") / "launch"
+    assert f"Prepared codex client context: {context_path}" in result.stdout
+    assert context_path.is_file()
+    assert os.access(launcher_path, os.X_OK)
+    launcher_text = launcher_path.read_text()
+    assert "agentic-team-client exec" in launcher_text
+    assert f"--manifest {context_path}" in launcher_text
+    calls = codex_log.read_text().splitlines()
+    assert calls[0] == "mcp remove agentic_workflows"
+    assert calls[1].startswith("mcp add agentic_workflows -- ")
+    assert "exec-workflow-mcp --client codex" in calls[1]
+
+
+@pytest.mark.parametrize("client", ["claude", "gemini", "opencode", "pi"])
+def test_prepared_client_launcher_restores_external_context(
+    client: str, base_env: dict[str, str], fake_bin: Path, tmp_path: Path
+) -> None:
+    workspace = tmp_path / f"ws-prepare-{client}"
+    init_work_branch_workspace(workspace)
+    client_log = tmp_path / f"prepare-{client}.log"
+    make_executable(
+        fake_bin / client,
+        "#!/bin/sh\n"
+        "printf 'cwd:%s\\n' \"$PWD\" >> \"${FAKE_CLIENT_LOG:?}\"\n"
+        "printf 'args:%s\\n' \"$*\" >> \"${FAKE_CLIENT_LOG:?}\"\n"
+        "printf 'gemini:%s\\n' \"${GEMINI_CLI_SYSTEM_SETTINGS_PATH-}\" >> \"${FAKE_CLIENT_LOG:?}\"\n"
+        "printf 'opencode:%s\\n' \"${OPENCODE_CONFIG-}\" >> \"${FAKE_CLIENT_LOG:?}\"\n",
+    )
+    env = {**base_env, "FAKE_CLIENT_LOG": str(client_log)}
+
+    prepared = run(
+        [
+            str(AGENTIC_TEAM),
+            "--prepare-client",
+            "--cli", client,
+            *at_launch_args(workspace),
+        ],
+        env,
+    )
+    assert prepared.returncode == 0, prepared.stderr
+    external = client_dir(workspace, client)
+    context = json.loads((external / "context.json").read_text())
+    launched = subprocess.run(
+        [str(external / "launch")],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert launched.returncode == 0, launched.stderr
+    log = client_log.read_text()
+    assert f"cwd:{workspace}" in log
+    if client == "gemini":
+        assert f"gemini:{external / 'settings.json'}" in log
+        assert context["environment"]["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] == str(
+            external / "settings.json"
+        )
+    if client == "opencode":
+        assert f"opencode:{external / 'opencode.json'}" in log
+        assert context["environment"]["OPENCODE_CONFIG"] == str(
+            external / "opencode.json"
+        )
 
 
 # ── pi (@earendil-works/pi-coding-agent) CLI-tool support ────────────────
@@ -1254,7 +1330,7 @@ def test_launcher_podman_runs_pi_cli_(base_env: dict[str, str], tmp_path: Path) 
     for skill in ("do_research", "retro"):
         assert (workspace / ".agents" / "skills" / skill / "SKILL.md").exists()
     assert not (workspace / ".agents" / "skills" / "experiment_log" / "SKILL.md").exists()
-    pi_extension = workspace / ".pi" / "extensions" / "agentic-team-compaction.ts"
+    pi_extension = client_dir(workspace, "pi") / "extensions" / "agentic-team-compaction.ts"
     assert pi_extension.exists()
     assert not (workspace / ".agents" / "hooks" / "agentic-team-compaction-refresh.py").exists()
     pi_extension_text = pi_extension.read_text()
@@ -1264,11 +1340,13 @@ def test_launcher_podman_runs_pi_cli_(base_env: dict[str, str], tmp_path: Path) 
     assert "execFileSync" in pi_extension_text
     assert "capability-refresh" in pi_extension_text
     assert "/workspace/AGENTS.md" in pi_extension_text
-    pi_mcp = json.loads((workspace / ".pi" / "mcp.json").read_text())
+    assert not (workspace / ".pi" / "mcp.json").exists()
+    pi_mcp = json.loads((Path(base_env["HOME"]) / ".pi" / "agent" / "mcp.json").read_text())
     assert "agentic_tools" not in pi_mcp["mcpServers"]
-    assert pi_mcp["mcpServers"]["agentic_workflows"]["command"] == (
-        "/opt/agentic-team/capabilities/imperative-workflows/bin/imperative-workflows-mcp"
-    )
+    assert pi_mcp["mcpServers"]["agentic_workflows"]["command"] == "agentic-team-client"
+    assert pi_mcp["mcpServers"]["agentic_workflows"]["args"] == [
+        "exec-workflow-mcp", "--client", "pi"
+    ]
     pi_research_skill = workspace / ".agents" / "skills" / "do_research" / "SKILL.md"
     assert "## Callback-Managed Skill" in pi_research_skill.read_text()
     assert "npm:pi-mcp-extension@1.5.0" in podman_log
@@ -1301,7 +1379,8 @@ def test_pi_translates_resume_to_session_and_warns_on_yolo(
     assert "--session ABC123" in result.stdout
     # --debug-launch enables pi's verbose startup.
     assert "--verbose" in result.stdout
-    assert "-e /workspace/.pi/extensions/agentic-team-compaction.ts" in result.stdout
+    assert "agentic-team-compaction.ts" in result.stdout
+    assert "/client/pi/extensions/" in result.stdout
     assert "-e npm:pi-mcp-extension@1.5.0" in result.stdout
     # pi has no permission system, so --yolo is a no-op with a warning.
     assert "--yolo has no effect in pi mode" in result.stdout

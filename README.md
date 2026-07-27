@@ -184,6 +184,9 @@ agentic-team --sandbox none --cli codex ~/my-project-at research-main
 # Materialize AGENTS.md/CLAUDE.md/GEMINI.md and managed subagent files without launching a CLI
 agentic-team --render-only --cli codex ~/my-project-at research-main
 
+# Prepare this work entry for a separately launched CLI or the Codex desktop app
+agentic-team --prepare-client --cli codex ~/my-project-at research-main
+
 # Auto-approve all tool calls
 agentic-team --yolo ~/my-project-at research-main
 
@@ -333,7 +336,7 @@ See [docs/agentic-notes.md](docs/agentic-notes.md) for the notes layout and [doc
 | [Codex CLI](https://github.com/openai/codex) | `AGENTS.md` | OpenAI | `--cli codex` |
 | [pi](https://github.com/badlogic/pi-mono) | `AGENTS.md` | Any | `--cli pi` |
 
-At launch, Agentic Team also renders a project-local compaction hook for the selected CLI. After context compaction, the hook runs the configured capabilities, refreshes shared Agentic State under local locks, rematerializes the capability sections in the instruction file rendered for that exact invocation (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`), tells the continuing model that it has just experienced context compaction, treats that moment as the new "since the last compaction" boundary, asks it to read the refreshed instruction file, and then resumes the task it was already doing. In container mode the Agentic Team install is mounted read-only at `/opt/agentic-team`, while `AR_STATE_ROOT`, `AR_WORKSPACE_ROOT`, `AR_RUNTIME_ROOT`, and `AR_ARTIFACTS_DIR` are mounted read-write so the org checkout, project state branches, project runtime helpers, and shared project artifacts can be updated. Claude uses compact-session hooks, Codex uses `PostCompact`, Gemini uses `PreCompress` plus a one-shot `BeforeModel` refresh, OpenCode uses a compaction plugin, and pi uses a launch-specific extension.
+At launch, Agentic Team records a per-work client context outside the Git worktree and configures the selected CLI to resolve workflow servers and hooks through that context. After compaction, the hook refreshes shared Agentic State under local locks, rematerializes the instruction file for that invocation (`CLAUDE.md`, `GEMINI.md`, or `AGENTS.md`), tells the continuing model that compaction occurred, and resumes the existing task. Mutable hook, MCP, and launch configuration lives under the AT work entry or the user's CLI/config directory; only the CLIs' unavoidable instruction, skill, and subagent discovery files are materialized in the code worktree and locally excluded from Git. See [External client contexts](docs/external-client-contexts.md).
 
 ## Architecture
 

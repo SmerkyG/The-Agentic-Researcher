@@ -149,6 +149,7 @@ apply_defaults() {
 YOLO_MODE=false
 TEST_MODE=false
 RENDER_ONLY=false
+PREPARE_CLIENT=false
 REFRESH_CAPABILITIES=false
 MODEL_SPECIFIED=false
 DEBUG_LAUNCH=false
@@ -214,6 +215,11 @@ parse_arguments() {
                 ;;
             --render-only)
                 RENDER_ONLY=true
+                shift
+                ;;
+            --prepare-client)
+                PREPARE_CLIENT=true
+                AR_SANDBOX_OVERRIDE=none
                 shift
                 ;;
             --refresh-capabilities)
@@ -392,6 +398,14 @@ parse_arguments() {
         echo "Error: --refresh-capabilities requires --render-only"
         exit 1
     fi
+    if [[ "$PREPARE_CLIENT" == "true" && "$RENDER_ONLY" == "true" ]]; then
+        echo "Error: --prepare-client and --render-only are separate modes"
+        exit 1
+    fi
+    if [[ "$PREPARE_CLIENT" == "true" && "$TEST_MODE" == "true" ]]; then
+        echo "Error: --prepare-client cannot be combined with --test"
+        exit 1
+    fi
 }
 
 show_help() {
@@ -413,6 +427,7 @@ Options:
   --sandbox NAME      Sandbox for this invocation ($sandbox_options)
   --test              Quick validation of sandbox environment
   --render-only       Materialize instruction, skill, and agent files, then exit
+  --prepare-client    Prepare an external client context and launcher, then exit
   --refresh-capabilities
                       With --render-only, run capability refresh hooks before rendering
   --capability NAME   Enable a capability from capabilities/ (repeatable)
@@ -434,30 +449,31 @@ Options:
   CLI_OPTIONS         Additional options passed to the selected CLI
 
 Examples:
-  agentic-team --sandbox none
-  agentic-team --capability cluster-run
-  agentic-team --sandbox apptainer --capability remote-run
-  agentic-team --sandbox apptainer --capability remote-run --test
-  agentic-team --main-agent research-paper-author
+  agentic-team --sandbox none ~/my-project-at research-main
+  agentic-team --capability cluster-run ~/my-project-at research-main
+  agentic-team --sandbox apptainer --capability remote-run ~/my-project-at research-main
+  agentic-team --sandbox apptainer --capability remote-run --test ~/my-project-at research-main
+  agentic-team --main-agent research-paper-author ~/my-project-at paper
   agentic-team --setup                      # Setup wizard
   agentic-team --clean                      # Interactive cleanup of local state
   agentic-team --uninstall                  # Remove installed launcher
   agentic-team --clean --yes --include-config
-  agentic-team --test
-  agentic-team --render-only --cli codex
-  agentic-team --render-only --refresh-capabilities --cli codex
-  agentic-team --cli opencode --debug-launch
+  agentic-team --test ~/my-project-at research-main
+  agentic-team --render-only --cli codex ~/my-project-at research-main
+  agentic-team --render-only --refresh-capabilities --cli codex ~/my-project-at research-main
+  agentic-team --prepare-client --cli codex ~/my-project-at research-main
+  agentic-team --cli opencode --debug-launch ~/my-project-at research-main
   agentic-team ~/my-project
   agentic-team ~/my-project-at research-main
   agentic-team ~/my-project-at research-main --from main --project-dir ~/my-project
   agentic-team ~/my-project-at kdtree-bounds --from research-main
   agentic-team ~/my-project-at kdtree-bounds --from research-main --state clean
   agentic-team --worktree-path ~/my-project-at/research-main/code
-  agentic-team --yolo
-  agentic-team --cli gemini
+  agentic-team --yolo ~/my-project-at research-main
+  agentic-team --cli gemini ~/my-project-at research-main
   agentic-team --cli codex --worktree-path ~/my-project-at/research-main/code
-  agentic-team --yolo --model opus
-  agentic-team --work-branch feature/kernel-search
+  agentic-team --yolo --model opus ~/my-project-at research-main
+  agentic-team --work-branch feature/kernel-search ~/my-project-at research-main
 
 What's Sandboxed:
   The agent can write your project directory, AR_ARTIFACTS_DIR, AR_WORKSPACE_ROOT, AR_RUNTIME_ROOT, and AR_STATE_ROOT.

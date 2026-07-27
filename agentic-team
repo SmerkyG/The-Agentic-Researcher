@@ -53,6 +53,7 @@ source "$LAUNCHER_LIB_DIR/utils.sh"
 source "$LAUNCHER_LIB_DIR/capabilities.sh"
 source "$LAUNCHER_LIB_DIR/hooks.sh"
 source "$LAUNCHER_LIB_DIR/launch-env.sh"
+source "$LAUNCHER_LIB_DIR/client-context.sh"
 
 
 main() {
@@ -83,12 +84,12 @@ main() {
     fi
     profile_step "resolve_main_agent_metadata" resolve_main_agent_metadata
     profile_step "prepare_work_branch" prepare_work_branch
-    if [[ "$RENDER_ONLY" != "true" ]]; then
+    if [[ "$RENDER_ONLY" != "true" && "$PREPARE_CLIENT" != "true" ]]; then
         profile_step "validate_api_key" validate_api_key
     fi
     profile_step "resolve_capabilities" resolve_capabilities
     profile_step "validate_capabilities" validate_capabilities
-    if [[ "$RENDER_ONLY" != "true" ]]; then
+    if [[ "$RENDER_ONLY" != "true" && "$PREPARE_CLIENT" != "true" ]]; then
         profile_step "capability preflight hooks" run_capability_launcher_hooks preflight
         profile_step "ensure_container_image" ensure_container_image
         profile_step "validate_container" validate_container
@@ -100,10 +101,14 @@ main() {
     fi
     profile_step "setup_instruction_target" setup_instruction_target
     if [[ "$RENDER_ONLY" != "true" ]]; then
+        profile_step "setup_client_context" setup_client_context
+    fi
+    if [[ "$RENDER_ONLY" != "true" ]]; then
         profile_step "setup_compaction_hooks" setup_compaction_hooks
         profile_step "setup_steering_hooks" setup_steering_hooks
         profile_step "setup_tool_transport" setup_tool_transport
         profile_step "write_hook_configs" flush_managed_hook_json
+        profile_step "cleanup_legacy_client_configuration" cli_call cleanup_legacy_client_configuration
         profile_step "translate_cli_args" translate_cli_args
         profile_step "setup_auth_binds" setup_auth_binds
         profile_step "setup_research_binds" setup_research_binds
@@ -125,6 +130,15 @@ main() {
     if [[ "$RENDER_ONLY" == "true" ]]; then
         profile_elapsed "startup setup total" "$startup_start_us"
         echo "Rendered instruction file: $WORKSPACE_DIR/$INSTRUCTION_TARGET"
+        exit 0
+    fi
+    if [[ "$PREPARE_CLIENT" == "true" ]]; then
+        profile_step "prepare_external_client" cli_call prepare_external_client
+        local prepared_launcher
+        prepared_launcher="$(write_prepared_client_launcher)"
+        profile_elapsed "client preparation total" "$startup_start_us"
+        echo "Prepared $AR_CLI client context: $AR_CLIENT_CONTEXT"
+        echo "Prepared launcher: $prepared_launcher"
         exit 0
     fi
     profile_step "setup_capability_refresh_loops" setup_capability_refresh_loops

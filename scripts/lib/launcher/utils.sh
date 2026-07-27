@@ -208,6 +208,10 @@ ar_agent_context_env_pairs() {
     printf 'AR_USER_ID=%s\n' "${AR_USER_ID:-$USER}"
     printf 'AR_PROJECT_STATE_DIR=%s\n' "${AR_PROJECT_STATE_DIR:-}"
     printf 'AR_WORK_STATE_DIR=%s\n' "${AR_WORK_STATE_DIR:-}"
+    printf 'AR_CLIENT_ROOT=%s\n' "${AR_CLIENT_ROOT:-}"
+    printf 'AR_CLIENT_DIR=%s\n' "${AR_CLIENT_DIR:-}"
+    printf 'AR_CLIENT_CONTEXT=%s\n' "${AR_CLIENT_CONTEXT:-}"
+    printf 'AR_CLIENT_CONTEXT_REGISTRY=%s\n' "${AR_CLIENT_CONTEXT_REGISTRY:-}"
 }
 
 ar_capability_config_env_pairs() {

@@ -60,6 +60,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 LINK_PATH="$BIN_DIR/agentic-team"
+CLIENT_LINK_PATH="$BIN_DIR/agentic-team-client"
 
 if [[ -L "$LINK_PATH" ]]; then
     link_target="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$LINK_PATH")"
@@ -97,6 +98,13 @@ if [[ -L "$LINK_PATH" || -e "$LINK_PATH" ]]; then
     echo "Removed launcher: $LINK_PATH"
 else
     echo "Launcher not present: $LINK_PATH"
+fi
+
+if [[ -L "$CLIENT_LINK_PATH" ]]; then
+    rm -f "$CLIENT_LINK_PATH"
+    echo "Removed client dispatcher: $CLIENT_LINK_PATH"
+elif [[ -e "$CLIENT_LINK_PATH" ]]; then
+    echo "Preserving non-symlink client dispatcher: $CLIENT_LINK_PATH"
 fi
 
 if [[ -d "$INSTALL_DIR" ]]; then
