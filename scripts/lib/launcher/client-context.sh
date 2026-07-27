@@ -86,3 +86,36 @@ write_prepared_client_launcher() {
     chmod +x "$launch_path"
     printf '%s\n' "$launch_path"
 }
+
+print_prepared_client_location() {
+    local host user
+
+    host="$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)"
+    user="${USER:-$(id -un 2>/dev/null || true)}"
+    printf 'Client working directory: %s\n' "$WORKSPACE_DIR"
+    if [[ -n "$host" && -n "$user" ]]; then
+        printf 'SSH project location: %s@%s:%s\n' "$user" "$host" "$WORKSPACE_DIR"
+    elif [[ -n "$host" ]]; then
+        printf 'SSH project location: %s:%s\n' "$host" "$WORKSPACE_DIR"
+    fi
+}
+
+append_prepared_client_command_catalog() {
+    local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
+
+    [[ "$PREPARE_CLIENT" == "true" ]] || return 0
+    [[ -f "$instruction_path" ]] || return 0
+
+    cat >> "$instruction_path" <<EOF
+
+## External Client Commands
+
+This instruction file was prepared for a separately connected client. Its
+ordinary shell may not inherit Agentic Team's capability \`PATH\`. Run every
+Agentic Team capability command through this complete prefix, replacing
+\`COMMAND [ARGS...]\` with the specific command and its arguments:
+
+\`agentic-team-client exec --client $AR_CLI -- COMMAND [ARGS...]\`
+
+EOF
+}

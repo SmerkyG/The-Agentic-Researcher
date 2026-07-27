@@ -1243,7 +1243,17 @@ def test_prepare_codex_client_registers_context_without_launching_session(
     context_path = client_dir(workspace, "codex") / "context.json"
     launcher_path = client_dir(workspace, "codex") / "launch"
     assert f"Prepared codex client context: {context_path}" in result.stdout
+    assert f"Client working directory: {workspace}" in result.stdout
+    assert f":{workspace}" in next(
+        line for line in result.stdout.splitlines() if line.startswith("SSH project location: ")
+    )
     assert context_path.is_file()
+    instruction_text = (workspace / "AGENTS.md").read_text()
+    assert "## External Client Commands" in instruction_text
+    assert "ordinary shell may not inherit Agentic Team's capability `PATH`" in instruction_text
+    assert "`agentic-team-client exec --client codex -- COMMAND [ARGS...]`" in instruction_text
+    assert "`branch-snapshot`:" not in instruction_text
+    assert str(REPO_ROOT / "capabilities/branch/bin/branch-snapshot") not in instruction_text
     assert os.access(launcher_path, os.X_OK)
     launcher_text = launcher_path.read_text()
     assert "agentic-team-client exec" in launcher_text

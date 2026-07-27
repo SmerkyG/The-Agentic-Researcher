@@ -11,7 +11,12 @@ agentic-team --prepare-client --cli codex ~/my-project-at research-main
 Preparation still renders the selected main-agent instructions, skills, and
 subagent definitions in the code worktree because each CLI discovers those at
 fixed project-relative paths. Agentic Team locally excludes generated files
-from Git. Mutable runtime configuration does **not** live there.
+from Git. For directly connected clients whose shell does not inherit the
+prepared `PATH`, the instruction file provides one generic
+`agentic-team-client exec --client <cli> -- COMMAND [ARGS...]` template. The
+agent substitutes whichever capability command it needs; the dispatcher
+restores the complete prepared environment. Mutable runtime configuration does
+**not** live in the code worktree.
 
 For each client, preparation writes:
 
@@ -41,8 +46,8 @@ registration can serve many projects and work entries. An explicit
 For Claude, Gemini, OpenCode, and pi, run the printed `.../client/<cli>/launch`
 path when starting outside the ordinary AT launcher. For Codex desktop, run
 preparation on the remote host after installing/updating Agentic Team, connect
-the app to that host, and open `~/my-project-at/research-main/code`. The global
-dispatcher resolves the correct work context from that directory.
+the app to the printed SSH host, and open the printed client working directory.
+The global dispatcher resolves the correct work context from that directory.
 
 Re-run preparation whenever the selected agent, capabilities, work paths, or
 Agentic Team installation changes. Normal `agentic-team` launches refresh the

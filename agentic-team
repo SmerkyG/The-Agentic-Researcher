@@ -122,6 +122,7 @@ main() {
     profile_step "setup_project_skills" setup_project_skills
     profile_step "setup_project_agents" setup_project_agents
     profile_step "render_instruction_document" render_instruction_document
+    profile_step "append_prepared_client_command_catalog" append_prepared_client_command_catalog
     if [[ -n "${INSTRUCTION_TARGET:-}" ]]; then
         profile_step "normalize_instruction_file" normalize_markdown_file "$WORKSPACE_DIR/$INSTRUCTION_TARGET"
     fi
@@ -139,6 +140,7 @@ main() {
         profile_elapsed "client preparation total" "$startup_start_us"
         echo "Prepared $AR_CLI client context: $AR_CLIENT_CONTEXT"
         echo "Prepared launcher: $prepared_launcher"
+        print_prepared_client_location
         exit 0
     fi
     profile_step "setup_capability_refresh_loops" setup_capability_refresh_loops

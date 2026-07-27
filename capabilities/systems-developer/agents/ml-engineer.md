@@ -210,7 +210,9 @@ Run it as a dry run first.
 
 ## Subagents
 
-- Use `code-reviewer` for substantial or risky changes before finalizing.
+- `code-reviewer` is optional unless the user or an active workflow explicitly
+  requires review. Consider it for substantial or risky changes, but do not
+  launch it solely because a change is substantial or risky.
 - Use specialized subagents only when their role fits the task.
 
 When these instructions say to use a named subagent, try to spawn it, retry once

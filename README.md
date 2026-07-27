@@ -209,6 +209,38 @@ agentic-team ~/my-project-at research-main --from main --project-dir ~/my-projec
 agentic-team --worktree-path ~/my-project-at/research-main/code
 ```
 
+### Codex desktop app over SSH
+
+You can keep the repository and compute environment on a remote Linux host
+while using the local Codex desktop app. First install and authenticate Codex
+and Agentic Team on the remote host. Then prepare the AT work entry there
+without launching a CLI:
+
+```bash
+agentic-team --prepare-client --cli codex \
+  --main-agent ml-engineer \
+  ~/my-project-at research-main
+```
+
+The command prints the SSH project location and the exact client working
+directory. In the desktop app, add the host under **Settings > Connections** as
+described in the official [SSH connection
+instructions](https://learn.chatgpt.com/docs/remote-connections#connect-to-an-ssh-host),
+then open the printed working directory as the remote project. The remote
+Codex process reads files and runs commands on that host; the generated
+`AGENTS.md` tells directly connected clients how to restore the prepared AT
+environment for capability commands.
+
+Codex loads `AGENTS.md` when it creates a chat, not again merely because the
+file changed. After every successful `--prepare-client` run that regenerates
+`AGENTS.md`, create a **new chat** in the already-open project. You may keep the
+project and desktop app open; do not continue the old chat when you need the
+new instructions to be authoritative. Restart the app only if a newly
+registered MCP server or hook still does not appear in a new chat.
+
+See [External client contexts](docs/external-client-contexts.md) for the files
+created outside the Git worktree and the behavior of the other supported CLIs.
+
 ### Required Workspace Layout
 
 Agentic Team uses a fixed AT workspace layout. Keep your normal checkout on the branch you use as the human integration point, usually `main`; Agentic Team creates sibling AT workspace entries for agent work:
