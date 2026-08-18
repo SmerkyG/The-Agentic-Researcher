@@ -44,7 +44,7 @@ A capability is one selected package. It may contain any combination of these pa
 Enable capabilities with:
 
 ```bash
-agentic-team --capability remote-run
+agentic-team -C ~/project-at run agent/experiment --capability remote-run
 ```
 
 Or configure the complete enabled list:

@@ -121,7 +121,7 @@ resume with every local and result in one assignments object.
 
 Ordinary Python values already exist while the request class is constructed and
 may be interpolated directly. For example,
-`step(f"Read the report from {workspace.state_dir}.")` emits the concrete path.
+`step(f"Read the report from {workspace.records_dir}.")` emits the concrete path.
 Model-produced `local()` and `result()` declarations do not exist yet, so their
 f-string placeholders emit backticked symbolic names.
 
@@ -150,7 +150,7 @@ Agentic Team registers an `agentic_workflows` STDIO MCP endpoint for Codex,
 Claude, Gemini, OpenCode, and Pi. The endpoint is the generic
 `agentic-team-client exec-workflow-mcp` dispatcher, not a work-specific server
 command. It resolves the current project against the user's external context
-registry, restores that work entry's environment, and then executes the real
+registry, restores that paired branch's environment, and then executes the real
 workflow server recorded in the manifest. Pi uses the configured
 `pi-mcp-extension` bridge. The manifest preserves `AR_WORKFLOW_PATH`,
 `AR_TOOL_PATH`, state/worktree and artifact locations, configured storage
@@ -289,12 +289,12 @@ durable research records.
 
 At coordinator startup, the package-native `FinalizationReconcileTool` scans
 the active work branch. A legacy or narrowly interrupted `committed` ticket is
-completed automatically only when the state branch already contains a
+completed automatically only when the records branch already contains a
 post-capture experiment record with the ticket's exact frozen code commit.
 Tickets that cannot be proven complete remain in `unresolved`; reconciliation
-never guesses or silently discards research state.
+never guesses or silently discards research records.
 
-Capture, readiness, state publication, terminal cleanup, status, and
+Capture, readiness, records publication, terminal cleanup, status, and
 reconciliation are Python tools under `research_finalization.tools`. Workflows
 invoke those classes directly in-process. The
 `research-coordinator-finalization` command is a JSON/YAML adapter over the

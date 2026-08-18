@@ -1,4 +1,4 @@
-"""Publish a prepared finalization state worktree."""
+"""Publish a prepared finalization records worktree."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 from agentic_tools import PythonTool
 from branch_tools.service import publish_branch_worktree
 
-from research_finalization.records import FinalizationStateCommitResult
+from research_finalization.records import FinalizationRecordsCommitResult
 from research_finalization.tools._state import (
     load_ticket,
     now_iso,
@@ -17,22 +17,22 @@ from research_finalization.tools._state import (
 )
 
 
-class FinalizationStateCommitTool(PythonTool[FinalizationStateCommitResult]):
-    """Publish the temporary research-state worktree to its branch."""
+class FinalizationRecordsCommitTool(PythonTool[FinalizationRecordsCommitResult]):
+    """Publish the temporary research-records worktree to its branch."""
 
     root: str
-    message: str = "work-state: finalize research result"
+    message: str = "branch-records: finalize research result"
 
-    def execute(self) -> FinalizationStateCommitResult:
+    def execute(self) -> FinalizationRecordsCommitResult:
         root, manifest = load_ticket(self.root)
         if safe_load_yaml(status_path(root)).get("state") != "active":
             raise ValueError("finalization must be active before state commit")
         try:
             result = publish_branch_worktree(
-                source_worktree=str(manifest["work_state_dir"]),
-                worktree=root / "state",
-                branch=str(manifest["state_branch"]),
-                base_commit=str(manifest["state_base_commit"]),
+                source_worktree=str(manifest["branch_records_dir"]),
+                worktree=root / "records",
+                branch=str(manifest["records_branch"]),
+                base_commit=str(manifest["records_base_commit"]),
                 message=self.message,
                 push=True,
             )
@@ -42,19 +42,19 @@ class FinalizationStateCommitTool(PythonTool[FinalizationStateCommitResult]):
         update_status(
             root,
             state="committed",
-            state_commit=result["commit"],
-            state_changed=result["changed"],
+            records_commit=result["commit"],
+            records_changed=result["changed"],
         )
-        return FinalizationStateCommitResult(
+        return FinalizationRecordsCommitResult(
             id=str(manifest["id"]),
             root=str(root),
             status_path=str(status_path(root)),
             code_branch=str(manifest["code_branch"]),
             code_commit=str(manifest["code_commit"]),
-            state_branch=str(manifest["state_branch"]),
+            records_branch=str(manifest["records_branch"]),
             state="committed",
-            state_dir=str(root / "state"),
-            state_base_commit=str(manifest["state_base_commit"]),
-            state_commit=str(result["commit"]),
-            state_changed=bool(result["changed"]),
+            records_dir=str(root / "records"),
+            records_base_commit=str(manifest["records_base_commit"]),
+            records_commit=str(result["commit"]),
+            records_changed=bool(result["changed"]),
         )

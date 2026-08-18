@@ -46,7 +46,7 @@ ensure_container_image() {
         echo "  $SCRIPT_DIR/container/build.sh --runtime $AR_SANDBOX"
         echo ""
         echo "Or use none mode:"
-        echo "  agentic-team --sandbox none ..."
+        echo "  agentic-team -C AT_DIR run BRANCH --sandbox none ..."
         exit 1
     fi
 

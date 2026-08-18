@@ -248,7 +248,7 @@ class ResearchCoordinator(UserFacingWorkflow[None]):
                         "finalization request for this completed result",
                         guidance=(
                             "Use explicit code paths, a focused commit message, non-redundant "
-                            "immutable-snapshot checks, and work-state-relative report asset paths. "
+                            "immutable-snapshot checks, and branch-records-relative report asset paths. "
                             "When code_paths is empty, use a null commit_message and empty checks. "
                             "For standard-library-only Python checks use `uv run --no-project "
                             "python ...`; use ordinary `uv run` only when project dependencies "

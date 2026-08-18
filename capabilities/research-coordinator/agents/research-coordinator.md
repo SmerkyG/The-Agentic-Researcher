@@ -103,7 +103,7 @@ run sequentially within one job or on the same local device.
 ## 3. Experiment Logging and Research Record
 
 The active work branch's Agentic Researcher experiment log is the durable append-only
-experiment ledger when available. It lives on the work state branch, not in
+experiment ledger when available. It lives on the branch records branch, not in
 the normal code worktree. The imperative workflow uses the structured
 experiment-log append and correction tools so the work-branch-local counter,
 per-experiment YAML file, and `SUMMARY.md` row are updated under the log's local
@@ -123,25 +123,25 @@ page is current. They are for derivations, methods, detailed analysis, figures,
 verification blocks, and selected result tables.
 
 Work-branch `TODO.md` is the mutable work-branch-local checklist. These files
-live at the root of branch `agentic/work-state/$AR_WORK_BRANCH`.
+live at the root of branch `agentic/branch-records/$AR_WORK_BRANCH`.
 
-Locate the work-state worktree with:
+Locate the branch records worktree with:
 
 ```bash
-WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"
+BRANCH_RECORDS_DIR="${AR_BRANCH_RECORDS_DIR:?}"
 ```
 
 Read work-branch records directly from that worktree:
 
 ```bash
-test -f "$WORK_STATE_DIR/condensed_report.md" && sed -n '1,180p' "$WORK_STATE_DIR/condensed_report.md"
-ls "$WORK_STATE_DIR"/report_page*.md 2>/dev/null || true
-test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
+test -f "$BRANCH_RECORDS_DIR/condensed_report.md" && sed -n '1,180p' "$BRANCH_RECORDS_DIR/condensed_report.md"
+ls "$BRANCH_RECORDS_DIR"/report_page*.md 2>/dev/null || true
+test -f "$BRANCH_RECORDS_DIR/TODO.md" && sed -n '1,220p' "$BRANCH_RECORDS_DIR/TODO.md"
 ```
 
-The research finalizer updates these records in a temporary state worktree and
-publishes them in result order. Other explicit work-state edits belong in the
-visible work-state worktree. Never place these files in the code worktree.
+The research finalizer updates these records in a temporary records worktree and
+publishes them in result order. Other explicit records edits belong in the
+visible branch records worktree. Never place these files in the code worktree.
 
 Use `branch-commit-cleanup` for old local snapshot metadata and temporary commit
 worktrees only after they are no longer needed for status checks or debugging.
@@ -173,8 +173,8 @@ Include in the relevant work-branch report page:
   `$AR_WORK_BRANCH/exp/<experiment-name>`.
 - In the code worktree, do not directly stage, commit, tag, reset, stash, or
   otherwise mutate Git history/index state for normal research workflow. Use
-  the branch snapshot/commit helper commands instead. Work-state record updates are ordinary
-  commits in the separate work-state worktree.
+  the branch snapshot/commit helper commands instead. Branch-record updates are ordinary
+  commits in the separate branch records worktree.
 - When the user asks to integrate completed branch work into `dev`, `main`, or
   another development branch, use a separate temporary worktree rather than
   switching this top-level session onto the target branch. Never force-push or
@@ -184,15 +184,15 @@ Include in the relevant work-branch report page:
 
 | Location | Purpose |
 |----------|---------|
-| Agentic experiment log | Work-branch-local experiment ledger and summary table on the work state branch |
+| Agentic experiment log | Branch-local experiment ledger and summary table on the branch records branch |
 | Work-branch Agentic Notes | Short active guidance rendered into startup instructions |
 | Work-branch `condensed_report.md` | Short rolling condensed report of current findings; keep to about one page |
 | Work-branch `report_pageN.md` | Paginated narrative report; `report_page1.md` is oldest and the highest numbered page is current |
 | Work-branch `TODO.md` | Work-branch-local checklist for open questions, unverified claims, deferred work |
 | `REVISION.md` | Agent improvement notes from `/retro`, append-only |
 | `scripts/verify_*.py` | Verification scripts |
-| `scripts/plot_*.py` | Plotting scripts, one per figure; save report-ready outputs under `$WORK_STATE_DIR/images/` |
-| Work-state `images/` | Generated report figures; include PNG previews referenced from work-state report pages |
+| `scripts/plot_*.py` | Plotting scripts, one per figure; save report-ready outputs under `$BRANCH_RECORDS_DIR/images/` |
+| Branch records `images/` | Generated report figures; include PNG previews referenced from records report pages |
 
 Keep workspace root clean. Do not create canonical `condensed_report.md`,
 `report_pageN.md`, `TODO.md`, or report `images/` in the code worktree for work

@@ -10,7 +10,7 @@ sandbox_apptainer_validate_host() {
         echo "Error: Apptainer is only supported on Linux hosts. Current host: $host_os"
         echo ""
         echo "Use Docker on this machine instead:"
-        echo "  agentic-team --sandbox docker ..."
+        echo "  agentic-team run BRANCH --sandbox docker ..."
         echo ""
         echo "To test Apptainer, run the launcher on a Linux workstation, WSL2 instance, or cluster node."
         exit 1

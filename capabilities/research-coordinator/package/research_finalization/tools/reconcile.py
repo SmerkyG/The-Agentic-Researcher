@@ -34,14 +34,14 @@ def _parse_time(value: object) -> datetime | None:
 
 
 def _matching_experiment_is_logged(manifest: dict[str, Any]) -> bool:
-    state_dir = Path(str(manifest["work_state_dir"]))
-    state_branch = str(manifest["state_branch"])
+    records_dir = Path(str(manifest["branch_records_dir"]))
+    records_branch = str(manifest["records_branch"])
     paths = git_text(
-        state_dir,
+        records_dir,
         "ls-tree",
         "-r",
         "--name-only",
-        state_branch,
+        records_branch,
         "--",
         "experiment-log/experiments",
     ).splitlines()
@@ -49,7 +49,7 @@ def _matching_experiment_is_logged(manifest: dict[str, Any]) -> bool:
     for relative in paths:
         if not relative.endswith((".yaml", ".yml")):
             continue
-        value = yaml.safe_load(git_text(state_dir, "show", f"{state_branch}:{relative}"))
+        value = yaml.safe_load(git_text(records_dir, "show", f"{records_branch}:{relative}"))
         if not isinstance(value, dict):
             continue
         code = value.get("code")

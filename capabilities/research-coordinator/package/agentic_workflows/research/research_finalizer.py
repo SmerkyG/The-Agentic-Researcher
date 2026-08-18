@@ -11,7 +11,7 @@ from agentic_notes.tools.update import AgenticNotesUpdateTool
 from experiment_log.tools.append import ExperimentLogAppendTool
 from agentic_workflows.research.report import ReportAppendTool
 from research_finalization.records import FinalizationTicket, FinalizationWorkspace
-from research_finalization.tools.commit import FinalizationStateCommitTool
+from research_finalization.tools.commit import FinalizationRecordsCommitTool
 from research_finalization.tools.finish import FinalizationFinishTool
 from research_finalization.tools.ready import FinalizationReadyTool
 
@@ -33,8 +33,8 @@ class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):
 
             class ReportSection(AgentRequest):
                 step(
-                    f"The temporary state worktree for this finalization is "
-                    f"{workspace.state_dir}. Read condensed_report.md, TODO.md, and "
+                    f"The temporary records worktree for this finalization is "
+                    f"{workspace.records_dir}. Read condensed_report.md, TODO.md, and "
                     "the latest report page from that worktree."
                 )
                 report_section: str = result(
@@ -46,16 +46,16 @@ class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):
 
             ReportAppendTool(
                 content=report.report_section,
-                work_state_dir=workspace.state_dir,
+                branch_records_dir=workspace.records_dir,
             ).run()
 
             class Records(AgentRequest):
                 step(
-                    f"Rewrite {workspace.state_dir}/condensed_report.md with the current synthesis.",
-                    f"Update {workspace.state_dir}/TODO.md with completed, autonomous, "
+                    f"Rewrite {workspace.records_dir}/condensed_report.md with the current synthesis.",
+                    f"Update {workspace.records_dir}/TODO.md with completed, autonomous, "
                     "blocked, and user-input work.",
                     guidance=(
-                        "Both files belong to the temporary state worktree identified "
+                        "Both files belong to the temporary records worktree identified "
                         "in the preceding request."
                     ),
                 )
@@ -68,7 +68,7 @@ class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):
 
             records = self.agent_request(Records)
 
-            FinalizationStateCommitTool(root=workspace.root).run()
+            FinalizationRecordsCommitTool(root=workspace.root).run()
             records.experiment_log.code.branch = workspace.code_branch
             records.experiment_log.code.commit = workspace.code_commit
             records.experiment_log.run()
@@ -81,7 +81,7 @@ class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):
             error="; ".join(errors) if errors else None,
         ).run()
 
-        # Notes are optional enrichment, not part of the serialized state/log
+        # Notes are optional enrichment, not part of the serialized records/log
         # transaction. Core finalization must be terminal before starting a
         # potentially interruptible subagent so later results cannot be blocked.
         if not errors and records.note_update is not None:

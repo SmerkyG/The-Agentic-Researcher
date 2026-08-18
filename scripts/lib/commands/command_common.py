@@ -34,16 +34,6 @@ def slugify(text: str, *, default: str = "item", max_len: int = 72) -> str:
 
 def fallback_workspace_name(project_dir: Path) -> str:
     expanded = project_dir.expanduser()
-    if expanded.name == "code" and expanded.parent.parent.name.endswith("-at"):
-        at_root = expanded.parent.parent
-        project_link = at_root / "project"
-        if project_link.exists() or project_link.is_symlink():
-            try:
-                return slugify(project_link.resolve().name, default="project")
-            except OSError:
-                pass
-        return slugify(at_root.name.removesuffix("-at"), default="project")
-
     try:
         return slugify(expanded.resolve().name, default="project")
     except OSError:
@@ -58,16 +48,14 @@ def workspace_root(project_dir: Path) -> Path:
     configured = os.environ.get("AR_WORKSPACE_ROOT")
     if configured:
         return Path(configured).expanduser()
+    expanded = project_dir.expanduser().resolve()
+    if expanded.name == "repo.git" and (expanded.parent / ".agentic-team.json").is_file():
+        return expanded.parent
+    for candidate in (expanded, *expanded.parents):
+        if (candidate / ".agentic-team.json").is_file() and (candidate / "repo.git").is_dir():
+            return candidate
 
-    expanded = project_dir.expanduser()
-    if expanded.name == "code" and expanded.parent.parent.name.endswith("-at"):
-        return expanded.parent.parent.resolve()
-
-    resolved = expanded.resolve()
-    if resolved.name == "code" and resolved.parent.parent.name.endswith("-at"):
-        return resolved.parent.parent
-
-    return resolved.parent / f"{workspace_name(project_dir)}-at"
+    return expanded.parent / f"{workspace_name(project_dir)}-at"
 
 
 def runtime_root(project_dir: Path | None = None) -> Path:

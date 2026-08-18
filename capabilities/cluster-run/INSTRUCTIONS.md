@@ -12,6 +12,18 @@ Prefer auto placement for routine work:
 cluster-run --detach --num-gpus 1 --name exp-e005 -- uv run python train.py --exp E005
 ```
 
+For distributed launchers, request an allocated port and pass the runner's
+placeholder directly as a command argument:
+
+```bash
+cluster-run --detach --num-gpus 8 --ports 1 --name distributed-eval -- \
+  uv run accelerate launch --main_process_port {port} evaluate.py
+```
+
+Do not hardcode rendezvous ports. The runner replaces `{port}` with the first
+allocated port and also exports `MASTER_PORT`, `CLUSTER_RUN_PORT_START`,
+`CLUSTER_RUN_PORT_END`, `CLUSTER_RUN_PORT_COUNT`, and `CLUSTER_RUN_PORTS`.
+
 Use hard node/GPU placement only when necessary:
 
 ```bash

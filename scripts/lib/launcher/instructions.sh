@@ -211,22 +211,22 @@ render_subagent_catalog_instruction_part() {
     fi
 }
 
-render_agentic_state_instruction_part() {
+render_agentic_records_instruction_part() {
     [[ -n "${AR_WORK_BRANCH:-}" ]] || return 0
 
-    printf '## Agentic State\n\n'
-    printf 'Agentic State stores shared agent memory and capability-owned records in visible Git-backed state worktrees under `$AR_WORKSPACE_ROOT`.\n\n'
+    printf '## Agentic Records\n\n'
+    printf 'Agentic Records stores shared agent memory and capability-owned records in visible Git-backed records worktrees under `$AR_WORKSPACE_ROOT`.\n\n'
     printf '| Scope | Storage |\n'
     printf '| --- | --- |\n'
     printf '| Organization | Org repo configured by `AR_ORG_NOTES_REPO`, when present |\n'
-    printf '| Project | Project repo orphan branch `%s` |\n' "${AR_PROJECT_STATE_BRANCH:-agentic/project-state}"
-    printf '| Work branch | Project repo orphan branch `agentic/work-state/%s` |\n\n' "$AR_WORK_BRANCH"
-    printf 'Local state worktrees for this invocation:\n\n'
+    printf '| Project | Project repo orphan branch `%s` |\n' "${AR_PROJECT_RECORDS_BRANCH:-agentic/project-records}"
+    printf '| Branch | Project repo orphan branch `agentic/branch-records/%s` |\n\n' "$AR_WORK_BRANCH"
+    printf 'Local records worktrees for this invocation:\n\n'
     printf '```bash\n'
-    printf 'PROJECT_STATE_DIR="${AR_PROJECT_STATE_DIR:?}"\n'
-    printf 'WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"\n'
+    printf 'PROJECT_RECORDS_DIR="${AR_PROJECT_RECORDS_DIR:?}"\n'
+    printf 'BRANCH_RECORDS_DIR="${AR_BRANCH_RECORDS_DIR:?}"\n'
     printf '```\n\n'
-    printf 'Capabilities own the files they place in those worktrees. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `condensed_report.md`, numbered report files (`report_page1.md` oldest and the highest number current), `TODO.md`, and report-ready `images/` at the work-state worktree root.\n'
+    printf 'Capabilities own the files they place in those worktrees. For example, Agentic Notes owns `agent-notes/`, Experiment Log owns `experiment-log/`, and research workflows may keep `condensed_report.md`, numbered report files (`report_page1.md` oldest and the highest number current), `TODO.md`, and report-ready `images/` at the branch records root.\n'
 }
 
 setup_instruction_target() {
@@ -235,6 +235,18 @@ setup_instruction_target() {
 
     INSTRUCTION_FILE_REGENERATED=false
     INSTRUCTION_TARGET="$target"
+}
+
+remove_unprepared_client_guards() {
+    local name path first_line
+    for name in AGENTS.md CLAUDE.md GEMINI.md; do
+        path="$WORKSPACE_DIR/$name"
+        [[ -f "$path" ]] || continue
+        IFS= read -r first_line < "$path" || true
+        if [[ "$first_line" == "# Unprepared Agentic Team Checkout" ]]; then
+            rm -f "$path"
+        fi
+    done
 }
 
 setup_generated_file_excludes() {
@@ -288,6 +300,7 @@ EOF
 
 render_instruction_document() {
     [[ -n "${INSTRUCTION_TARGET:-}" ]] || setup_instruction_target
+    remove_unprepared_client_guards
 
     local instruction_path="$WORKSPACE_DIR/$INSTRUCTION_TARGET"
     local temp_path="${instruction_path}.tmp"
@@ -303,7 +316,7 @@ render_instruction_document() {
         printf '\n'
         render_subagent_catalog_instruction_part
         printf '\n'
-        render_agentic_state_instruction_part
+        render_agentic_records_instruction_part
         printf '\n'
         render_capability_instruction_parts
     } > "$temp_path"

@@ -65,10 +65,10 @@ an f-string emits its backticked identifier; it does not read a Python value.
 Concrete Python values may be interpolated normally:
 
 ```python
-state_dir = workspace.state_dir
+records_dir = workspace.records_dir
 
 class ReadState(AgentRequest):
-    step(f"Read the report under {state_dir}.")
+    step(f"Read the report under {records_dir}.")
     summary: str = result("summary of the report")
 ```
 

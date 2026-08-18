@@ -1,15 +1,15 @@
 # Experiment Log
 
-Experiment Log is the built-in research logging capability. It uses Agentic State for storage and owns the `experiment-log/` layout on the active work-branch state branch.
+Experiment Log is the built-in research logging capability. It uses Agentic Records for storage and owns the `experiment-log/` layout on the active branch records branch.
 
-See [agentic-state.md](agentic-state.md) for the state branch and locking model.
+See [agentic-records.md](agentic-records.md) for the records branch and locking model.
 
 ## Storage
 
-Experiments are stored under the active work state branch:
+Experiments are stored on the active branch records branch:
 
 ```text
-agentic/work-state/<work-branch>
+agentic/branch-records/<work-branch>
 ```
 
 The capability-owned layout is:
@@ -105,7 +105,7 @@ experiment-log domain logic or independent validation path.
 Research workflows often keep `condensed_report.md`, numbered report files
 (`report_page1.md` oldest and the highest number current), `TODO.md`, and
 report-ready figures under `images/`
-on the same work-branch state branch. Those files are mutable
+on the same branch records branch. Those files are mutable
 synthesis/checklist/report-asset records owned by the research workflow, not by
 the experiment-log capability. `condensed_report.md` is deliberately distinct
 from the experiment-log-owned `experiment-log/SUMMARY.md`.

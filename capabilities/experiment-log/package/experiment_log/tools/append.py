@@ -27,7 +27,7 @@ class ExperimentLogAppendTool(PythonTool[ExperimentLogAppendResult]):
 
     guidance: ClassVar[str] = """
 Record completed positive, negative, and failed experiments. Let the tool
-manage work-state locking, pull, commit, push, retry, and success tagging. Do
+manage branch-records locking, pull, commit, push, retry, and success tagging. Do
 not edit experiment-log state manually and never force-push.
 """
 

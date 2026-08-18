@@ -57,8 +57,8 @@ AR_ORG_NOTES_REPO=""
 AR_MAIN_AGENT="research-coordinator"
 AR_USER_ID="$USER"
 
-# Durable project state branch and local note refresh behavior.
-AR_PROJECT_STATE_BRANCH="agentic/project-state"
+# Durable project records branch and local note refresh behavior.
+AR_PROJECT_RECORDS_BRANCH="agentic/project-records"
 AR_NOTES_AUTO_REFRESH="true"
 
 # Git identity for Agentic Team-created commits when a repo lacks identity.
@@ -69,6 +69,6 @@ AR_GIT_EMAIL="$USER@example.invalid"
 # Set false to require explicit prebuilds with container/build.sh.
 AR_AUTO_BUILD="true"
 
-# Optional override for Agentic State commits. Blank means use AR_GIT_*.
+# Optional override for Agentic Records commits. Blank means use AR_GIT_*.
 AR_NOTES_GIT_NAME=""
 AR_NOTES_GIT_EMAIL=""

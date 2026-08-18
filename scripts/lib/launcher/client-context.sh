@@ -15,7 +15,7 @@ client_asset_path() {
 setup_client_context() {
     local env_file workflow_mcp="" agentic_notes="" capabilities name entry saved_ifs
 
-    AR_CLIENT_ROOT="$AR_WORKSPACE_ROOT/$AR_WORK_NAME/client"
+    AR_CLIENT_ROOT="$AR_WORKSPACE_ROOT/branches/$AR_WORK_BRANCH/client"
     AR_CLIENT_DIR="$AR_CLIENT_ROOT/$AR_CLI"
     AR_CLIENT_CONTEXT="$AR_CLIENT_DIR/context.json"
     AR_CLIENT_CONTEXT_REGISTRY="$(client_context_registry_path)"
@@ -55,7 +55,6 @@ setup_client_context() {
         --instruction-path "$(workspace_runtime_path "$INSTRUCTION_TARGET")" \
         --main-agent "$AR_MAIN_AGENT" \
         --work-branch "${AR_WORK_BRANCH:-}" \
-        --work-name "${AR_WORK_NAME:-}" \
         --capabilities "$capabilities" \
         --workflow-mcp "$workflow_mcp" \
         --capability-refresh "$(ar_core_bin_env_path)/capability-refresh" \

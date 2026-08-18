@@ -13,7 +13,7 @@ def test_register_resolve_and_execute_context(tmp_path: Path) -> None:
     project.mkdir()
     nested = project / "nested"
     nested.mkdir()
-    external = tmp_path / "at" / "work" / "client" / "codex"
+    external = tmp_path / "at" / "branches" / "client" / "codex"
     manifest = external / "context.json"
     registry = tmp_path / "config" / "client-contexts.json"
     env_file = tmp_path / "environment"
@@ -28,10 +28,9 @@ def test_register_resolve_and_execute_context(tmp_path: Path) -> None:
             "--client", "codex",
             "--project-dir", str(project),
             "--instruction-path", str(project / "AGENTS.md"),
-            "--main-agent", "general",
-            "--work-branch", "work",
-            "--work-name", "work",
-            "--capabilities", "agentic-notes,imperative-workflows",
+                "--main-agent", "general",
+                "--work-branch", "work",
+                "--capabilities", "agentic-notes,imperative-workflows",
             "--workflow-mcp", "/bin/true",
             "--capability-refresh", "/bin/true",
         ],
@@ -73,3 +72,57 @@ def test_hook_is_a_noop_outside_registered_projects(tmp_path: Path) -> None:
     )
     assert result.returncode == 0
     assert json.loads(result.stdout) == {}
+
+
+def test_codex_compaction_hook_returns_model_visible_session_context(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    nested = project / "nested"
+    nested.mkdir()
+    manifest = tmp_path / "client" / "codex" / "context.json"
+    registry = tmp_path / "config" / "client-contexts.json"
+    env_file = tmp_path / "environment"
+    env_file.write_text("")
+
+    registered = subprocess.run(
+        [
+            str(CLIENT), "register",
+            "--manifest", str(manifest),
+            "--registry", str(registry),
+            "--env-file", str(env_file),
+            "--client", "codex",
+            "--project-dir", str(project),
+            "--instruction-path", str(project / "AGENTS.md"),
+            "--main-agent", "ml-engineer",
+            "--work-branch", "work",
+            "--capability-refresh", "/bin/true",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert registered.returncode == 0, registered.stderr
+
+    result = subprocess.run(
+        [
+            str(CLIENT), "hook", "codex-post-compact",
+            "--client", "codex",
+            "--registry", str(registry),
+        ],
+        input=json.dumps(
+            {
+                "cwd": str(nested),
+                "hook_event_name": "SessionStart",
+                "source": "compact",
+            }
+        ),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["systemMessage"] == "Agentic Team refreshed post-compaction instructions."
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    context = payload["hookSpecificOutput"]["additionalContext"]
+    assert "just experienced context compaction" in context
+    assert f"read `{project / 'AGENTS.md'}`" in context

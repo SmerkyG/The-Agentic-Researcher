@@ -26,34 +26,48 @@ def make_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def init_work_branch_workspace(path: Path, work_branch: str = "kernel-search") -> None:
+def init_work_branch_workspace(path: Path, work_branch: str = "kernel-search") -> Path:
     if REAL_GIT is None:
         raise RuntimeError("git is required for tests")
-    path.mkdir(parents=True, exist_ok=True)
-    subprocess.run([REAL_GIT, "init", str(path)], check=True, capture_output=True, text=True)
-    subprocess.run([REAL_GIT, "-C", str(path), "config", "user.name", "Test User"], check=True)
-    subprocess.run([REAL_GIT, "-C", str(path), "config", "user.email", "test@example.com"], check=True)
-    (path / "README.md").write_text("# Test Workspace\n")
-    subprocess.run([REAL_GIT, "-C", str(path), "add", "README.md"], check=True)
-    subprocess.run([REAL_GIT, "-C", str(path), "commit", "-m", "init"], check=True, capture_output=True, text=True)
-    subprocess.run([REAL_GIT, "-C", str(path), "checkout", "-B", work_branch], check=True, capture_output=True, text=True)
+    root = path.parent / f"{path.name}-at"
+    subprocess.run([str(REPO_ROOT / "scripts/bin/agentic-workspace"), "init", str(root)], check=True, capture_output=True, text=True)
+    subprocess.run(
+        [str(REPO_ROOT / "scripts/bin/agentic-workspace"), "-C", str(root), "checkout", work_branch],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    code = root / "branches" / Path(work_branch) / "code"
+    subprocess.run([REAL_GIT, "-C", str(code), "config", "user.name", "Test User"], check=True)
+    subprocess.run([REAL_GIT, "-C", str(code), "config", "user.email", "test@example.com"], check=True)
+    (code / "README.md").write_text("# Test Workspace\n")
+    subprocess.run([REAL_GIT, "-C", str(code), "add", "README.md"], check=True)
+    subprocess.run([REAL_GIT, "-C", str(code), "commit", "-m", "init"], check=True, capture_output=True, text=True)
+    return code
 
 
-def at_launch_args(workspace: Path, work_name: str = "kernel-search", source_ref: str = "kernel-search") -> list[str]:
-    return [
-        str(workspace.parent / f"{workspace.name}-at"),
-        work_name,
-        "--from",
-        source_ref,
-        "--project-dir",
-        str(workspace),
-        "--branch",
-        source_ref,
-    ]
+def at_launch_args(workspace: Path) -> list[str]:
+    return ["run", str(workspace)]
 
 
-def client_dir(workspace: Path, client: str, work_name: str = "kernel-search") -> Path:
-    return workspace.parent / f"{workspace.name}-at" / work_name / "client" / client
+def at_root(workspace: Path) -> Path:
+    common_dir = subprocess.run(
+        [REAL_GIT, "-C", str(workspace), "rev-parse", "--git-common-dir"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return (workspace / common_dir).resolve().parent
+
+
+def client_dir(workspace: Path, client: str) -> Path:
+    branch = subprocess.run(
+        [REAL_GIT, "-C", str(workspace), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return at_root(workspace) / "branches" / Path(branch) / "client" / client
 
 
 @pytest.fixture
@@ -222,7 +236,7 @@ def test_launcher_without_arguments_shows_help_without_creating_workspace(
     )
 
     assert result.returncode == 2
-    assert "agentic-team requires a project/workspace argument" in result.stderr
+    assert "agentic-team requires a command" in result.stderr
     assert "Usage:" in result.stderr
     assert not workspace.exists()
 
@@ -249,8 +263,13 @@ def test_claude_workspace_guard_lives_in_claude_adapter() -> None:
 
 
 def test_claude_rejects_own_config_as_workspace(base_env: dict[str, str]) -> None:
-    workspace = Path(base_env["HOME"]) / ".claude"
-    init_work_branch_workspace(workspace)
+    root = Path(base_env["HOME"]) / ".claude"
+    subprocess.run([str(REPO_ROOT / "scripts/bin/agentic-workspace"), "init", str(root)], check=True)
+    subprocess.run(
+        [str(REPO_ROOT / "scripts/bin/agentic-workspace"), "-C", str(root), "checkout", "kernel-search"],
+        check=True,
+    )
+    workspace = root / "branches" / "kernel-search" / "code"
 
     result = run(
         [str(AGENTIC_TEAM), "--sandbox", "none", "--cli", "claude", *at_launch_args(workspace)],
@@ -265,7 +284,7 @@ def test_non_claude_cli_does_not_inherit_claude_workspace_guard(base_env: dict[s
     fake_bin = Path(base_env["PATH"].split(":", maxsplit=1)[0])
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     workspace = Path(base_env["HOME"]) / ".claude"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
 
     result = run(
         [str(AGENTIC_TEAM), "--sandbox", "none", "--cli", "codex", *at_launch_args(workspace)],
@@ -362,8 +381,9 @@ def test_build_command_auto_detects_podman_when_docker_is_absent(
     assert read_log(base_env["FAKE_DOCKER_LOG"]) == ""
 
 
-def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str]) -> None:
-    result = run([str(AGENTIC_TEAM), "--sandbox", "podman", "--cli", "codex", "--test"], base_env)
+def test_launcher_podman_test_mode_overrides_entrypoint(base_env: dict[str, str], tmp_path: Path) -> None:
+    workspace = init_work_branch_workspace(tmp_path / "podman-test")
+    result = run([str(AGENTIC_TEAM), "run", str(workspace), "--sandbox", "podman", "--cli", "codex", "--test"], base_env)
 
     assert result.returncode == 0
     podman_log = read_log(base_env["FAKE_PODMAN_LOG"])
@@ -401,7 +421,12 @@ def test_configured_storage_dirs_mount_and_export_in_podman(
     )
 
     result = run(
-        [str(AGENTIC_TEAM), "--sandbox", "podman", "--cli", "codex", "--test"],
+        [
+            str(AGENTIC_TEAM),
+            "run",
+            str(init_work_branch_workspace(tmp_path / "storage-test")),
+            "--sandbox", "podman", "--cli", "codex", "--test",
+        ],
         {**base_env, "XDG_CONFIG_HOME": str(xdg_config_home)},
     )
 
@@ -419,7 +444,7 @@ def test_launcher_auto_builds_missing_podman_image(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-auto-build"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     make_executable(
         fake_bin / "podman",
         "#!/bin/sh\n"
@@ -448,7 +473,7 @@ def test_launcher_native_runs_host_cli__without_container(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-none"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     cli__log = tmp_path / "codex-none.log"
     make_executable(
         fake_bin / "codex",
@@ -484,7 +509,7 @@ def test_launcher_native_runs_host_cli__without_container(
     assert "Sandboxed:      No (sandbox none; full host filesystem access)" in result.stdout
     assert "Job backend:    none" in result.stdout
     assert "UV Cache:       uv default (native mode)" in result.stdout
-    expected_artifacts = workspace.parent / "ws-none-at" / "artifacts" / "project"
+    expected_artifacts = at_root(workspace) / "artifacts" / "project"
     assert f"Artifacts:      {expected_artifacts}" in result.stdout
     assert expected_artifacts.is_dir()
     cli__log_text = cli__log.read_text()
@@ -499,7 +524,7 @@ def test_launcher_native_runs_host_cli__without_container(
     assert '"AR_TOOL_PATH"' in cli__log_text
     assert '"AR_WORKFLOW_PATH"' in cli__log_text
     assert '"AR_RUNTIME_ROOT"' in cli__log_text
-    assert '"AR_WORK_STATE_DIR"' in cli__log_text
+    assert '"AR_BRANCH_RECORDS_DIR"' in cli__log_text
     assert '"AR_ARTIFACTS_DIR"' in cli__log_text
     assert "mcp_servers.agentic_workflows.required=true" in cli__log_text
     assert "uv_cache:\n" in cli__log_text
@@ -536,15 +561,15 @@ def test_launcher_native_runs_host_cli__without_container(
     assert not (workspace / ".codex" / "hooks").exists()
     assert not (workspace / ".codex" / "hooks.json").exists()
     codex_hooks = json.loads((Path(native_env["HOME"]) / ".codex" / "hooks.json").read_text())
-    post_compact_hook = codex_hooks["hooks"]["PostCompact"][0]
-    post_compact_command = post_compact_hook["hooks"][0]["command"]
+    compact_session_hook = codex_hooks["hooks"]["SessionStart"][0]
+    compact_session_command = compact_session_hook["hooks"][0]["command"]
     post_tool_hook = codex_hooks["hooks"]["PostToolUse"][0]
     post_tool_command = post_tool_hook["hooks"][0]["command"]
-    assert post_compact_hook["matcher"] == "manual|auto"
+    assert compact_session_hook["matcher"] == "compact"
     assert post_tool_hook["matcher"] == "*"
     assert codex_hooks["hooks"]["UserPromptSubmit"] == []
-    assert not codex_hooks["hooks"]["SessionStart"]
-    assert "agentic-team-client hook codex-post-compact --client codex" == post_compact_command
+    assert not codex_hooks["hooks"]["PostCompact"]
+    assert "agentic-team-client hook codex-post-compact --client codex" == compact_session_command
     assert "agentic-team-client hook codex-post-tool --client codex" == post_tool_command
     assert "codex-post-tool" in post_tool_command
     assert read_log(base_env["FAKE_PODMAN_LOG"]) == ""
@@ -555,7 +580,7 @@ def test_configured_storage_dirs_export_host_paths_in_native_mode(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-native-storage"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     cli_log = tmp_path / "codex-native-storage.log"
     model_cache = tmp_path / "shared" / "models"
     xdg_config_home = tmp_path / "xdg-config-native-storage"
@@ -594,7 +619,7 @@ def test_launcher_native_codex_yolo_uses_current_codex_flag(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-codex-yolo"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     cli__log = tmp_path / "codex-yolo.log"
     make_executable(
         fake_bin / "codex",
@@ -625,7 +650,7 @@ def test_launcher_uses_checkout_name_without_remote(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-without-remote"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = {**base_env}
     env["AR_CAPABILITIES"] = "agentic-notes"
@@ -642,7 +667,7 @@ def test_launcher_uses_checkout_name_without_remote(
     )
 
     assert result.returncode == 0
-    assert (workspace.parent / "ws-without-remote-at" / "project-state").exists()
+    assert (at_root(workspace) / "project-records").exists()
 
     remote = tmp_path / "different-remote-name.git"
     subprocess.run([REAL_GIT, "init", "--bare", str(remote)], check=True, capture_output=True, text=True)
@@ -653,13 +678,13 @@ def test_launcher_uses_checkout_name_without_remote(
             "--sandbox", "none",
             "--cli",
             "codex",
-            *at_launch_args(workspace, source_ref="kernel-search"),
+            *at_launch_args(workspace),
         ],
         env,
     )
 
     assert result.returncode == 0
-    assert (workspace.parent / "ws-without-remote-at" / "project-state").exists()
+    assert (at_root(workspace) / "project-records").exists()
 
 
 def test_launcher_uses_checkout_name_even_with_git_remote(
@@ -668,7 +693,7 @@ def test_launcher_uses_checkout_name_even_with_git_remote(
     workspace = tmp_path / "ws-remote-project"
     remote = tmp_path / "project.git"
     subprocess.run([REAL_GIT, "init", "--bare", str(remote)], check=True, capture_output=True, text=True)
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     subprocess.run([REAL_GIT, "-C", str(workspace), "remote", "add", "origin", str(remote)], check=True)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     env = {**base_env}
@@ -687,20 +712,19 @@ def test_launcher_uses_checkout_name_even_with_git_remote(
 
     assert result.returncode == 0
     assert (
-        workspace.parent
-        / "ws-remote-project-at"
-        / "project-state"
+        at_root(workspace)
+        / "project-records"
         / "agent-notes"
         / "all-agents"
         / "always-injected.md"
     ).exists()
-def test_launcher_preserves_at_workspace_root_from_code_symlink(
+def test_launcher_uses_repository_marker_instead_of_symlink_parent(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "treeattention"
-    init_work_branch_workspace(workspace)
-    at_root = tmp_path / "custom-at"
-    code_link = at_root / "kernel-search" / "code"
+    workspace = init_work_branch_workspace(workspace)
+    custom_root = tmp_path / "custom-at"
+    code_link = custom_root / "kernel-search" / "code"
     code_link.parent.mkdir(parents=True)
     code_link.symlink_to(workspace, target_is_directory=True)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
@@ -710,6 +734,7 @@ def test_launcher_preserves_at_workspace_root_from_code_symlink(
     result = run(
         [
             str(AGENTIC_TEAM),
+            "run",
             "--sandbox",
             "none",
             "--cli",
@@ -720,16 +745,17 @@ def test_launcher_preserves_at_workspace_root_from_code_symlink(
     )
 
     assert result.returncode == 0
-    assert (at_root / "project-state").exists()
-    assert (at_root / "kernel-search" / "state").exists()
-    assert not (tmp_path / "treeattention-at" / "project-state").exists()
+    actual_root = at_root(workspace)
+    assert (actual_root / "project-records").exists()
+    assert (actual_root / "branches" / "kernel-search" / "records").exists()
+    assert not (custom_root / "project-records").exists()
 
 
 def test_launcher_resume_followed_by_existing_directory_sets_workspace(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "treeattention"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
 
     result = run(
@@ -759,7 +785,7 @@ def test_launcher_codex_continue_translates_to_resume_last(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-codex-continue"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
 
     result = run(
@@ -788,7 +814,7 @@ def test_launcher_preserves_existing_project_hooks_and_registers_global_hooks(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-existing-hooks"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     (workspace / ".codex").mkdir()
     (workspace / ".codex" / "hooks.json").write_text(
         json.dumps({
@@ -826,7 +852,8 @@ def test_launcher_preserves_existing_project_hooks_and_registers_global_hooks(
     assert "PostCompact" not in hooks["hooks"]
     assert "PostToolUse" not in hooks["hooks"]
     global_hooks = json.loads((Path(env["HOME"]) / ".codex" / "hooks.json").read_text())
-    assert len(global_hooks["hooks"]["PostCompact"]) == 1
+    assert not global_hooks["hooks"]["PostCompact"]
+    assert len(global_hooks["hooks"]["SessionStart"]) == 1
     assert len(global_hooks["hooks"]["PostToolUse"]) == 1
 
 
@@ -843,7 +870,7 @@ def test_launcher_native_test_checks_rocm_when_nvidia_unavailable(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-rocm"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     make_executable(fake_bin / "nvidia-smi", "#!/bin/sh\nexit 1\n")
     make_executable(fake_bin / "rocm-smi", "#!/bin/sh\necho 'ROCm GPU'; exit 0\n")
@@ -851,6 +878,7 @@ def test_launcher_native_test_checks_rocm_when_nvidia_unavailable(
     result = run(
         [
             str(AGENTIC_TEAM),
+            "run",
             "--sandbox", "none",
             "--cli",
             "codex",
@@ -868,7 +896,7 @@ def test_native_cluster_run_backend_renders_project_skill(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-cluster"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     make_executable(
         fake_bin / "cluster-run",
@@ -915,11 +943,12 @@ def test_native_cluster_run_backend_renders_project_skill(
 
 def test_gpu_backend_flag_is_removed(base_env: dict[str, str], tmp_path: Path) -> None:
     workspace = tmp_path / "ws-removed-gpu-backend"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
 
     result = run(
         [
             str(AGENTIC_TEAM),
+            "run",
             "--gpu-backend",
             "cluster-run",
             str(workspace),
@@ -934,11 +963,12 @@ def test_gpu_backend_flag_is_removed(base_env: dict[str, str], tmp_path: Path) -
 
 def test_allow_shared_branch_flag_is_removed(base_env: dict[str, str], tmp_path: Path) -> None:
     workspace = tmp_path / "ws-removed-shared-branch"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
 
     result = run(
         [
             str(AGENTIC_TEAM),
+            "run",
             "--allow-shared-branch",
             str(workspace),
         ],
@@ -947,14 +977,14 @@ def test_allow_shared_branch_flag_is_removed(base_env: dict[str, str], tmp_path:
 
     assert result.returncode == 1
     assert "--allow-shared-branch has been removed" in result.stdout
-    assert "Launch a separate AT work entry instead" in result.stdout
+    assert "Create a separate paired branch instead" in result.stdout
 
 
 def test_remote_run_capability_checks_its_own_sandbox_requirement(
     base_env: dict[str, str], tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-remote-run-preflight"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
 
     result = run(
         [
@@ -976,7 +1006,7 @@ def test_native_capability_renders_skill_and_instruction_overlay(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-capability"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     make_executable(fake_bin / "codex", "#!/bin/sh\nexit 0\n")
     make_executable(fake_bin / "cluster-run", "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nexit 0\n")
 
@@ -1004,7 +1034,7 @@ def test_native_claude_cluster_run_backend_uses_claude_skills_dir(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-claude-cluster"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     claude_log = tmp_path / "claude.log"
     make_executable(
         fake_bin / "claude",
@@ -1055,7 +1085,7 @@ def test_native_gemini_cluster_run_backend_uses_gemini_skills_dir(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-gemini-cluster"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     make_executable(fake_bin / "gemini", "#!/bin/sh\nexit 0\n")
     make_executable(fake_bin / "cluster-run", "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nexit 0\n")
 
@@ -1106,7 +1136,7 @@ def test_native_opencode_cluster_run_backend_uses_opencode_skills_dir(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-opencode-cluster"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     make_executable(fake_bin / "opencode", "#!/bin/sh\nexit 0\n")
     make_executable(fake_bin / "cluster-run", "#!/bin/sh\n[ \"$1\" = --help ] && exit 0\nexit 0\n")
 
@@ -1220,7 +1250,7 @@ def test_prepare_codex_client_registers_context_without_launching_session(
     base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws-prepare-codex"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     codex_log = tmp_path / "prepare-codex.log"
     make_executable(
         fake_bin / "codex",
@@ -1243,6 +1273,10 @@ def test_prepare_codex_client_registers_context_without_launching_session(
     context_path = client_dir(workspace, "codex") / "context.json"
     launcher_path = client_dir(workspace, "codex") / "launch"
     assert f"Prepared codex client context: {context_path}" in result.stdout
+    assert "Agentic Team installed or changed Codex hooks." in result.stdout
+    assert f"codex -C {workspace}" in result.stdout
+    assert "enter /hooks in the Codex TUI" in result.stdout
+    assert "normally needed only once after installation" in result.stdout
     assert f"Client working directory: {workspace}" in result.stdout
     assert f":{workspace}" in next(
         line for line in result.stdout.splitlines() if line.startswith("SSH project location: ")
@@ -1263,13 +1297,26 @@ def test_prepare_codex_client_registers_context_without_launching_session(
     assert calls[1].startswith("mcp add agentic_workflows -- ")
     assert "exec-workflow-mcp --client codex" in calls[1]
 
+    prepared_again = run(
+        [
+            str(AGENTIC_TEAM),
+            "--prepare-client",
+            "--cli", "codex",
+            *at_launch_args(workspace),
+        ],
+        env,
+    )
+    assert prepared_again.returncode == 0, prepared_again.stderr
+    assert "installed or changed Codex hooks" not in prepared_again.stdout
+    assert "enter /hooks in the Codex TUI" not in prepared_again.stdout
+
 
 @pytest.mark.parametrize("client", ["claude", "gemini", "opencode", "pi"])
 def test_prepared_client_launcher_restores_external_context(
     client: str, base_env: dict[str, str], fake_bin: Path, tmp_path: Path
 ) -> None:
     workspace = tmp_path / f"ws-prepare-{client}"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
     client_log = tmp_path / f"prepare-{client}.log"
     make_executable(
         fake_bin / client,
@@ -1318,7 +1365,7 @@ def test_prepared_client_launcher_restores_external_context(
 
 def test_launcher_podman_runs_pi_cli_(base_env: dict[str, str], tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
 
     result = run(
         [str(AGENTIC_TEAM), "--sandbox", "podman", "--cli", "pi", *at_launch_args(workspace)],
@@ -1367,7 +1414,7 @@ def test_pi_translates_resume_to_session_and_warns_on_yolo(
     base_env: dict[str, str], tmp_path: Path
 ) -> None:
     workspace = tmp_path / "ws"
-    init_work_branch_workspace(workspace)
+    workspace = init_work_branch_workspace(workspace)
 
     result = run(
         [

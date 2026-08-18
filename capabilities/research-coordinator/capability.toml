@@ -4,7 +4,7 @@ requires = ["imperative-workflows", "agentic-notes", "experiment-log", "branch",
 [tools]
 research_finalization_capture = "research_finalization.tools.capture:FinalizationCaptureTool"
 research_finalization_ready = "research_finalization.tools.ready:FinalizationReadyTool"
-research_finalization_commit = "research_finalization.tools.commit:FinalizationStateCommitTool"
+research_finalization_commit = "research_finalization.tools.commit:FinalizationRecordsCommitTool"
 research_finalization_finish = "research_finalization.tools.finish:FinalizationFinishTool"
 research_finalization_status = "research_finalization.tools.status:FinalizationStatusTool"
 research_finalization_reconcile = "research_finalization.tools.reconcile:FinalizationReconcileTool"

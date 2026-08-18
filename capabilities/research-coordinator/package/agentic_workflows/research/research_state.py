@@ -1,4 +1,4 @@
-"""Native research work-state initialization operation."""
+"""Native research branch-record initialization operation."""
 
 from __future__ import annotations
 
@@ -43,11 +43,11 @@ def _write_if_missing(path: Path, content: str) -> bool:
 
 
 class ResearchStateInitializeTool(PythonTool[ResearchStateInitializeResult]):
-    """Initialize work-state records from an approved research plan."""
+    """Initialize branch records from an approved research plan."""
 
     plan: str = Value("Approved work-branch research plan")
-    work_state_dir: str | None = Value(
-        "Explicit work-state directory, or null to use AR_WORK_STATE_DIR",
+    branch_records_dir: str | None = Value(
+        "Explicit branch records directory, or null to use AR_BRANCH_RECORDS_DIR",
         default=None,
     )
     agent_name: str | None = Value(
@@ -64,12 +64,12 @@ class ResearchStateInitializeTool(PythonTool[ResearchStateInitializeResult]):
         if not plan:
             raise ValueError("plan must be a non-empty string")
 
-        state_value = self.work_state_dir or os.environ.get("AR_WORK_STATE_DIR")
+        state_value = self.branch_records_dir or os.environ.get("AR_BRANCH_RECORDS_DIR")
         if not state_value:
-            raise ValueError("work_state_dir or AR_WORK_STATE_DIR is required")
+            raise ValueError("branch_records_dir or AR_BRANCH_RECORDS_DIR is required")
         state = Path(state_value).expanduser().resolve()
         if not (state / ".git").exists():
-            raise ValueError(f"work-state directory is not a Git worktree: {state}")
+            raise ValueError(f"branch records directory is not a Git worktree: {state}")
 
         remote = _run_git(state, "remote", "get-url", "origin", check=False)
         if remote.returncode == 0 and remote.stdout.strip():
@@ -121,7 +121,7 @@ class ResearchStateInitializeTool(PythonTool[ResearchStateInitializeResult]):
                 state,
                 "commit",
                 "-m",
-                f"work-state: initialize {work_branch} research",
+                f"branch-records: initialize {work_branch} research",
             )
             if remote.returncode == 0 and remote.stdout.strip():
                 branch = _run_git(state, "branch", "--show-current").stdout.strip()

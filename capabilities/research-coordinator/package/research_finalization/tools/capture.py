@@ -30,7 +30,7 @@ def _explicit_path(value: object) -> str:
     path = PurePosixPath(value)
     if path.is_absolute() or path == PurePosixPath(".") or ".." in path.parts or ".git" in path.parts:
         raise ValueError(
-            f"report asset path must be relative to the work-state directory without .git or ..: {value}"
+            f"report asset path must be relative to the branch records directory without .git or ..: {value}"
         )
     if any(character in value for character in "*?["):
         raise ValueError(f"report asset path must not contain a glob: {value}")
@@ -41,24 +41,24 @@ class FinalizationCaptureTool(PythonTool[FinalizationTicket]):
     """Record the current code commit and freeze explicit report assets."""
 
     report_assets: list[str] = Value(
-        "Explicit report-asset paths relative to the work-state directory",
+        "Explicit report-asset paths relative to the branch records directory",
         default_factory=list,
     )
     project_dir: str | None = None
-    work_state_dir: str | None = None
+    branch_records_dir: str | None = None
 
     def execute(self) -> FinalizationTicket:
         project_dir = Path(
             self.project_dir or os.environ.get("AR_PROJECT_DIR") or "."
         ).expanduser().resolve()
-        work_state_value = self.work_state_dir or os.environ.get("AR_WORK_STATE_DIR")
+        work_state_value = self.branch_records_dir or os.environ.get("AR_BRANCH_RECORDS_DIR")
         if not work_state_value:
-            raise ValueError("work_state_dir or AR_WORK_STATE_DIR is required")
-        work_state_dir = Path(work_state_value).expanduser().resolve()
+            raise ValueError("branch_records_dir or AR_BRANCH_RECORDS_DIR is required")
+        branch_records_dir = Path(work_state_value).expanduser().resolve()
         code_branch = git_text(project_dir, "branch", "--show-current")
-        state_branch = git_text(work_state_dir, "branch", "--show-current")
-        if not code_branch or not state_branch:
-            raise ValueError("finalization capture requires named code and state branches")
+        records_branch = git_text(branch_records_dir, "branch", "--show-current")
+        if not code_branch or not records_branch:
+            raise ValueError("finalization capture requires named code and records branches")
         code_commit = git_text(project_dir, "rev-parse", "HEAD")
         report_assets = list(dict.fromkeys(_explicit_path(value) for value in self.report_assets))
 
@@ -69,7 +69,7 @@ class FinalizationCaptureTool(PythonTool[FinalizationTicket]):
         root.mkdir(parents=True)
         try:
             for relative in report_assets:
-                copy_asset(work_state_dir, assets_dir, relative)
+                copy_asset(branch_records_dir, assets_dir, relative)
         except Exception:
             shutil.rmtree(root, ignore_errors=True)
             raise
@@ -81,11 +81,11 @@ class FinalizationCaptureTool(PythonTool[FinalizationTicket]):
             "sequence": sequence,
             "created_at": created_at,
             "project_dir": str(project_dir),
-            "work_state_dir": str(work_state_dir),
+            "branch_records_dir": str(branch_records_dir),
             "work_branch": str(os.environ.get("AR_WORK_BRANCH") or code_branch),
             "code_branch": code_branch,
             "code_commit": code_commit,
-            "state_branch": state_branch,
+            "records_branch": records_branch,
             "report_assets": report_assets,
         }
         write_yaml(manifest_path(root), manifest)

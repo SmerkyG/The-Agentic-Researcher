@@ -2,373 +2,541 @@
 # /// script
 # dependencies = ["PyYAML>=6.0"]
 # ///
-"""Manage Agentic Team workspace groups."""
+"""Create and manage the Git repository underlying an Agentic Team project."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
+import shlex
+import shutil
 import subprocess
 import sys
+from typing import NoReturn
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMMAND_LIB = REPO_ROOT / "scripts" / "lib" / "commands"
 CORE_PACKAGE = REPO_ROOT / "scripts" / "package"
-sys.path.insert(0, str(COMMAND_LIB))
 sys.path.insert(0, str(CORE_PACKAGE))
 
-from agentic_state import (  # noqa: E402
-    AgenticStateError,
-    commit_if_changed,
-    configure_git_identity,
-    current_branch,
-    ensure_project_checkout,
-    ensure_work_state,
-    git,
-    git_remote,
-    slugify,
-    state_root,
-    work_state_branch,
-)
 from agentic_tools.hook_runner import execute_hook, hook_reference  # noqa: E402
 
 
-def run(command: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command, cwd=str(cwd) if cwd else None, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+FORMAT_VERSION = 2
+MARKER = ".agentic-team.json"
+BARE_REPO = "repo.git"
+
+
+class WorkspaceError(RuntimeError):
+    pass
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        command,
+        cwd=str(cwd) if cwd else None,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     if check and result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
-        raise AgenticStateError(f"{' '.join(command)} failed: {detail}")
+        raise WorkspaceError(f"{' '.join(command)} failed: {detail}")
     return result
+
+
+def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return run(["git", "-C", str(repo), *args], check=check)
+
+
+def fail(message: str) -> NoReturn:
+    raise WorkspaceError(message)
+
+
+def configure_identity(repo: Path) -> None:
+    name = os.environ.get("AR_GIT_NAME") or os.environ.get("AR_NOTES_GIT_NAME") or "Agentic Team"
+    email = (
+        os.environ.get("AR_GIT_EMAIL")
+        or os.environ.get("AR_NOTES_GIT_EMAIL")
+        or "agentic-team@example.invalid"
+    )
+    git(repo, "config", "user.name", name)
+    git(repo, "config", "user.email", email)
+
+
+def validate_branch(repo: Path, branch: str) -> str:
+    branch = branch.strip()
+    if not branch or git(repo, "check-ref-format", "--branch", branch, check=False).returncode != 0:
+        fail(f"invalid branch name: {branch or '<empty>'}")
+    if branch.startswith("agentic/branch-records/") or branch == "agentic/project-records":
+        fail(f"'{branch}' is reserved for Agentic Team records")
+    return branch
+
+
+def branch_path(root: Path, branch: str) -> Path:
+    parts = Path(branch).parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        fail(f"branch cannot be represented as a checkout path: {branch}")
+    return root.joinpath("branches", *parts)
+
+
+def code_path(root: Path, branch: str) -> Path:
+    return branch_path(root, branch) / "code"
+
+
+def records_path(root: Path, branch: str) -> Path:
+    return branch_path(root, branch) / "records"
+
+
+def records_branch(branch: str) -> str:
+    return f"agentic/branch-records/{branch}"
+
+
+def marker_data(*, upstream: str | None) -> dict[str, object]:
+    return {
+        "format_version": FORMAT_VERSION,
+        "repository": BARE_REPO,
+        "upstream": upstream,
+    }
+
+
+def initialize_root(root: Path, *, upstream: str | None) -> Path:
+    root = root.expanduser().resolve()
+    if root.exists() and any(root.iterdir()):
+        fail(f"destination is not empty: {root}")
+    root.mkdir(parents=True, exist_ok=True)
+    repo = root / BARE_REPO
+    run(["git", "init", "--bare", str(repo)])
+    configure_identity(repo)
+    (root / "branches").mkdir()
+    (root / "artifacts" / "project").mkdir(parents=True)
+    (root / ".runtime").mkdir()
+    (root / MARKER).write_text(json.dumps(marker_data(upstream=upstream), indent=2) + "\n")
+    return repo
+
+
+def command_init(args: argparse.Namespace) -> int:
+    root = Path(args.directory).expanduser().resolve()
+    initialize_root(root, upstream=None)
+    print(f"Initialized empty Agentic Team repository: {root}")
+    print(f"Bare repository: {root / BARE_REPO}")
+    print("")
+    print("Create the first paired checkout with:")
+    print(f"  agentic-team -C {root} checkout BRANCH")
+    return 0
+
+
+def looks_like_local_repository(value: str) -> bool:
+    expanded = Path(value).expanduser()
+    return expanded.exists() or value.startswith(("./", "../", "/", "~/", "file://"))
+
+
+def command_clone(args: argparse.Namespace) -> int:
+    if looks_like_local_repository(args.upstream):
+        fail(
+            "local repository imports are not supported; commit and push the desired "
+            "revision, then clone its upstream URL"
+        )
+    root = Path(args.directory).expanduser().resolve()
+    repo = initialize_root(root, upstream=args.upstream)
+    try:
+        git(repo, "remote", "add", "origin", args.upstream)
+        git(repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+        git(repo, "fetch", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
+        git(repo, "remote", "set-head", "origin", "--auto", check=False)
+    except Exception:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+    print(f"Cloned Agentic Team repository: {root}")
+    print(f"Upstream: {args.upstream}")
+    print("")
+    print("Materialize a paired branch checkout with:")
+    print(f"  agentic-team -C {root} checkout BRANCH")
+    return 0
+
+
+def find_root(start: Path) -> Path:
+    path = start.expanduser().resolve()
+    if path.is_file():
+        path = path.parent
+    for candidate in (path, *path.parents):
+        marker = candidate / MARKER
+        repo = candidate / BARE_REPO
+        if marker.is_file() and repo.is_dir():
+            try:
+                data = json.loads(marker.read_text())
+            except (OSError, json.JSONDecodeError) as error:
+                fail(f"invalid Agentic Team repository marker {marker}: {error}")
+            if data.get("format_version") != FORMAT_VERSION:
+                fail(
+                    f"unsupported Agentic Team repository format at {candidate}; "
+                    "use the standalone migration tool for an older workspace"
+                )
+            return candidate
+    fail(f"not inside an Agentic Team repository: {start}")
+
+
+def resolve_root(args: argparse.Namespace) -> Path:
+    return find_root(Path(args.directory or os.getcwd()))
+
+
+def ref_exists(repo: Path, ref: str) -> bool:
+    return git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", check=False).returncode == 0
 
 
 def local_branch_exists(repo: Path, branch: str) -> bool:
     return git(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0
 
 
-def refresh_remote_refs(repo: Path) -> None:
-    if git_remote(repo):
-        git(repo, "fetch", "--prune", "origin", check=False)
+def remote_branch_exists(repo: Path, branch: str) -> bool:
+    return git(repo, "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}", check=False).returncode == 0
 
 
-def local_branch_ref_names(repo: Path) -> set[str]:
-    names: set[str] = set()
-    local = git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads", check=False)
-    if local.returncode == 0:
-        names.update(line.strip() for line in local.stdout.splitlines() if line.strip())
-    return names
+def repository_has_code_commits(repo: Path) -> bool:
+    refs = git(
+        repo,
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/heads",
+        "refs/remotes/origin",
+        check=False,
+    ).stdout.splitlines()
+    return any(
+        ref not in {"refs/heads/agentic/project-records", "refs/remotes/origin/agentic/project-records"}
+        and not ref.startswith("refs/heads/agentic/branch-records/")
+        and not ref.startswith("refs/remotes/origin/agentic/branch-records/")
+        and ref != "refs/remotes/origin/HEAD"
+        for ref in refs
+    )
 
 
-def remote_branch_ref_names(repo: Path) -> set[str]:
-    names: set[str] = set()
-    tracking = git(repo, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin", check=False)
-    if tracking.returncode == 0:
-        for line in tracking.stdout.splitlines():
-            name = line.strip()
-            if not name or name == "origin/HEAD":
-                continue
-            names.add(name.removeprefix("origin/"))
-
-    if git_remote(repo):
-        remote = git(repo, "ls-remote", "--heads", "origin", check=False)
-        if remote.returncode == 0:
-            for line in remote.stdout.splitlines():
-                _sha, _, ref = line.partition("\t")
-                if ref.startswith("refs/heads/"):
-                    names.add(ref.removeprefix("refs/heads/"))
-    return names
-
-
-def branch_namespace_conflict(existing: str, candidate: str) -> bool:
-    return existing == candidate or existing.startswith(f"{candidate}/") or candidate.startswith(f"{existing}/")
-
-
-def assert_new_branch_available(repo: Path, branch: str, *, label: str) -> None:
-    if git(repo, "check-ref-format", "--branch", branch, check=False).returncode != 0:
-        raise AgenticStateError(f"invalid {label} branch name: {branch}")
-
-    for existing in sorted(local_branch_ref_names(repo)):
-        if branch_namespace_conflict(existing, branch):
-            raise AgenticStateError(
-                f"cannot create {label} branch '{branch}' because local branch '{existing}' already exists"
-            )
-
-    for existing in sorted(remote_branch_ref_names(repo)):
-        if branch_namespace_conflict(existing, branch):
-            raise AgenticStateError(
-                f"cannot create {label} branch '{branch}' because remote branch 'origin/{existing}' is visible. "
-                "Delete or refresh that remote ref, or pass an explicit --branch that you want to create."
-            )
-
-
-def default_child_branch(parent: str, child_name: str) -> str:
-    child = slugify(child_name, default="work")
-    if parent.startswith("agent/"):
-        return f"agent/{child}"
-    user = os.environ.get("AR_USER_ID") or os.environ.get("USER") or "user"
-    user_slug = slugify(user, default="user")
-    return f"agent/{user_slug}/{child}"
-
-
-def capability_names(raw: str) -> list[str]:
-    names: list[str] = []
-    for name in raw.replace(",", " ").split():
-        if name and name != "none":
-            names.append(name)
-    return names
-
-
-def capability_root(name: str) -> Path | None:
-    org_root = state_root() / "repos" / "org-agentic-notes" / "capabilities" / name
-    if org_root.is_dir():
-        return org_root
-    builtin = REPO_ROOT / "capabilities" / name
-    if builtin.is_dir():
-        return builtin
+def worktree_for_branch(repo: Path, branch: str) -> Path | None:
+    current_path: Path | None = None
+    for line in git(repo, "worktree", "list", "--porcelain").stdout.splitlines():
+        if line.startswith("worktree "):
+            current_path = Path(line.removeprefix("worktree "))
+        elif line == f"branch refs/heads/{branch}":
+            return current_path
     return None
 
 
-def is_git_worktree(path: Path) -> bool:
-    return run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"], check=False).returncode == 0
-
-
-def validate_project_dir(project_dir: Path) -> Path:
-    project_dir = project_dir.expanduser().resolve()
-    if not is_git_worktree(project_dir):
-        raise AgenticStateError(f"not a Git worktree: {project_dir}")
-    return project_dir
-
-
-def relative_symlink_target(target: Path, link_parent: Path) -> str:
-    return os.path.relpath(target, link_parent)
-
-
-def ensure_project_link(root: Path, project_dir_arg: str | None) -> Path:
-    root.mkdir(parents=True, exist_ok=True)
-    link = root / "project"
-
-    if link.is_symlink() or link.exists():
-        if not link.exists():
-            if project_dir_arg is None:
-                raise AgenticStateError(f"AT workspace project link is broken: {link}")
-            link.unlink()
-        else:
-            project_dir = validate_project_dir(link.resolve())
-            if project_dir_arg is not None:
-                requested = validate_project_dir(Path(project_dir_arg))
-                if requested != project_dir:
-                    raise AgenticStateError(
-                        f"AT workspace already points at project {project_dir}; "
-                        f"refusing to replace it with {requested}"
-                    )
-            return project_dir
-
-    if project_dir_arg is None:
-        raise AgenticStateError(
-            f"AT workspace has no project link: {link}. Pass --project-dir PATH to create it."
-        )
-
-    project_dir = validate_project_dir(Path(project_dir_arg))
-    os.symlink(relative_symlink_target(project_dir, root), link)
-    return project_dir
-
-
-def resolve_at_work(root: Path, value: str) -> tuple[str, Path, Path] | None:
-    work_dir = root / slugify(value, default="work")
-    code_dir = work_dir / "code"
-    state_dir = work_dir / "state"
-    if code_dir.exists() or code_dir.is_symlink():
-        branch = current_branch(code_dir.resolve())
-        if not branch:
-            raise AgenticStateError(f"AT work has no named Git branch: {code_dir}")
-        return branch, code_dir, state_dir
-    if not state_dir.exists():
-        return None
-    branch = value
-    return branch, code_dir, state_dir
-
-
-def run_capability_create_work_hooks(
+def add_worktree(
+    repo: Path,
+    destination: Path,
+    branch: str,
     *,
-    project_dir: Path,
-    workspace_root_dir: Path,
-    work_name_value: str,
-    source_branch: str,
-    new_branch: str,
-    source_state_dir: Path,
-    new_state_dir: Path,
-    new_code_dir: Path,
-    project_state_dir: Path,
+    start: str | None = None,
+    allow_orphan: bool = False,
+    track: bool = False,
+) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        fail(f"checkout path already exists: {destination}")
+    existing = worktree_for_branch(repo, branch)
+    if existing is not None:
+        fail(f"branch '{branch}' is already checked out at {existing}")
+    if local_branch_exists(repo, branch):
+        git(repo, "worktree", "add", str(destination), branch)
+    elif start is not None:
+        command = ["worktree", "add"]
+        if track:
+            command.append("--track")
+        command.extend(["-b", branch, str(destination), start])
+        git(repo, *command)
+    elif allow_orphan:
+        git(repo, "worktree", "add", "--orphan", "-b", branch, str(destination))
+    else:
+        fail(f"branch does not exist and no start point was supplied: {branch}")
+    configure_identity(destination)
+
+
+def ensure_project_records(root: Path, repo: Path) -> Path:
+    destination = root / "project-records"
+    if destination.exists():
+        return destination
+    branch = "agentic/project-records"
+    remote = f"origin/{branch}"
+    if remote_branch_exists(repo, branch):
+        add_worktree(repo, destination, branch, start=remote, track=True)
+    else:
+        add_worktree(repo, destination, branch, allow_orphan=True)
+    return destination
+
+
+def capability_names(raw: str) -> list[str]:
+    return [name for name in raw.replace(",", " ").split() if name and name != "none"]
+
+
+def capability_root(name: str) -> Path | None:
+    state_root = Path(os.environ.get("AR_STATE_ROOT", "~/.cache/agentic-team")).expanduser()
+    org_root = state_root / "repos" / "org-agentic-notes" / "capabilities" / name
+    if org_root.is_dir():
+        return org_root
+    builtin = REPO_ROOT / "capabilities" / name
+    return builtin if builtin.is_dir() else None
+
+
+def run_create_hooks(
+    *,
+    root: Path,
+    repo: Path,
+    branch: str,
+    start_branch: str,
+    source_records: Path,
+    destination_records: Path,
+    code: Path,
+    project_records: Path,
     capabilities: list[str],
 ) -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "AT_PROJECT_DIR": str(repo),
+            "AT_WORKSPACE_ROOT": str(root),
+            "AT_RUNTIME_ROOT": str(root / ".runtime"),
+            "AT_CREATE_SOURCE_BRANCH": start_branch,
+            "AT_CREATE_NEW_BRANCH": branch,
+            "AT_CREATE_SOURCE_RECORDS_DIR": str(source_records),
+            "AT_CREATE_NEW_RECORDS_DIR": str(destination_records),
+            "AT_CREATE_NEW_CODE_DIR": str(code),
+            "AT_CREATE_PROJECT_RECORDS_DIR": str(project_records),
+        }
+    )
     for capability in capabilities:
-        root = capability_root(capability)
-        if root is None:
+        root_path = capability_root(capability)
+        if root_path is None:
             continue
-        env = os.environ.copy()
-        env.update(
-            {
-                "AT_PROJECT_DIR": str(project_dir),
-                "AT_WORKSPACE_ROOT": str(workspace_root_dir),
-                "AT_RUNTIME_ROOT": str(workspace_root_dir / ".runtime"),
-                "AT_CREATE_WORK_NAME": work_name_value,
-                "AT_CREATE_SOURCE_BRANCH": source_branch,
-                "AT_CREATE_NEW_BRANCH": new_branch,
-                "AT_CREATE_SOURCE_STATE_DIR": str(source_state_dir),
-                "AT_CREATE_NEW_STATE_DIR": str(new_state_dir),
-                "AT_CREATE_NEW_CODE_DIR": str(new_code_dir),
-                "AT_CREATE_PROJECT_STATE_DIR": str(project_state_dir),
-            }
-        )
-        if hook_reference(root, "create-work") is not None:
-            try:
-                status = execute_hook(root, "create-work", environment=env)
-            except Exception as error:
-                raise AgenticStateError(
-                    f"Capability '{capability}' create-work hook failed: {error}"
-                ) from error
-            if status != 0:
-                raise AgenticStateError(
-                    f"Capability '{capability}' create-work hook failed with status {status}"
-                )
+        reference = hook_reference(root_path, "create-work")
+        if reference is None:
             continue
+        try:
+            status = execute_hook(root_path, "create-work", environment=env)
+        except Exception as error:
+            fail(f"capability '{capability}' create-work hook failed: {error}")
+        if status != 0:
+            fail(f"capability '{capability}' create-work hook failed with status {status}")
 
-        hook = root / "hooks" / "create-work"
-        if not hook.is_file() or not os.access(hook, os.X_OK):
+
+def commit_if_changed(worktree: Path, message: str) -> None:
+    git(worktree, "add", ".")
+    if git(worktree, "status", "--porcelain").stdout.strip():
+        git(worktree, "commit", "-m", message)
+
+
+def write_unprepared_client_guards(root: Path, code: Path, branch: str) -> None:
+    """Make a directly opened checkout fail closed until AT prepares a client."""
+
+    exclude_path = root / BARE_REPO / "info" / "exclude"
+    marker_start = "# BEGIN agentic-team generated files"
+    marker_end = "# END agentic-team generated files"
+    existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
+    retained: list[str] = []
+    managed: list[str] = []
+    inside_managed_block = False
+    for line in existing.splitlines():
+        if line == marker_start:
+            inside_managed_block = True
             continue
-        result = subprocess.run(
-            [str(hook)],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-        )
-        if result.returncode != 0:
-            detail = result.stderr.strip() or result.stdout.strip()
-            raise AgenticStateError(f"Capability '{capability}' create-work hook failed: {detail}")
-        if result.stdout:
-            print(result.stdout, end="")
-
-
-def create_code_worktree(project_dir: Path, code_dir: Path, branch: str, base_ref: str) -> None:
-    if code_dir.exists() or code_dir.is_symlink():
-        raise AgenticStateError(f"code path already exists: {code_dir}")
-    code_dir.parent.mkdir(parents=True, exist_ok=True)
-
-    if local_branch_exists(project_dir, branch):
-        if current_branch(project_dir) == branch:
-            os.symlink(project_dir, code_dir)
-            print(f"Using existing checkout via symlink: {code_dir} -> {project_dir}")
+        if line == marker_end:
+            inside_managed_block = False
+            continue
+        if inside_managed_block:
+            managed.append(line)
         else:
-            git(project_dir, "worktree", "add", str(code_dir), branch)
-    else:
-        assert_new_branch_available(project_dir, branch, label="code")
-        git(project_dir, "worktree", "add", "-b", branch, str(code_dir), base_ref)
-        git(code_dir, "config", f"branch.{branch}.agentic-base", base_ref, check=False)
-        base_commit = git(code_dir, "rev-parse", f"{base_ref}^{{commit}}", check=False)
-        if base_commit.returncode == 0:
-            git(code_dir, "config", f"branch.{branch}.agentic-base-commit", base_commit.stdout.strip(), check=False)
+            retained.append(line)
+    while retained and not retained[-1]:
+        retained.pop()
+    for required in ("/AGENTS.md", "/CLAUDE.md", "/GEMINI.md"):
+        if required not in managed:
+            managed.append(required)
+    retained.extend([marker_start, *managed, marker_end])
+    exclude_path.parent.mkdir(parents=True, exist_ok=True)
+    exclude_path.write_text("\n".join(retained) + "\n", encoding="utf-8")
 
-    if not code_dir.is_symlink():
-        configure_git_identity(code_dir)
+    command_prefix = (
+        f"agentic-team -C {shlex.quote(str(root))} run {shlex.quote(branch)} "
+        "--prepare-client --cli"
+    )
 
-
-def ensure_work(args: argparse.Namespace) -> int:
-    root = Path(args.workspace_root).expanduser().resolve()
-    project_dir = ensure_project_link(root, args.project_dir)
-    os.environ["AR_WORKSPACE_ROOT"] = str(root)
-    os.environ["AR_RUNTIME_ROOT"] = str(root / ".runtime")
-
-    child_name = slugify(args.work_name, default="work")
-    work_dir = root / child_name
-    code_dir = work_dir / "code"
-    project_state_dir = ensure_project_checkout(project_dir)
-
-    if code_dir.exists() or code_dir.is_symlink():
-        branch = current_branch(code_dir.resolve())
-        if not branch:
-            raise AgenticStateError(f"existing code path has no named Git branch: {code_dir}")
-        ensure_work_state(project_dir, branch)
-        print(f"Project dir:    {project_dir}")
-        print(f"AT workspace:   {root}")
-        print(f"Work name:      {child_name}")
-        print(f"Code worktree:  {code_dir}")
-        print(f"Work branch:    {branch}")
-        return 0
-
-    if not args.source_ref:
-        raise AgenticStateError(f"{code_dir} does not exist; pass --from REF_OR_WORK to create it")
-
-    source_work = resolve_at_work(root, args.source_ref)
-    if source_work is None:
-        source_branch = args.source_ref
-        source_state_dir = None
-        source_is_work = False
-    else:
-        source_branch, _source_code_dir, source_state_dir = source_work
-        source_is_work = True
-
-    refresh_remote_refs(project_dir)
-    new_branch = args.branch or default_child_branch(source_branch, child_name)
-    new_state_branch = work_state_branch(new_branch)
-
-    print(f"Project dir:    {project_dir}")
-    print(f"AT workspace:   {root}")
-    print(f"Work name:      {child_name}")
-    print(f"Source:         {args.source_ref}")
-    print(f"Source branch:  {source_branch}")
-    print(f"New branch:     {new_branch}")
-    print(f"Code worktree:  {code_dir}")
-    print(f"Work state:     {work_dir / 'state'}")
-
-    create_code_worktree(project_dir, code_dir, new_branch, source_branch)
-
-    if not local_branch_exists(project_dir, new_state_branch):
-        assert_new_branch_available(project_dir, new_state_branch, label="work-state")
-    new_state_dir = ensure_work_state(project_dir, new_branch, pull_remote=False, use_remote=False)
-    state_mode = args.state
-    inherit_state = state_mode == "auto" and source_is_work
-    if inherit_state:
-        if source_state_dir is None:
-            source_state_dir = ensure_work_state(project_dir, source_branch)
-        elif not source_state_dir.exists():
-            source_state_dir = ensure_work_state(project_dir, source_branch)
-
-        capabilities = capability_names(args.capabilities or os.environ.get("AR_CAPABILITIES", "agentic-notes,experiment-log"))
-        run_capability_create_work_hooks(
-            project_dir=project_dir,
-            workspace_root_dir=root,
-            work_name_value=child_name,
-            source_branch=source_branch,
-            new_branch=new_branch,
-            source_state_dir=source_state_dir,
-            new_state_dir=new_state_dir,
-            new_code_dir=code_dir,
-            project_state_dir=project_state_dir,
-            capabilities=capabilities,
+    def guard(client: str, *, shared_agents_file: bool = False) -> str:
+        client_value = "<client>" if shared_agents_file else client
+        client_note = (
+            "Replace `<client>` with the active client (`codex`, `opencode`, or `pi`). "
+            if shared_agents_file
+            else ""
+        )
+        return "# Unprepared Agentic Team Checkout\n\n" + (
+            "This Agentic Team checkout has not been prepared for a directly connected agent.\n\n"
+            "Do not inspect, modify, build, test, or run this project. Tell the user to prepare "
+            "the checkout by running:\n\n"
+            "```bash\n"
+            f"{command_prefix} {client_value} [OPTIONS]\n"
+            "```\n\n"
+            f"{client_note}"
+            "The user may also select a main agent and capabilities in that command. After it "
+            "succeeds, they must start a new agent task so the prepared instructions are loaded.\n"
         )
 
-    commit_if_changed(new_state_dir, f"work-state: initialize {new_branch} work context")
+    documents = {
+        "AGENTS.md": guard("", shared_agents_file=True),
+        "CLAUDE.md": guard("claude"),
+        "GEMINI.md": guard("gemini"),
+    }
+    for name, content in documents.items():
+        target = code / name
+        temporary = code / f".{name}.agentic-team.tmp"
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(target)
 
+
+def resolve_checkout_request(args: argparse.Namespace, repo: Path) -> tuple[str, str | None, bool]:
+    if args.new_branch:
+        branch = validate_branch(repo, args.new_branch)
+        if local_branch_exists(repo, branch) or remote_branch_exists(repo, branch):
+            fail(f"branch already exists: {branch}")
+        start = args.branch
+        if start is None:
+            symbolic = git(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD", check=False)
+            start = symbolic.stdout.strip() or None
+        if start is None or not ref_exists(repo, start):
+            fail("checkout -b requires an existing START_POINT when no origin default branch is available")
+        return branch, start, False
+
+    if args.branch is None:
+        fail("checkout requires BRANCH, or -b NEW_BRANCH [START_POINT]")
+    branch = validate_branch(repo, args.branch)
+    if local_branch_exists(repo, branch):
+        return branch, None, False
+    if remote_branch_exists(repo, branch):
+        return branch, f"origin/{branch}", True
+    if repository_has_code_commits(repo):
+        fail(f"branch '{branch}' was not found; use checkout -b {branch} START_POINT to create it")
+    return branch, None, False
+
+
+def command_checkout(args: argparse.Namespace) -> int:
+    root = resolve_root(args)
+    repo = root / BARE_REPO
+    branch, start, track = resolve_checkout_request(args, repo)
+    code = code_path(root, branch)
+    if code.exists():
+        fail(f"branch '{branch}' is already materialized at {code}")
+
+    project_records = ensure_project_records(root, repo)
+    add_worktree(
+        repo,
+        code,
+        branch,
+        start=start,
+        allow_orphan=not repository_has_code_commits(repo),
+        track=track,
+    )
+
+    twin = records_branch(branch)
+    destination_records = records_path(root, branch)
+    remote_twin = f"origin/{twin}"
+    if local_branch_exists(repo, twin):
+        add_worktree(repo, destination_records, twin)
+    elif remote_branch_exists(repo, twin):
+        add_worktree(repo, destination_records, twin, start=remote_twin, track=True)
+    else:
+        add_worktree(repo, destination_records, twin, allow_orphan=True)
+
+    source_branch = ""
+    source_records: Path | None = None
+    if start:
+        source_branch = start.removeprefix("origin/")
+        candidate = records_path(root, source_branch)
+        if source_branch != branch and candidate.is_dir():
+            source_records = candidate
+    if source_records is not None:
+        run_create_hooks(
+            root=root,
+            repo=repo,
+            branch=branch,
+            start_branch=source_branch,
+            source_records=source_records,
+            destination_records=destination_records,
+            code=code,
+            project_records=project_records,
+            capabilities=capability_names(args.capabilities),
+        )
+        commit_if_changed(destination_records, f"branch-records: initialize {branch} context")
+
+    write_unprepared_client_guards(root, code, branch)
+
+    print(f"Checked out Agentic Team branch: {branch}")
+    print(f"Code:  {code}")
+    print(f"Records: {destination_records}")
     print("")
-    print("Next:")
-    print(f"  agentic-team {root} {child_name}")
+    print("Next, run an agent with:")
+    print(f"  agentic-team -C {root} run {branch} [OPTIONS]")
+    return 0
+
+
+def logical_branches(repo: Path) -> list[str]:
+    result = git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads")
+    branches = {
+        branch
+        for branch in result.stdout.splitlines()
+        if branch != "agentic/project-records" and not branch.startswith("agentic/branch-records/")
+    }
+    for line in git(repo, "worktree", "list", "--porcelain").stdout.splitlines():
+        if not line.startswith("branch refs/heads/"):
+            continue
+        branch = line.removeprefix("branch refs/heads/")
+        if branch != "agentic/project-records" and not branch.startswith("agentic/branch-records/"):
+            branches.add(branch)
+    return sorted(branches)
+
+
+def command_branch(args: argparse.Namespace) -> int:
+    root = resolve_root(args)
+    repo = root / BARE_REPO
+    branches = logical_branches(repo)
+    if not branches:
+        print("No Agentic Team branches have been checked out yet.")
+        return 0
+    for branch in branches:
+        code = code_path(root, branch)
+        marker = "*" if code.is_dir() else " "
+        print(f"{marker} {branch}")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("-C", dest="directory", help="Operate on the AT repository at this path.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    ensure = sub.add_parser("ensure-work", help="Create or verify one named AT work entry.")
-    ensure.add_argument("work_name", help="Short directory name for the effort, e.g. kdtree-bounds.")
-    ensure.add_argument("--workspace-root", required=True, help="AT workspace root.")
-    ensure.add_argument("--from", dest="source_ref", help="Source AT work name or Git ref used when creating work.")
-    ensure.add_argument("--branch", help="New Git branch. Defaults under the source agent branch.")
-    ensure.add_argument("--project-dir", help="Existing normal project checkout used to create/repair the AT project link.")
-    ensure.add_argument("--state", choices=["auto", "clean"], default="auto")
-    ensure.add_argument("--capabilities", help="Comma/space-separated capability list for create-work hooks.")
-    ensure.set_defaults(func=ensure_work)
+    init = sub.add_parser("init", help="Initialize a fresh AT repository.")
+    init.add_argument("directory")
+    init.set_defaults(func=command_init)
+
+    clone = sub.add_parser("clone", help="Clone an upstream into a new AT repository.")
+    clone.add_argument("upstream")
+    clone.add_argument("directory")
+    clone.set_defaults(func=command_clone)
+
+    checkout = sub.add_parser("checkout", help="Materialize paired code and records branches.")
+    checkout.add_argument("-b", "--new-branch", help="Create and check out NEW_BRANCH.")
+    checkout.add_argument("branch", nargs="?", help="Existing branch, or START_POINT with -b.")
+    checkout.add_argument(
+        "--capabilities",
+        default=os.environ.get("AR_CAPABILITIES", "agentic-notes,experiment-log"),
+        help="Capabilities whose branch-creation hooks should run.",
+    )
+    checkout.set_defaults(func=command_checkout)
+
+    branch = sub.add_parser("branch", help="List logical AT branches.")
+    branch.set_defaults(func=command_branch)
     return parser
 
 
@@ -377,8 +545,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except AgenticStateError as exc:
-        print(f"agentic-workspace: {exc}", file=sys.stderr)
+    except WorkspaceError as error:
+        print(f"agentic-team: {error}", file=sys.stderr)
         return 1
 
 

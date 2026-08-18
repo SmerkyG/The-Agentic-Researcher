@@ -228,21 +228,21 @@ def test_composed_finalization_snapshots_commits_and_captures(tmp_path: Path) ->
     (state / "images" / "result.png").write_bytes(b"png")
     subprocess.run(["git", "add", "."], cwd=state, check=True)
     subprocess.run(["git", "commit", "-qm", "state"], cwd=state, check=True)
-    subprocess.run(["git", "switch", "-qc", "agentic/work-state/kernel-search"], cwd=state, check=True)
+    subprocess.run(["git", "switch", "-qc", "agentic/branch-records/kernel-search"], cwd=state, check=True)
 
     env = os.environ.copy()
     env["PATH"] = f"{BRANCH_BIN}:{FINALIZATION_BIN}:{env['PATH']}"
     env["AR_WORKFLOW_PATH"] = f"{PACKAGE_ROOT}:{BRANCH_PACKAGE}:{RESEARCH_PACKAGE}"
     env["AR_WORKSPACE_ROOT"] = str(tmp_path / "workspace")
     env["AR_WORK_BRANCH"] = "kernel-search"
-    env["AR_WORK_STATE_DIR"] = str(state)
+    env["AR_BRANCH_RECORDS_DIR"] = str(state)
     request = {
         "code_paths": ["result.txt"],
         "commit_message": "test: composed finalization",
         "checks": ["test -f result.txt"],
         "report_assets": ["images/result.png"],
         "project_dir": str(project),
-        "work_state_dir": str(state),
+        "branch_records_dir": str(state),
     }
 
     result = subprocess.run(

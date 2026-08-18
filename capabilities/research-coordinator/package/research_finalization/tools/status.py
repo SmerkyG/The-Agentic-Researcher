@@ -22,7 +22,7 @@ class FinalizationStatusTool(PythonTool[FinalizationStatusResult]):
             status_path=str(status_path(root)),
             code_branch=str(manifest["code_branch"]),
             code_commit=str(manifest["code_commit"]),
-            state_branch=str(manifest["state_branch"]),
+            records_branch=str(manifest["records_branch"]),
             state=str(status.get("state") or "captured"),
             sequence=int(status["sequence"]) if status.get("sequence") is not None else None,
             created_at=status.get("created_at"),
@@ -30,7 +30,7 @@ class FinalizationStatusTool(PythonTool[FinalizationStatusResult]):
             active_at=status.get("active_at"),
             finished_at=status.get("finished_at"),
             failed_at=status.get("failed_at"),
-            state_commit=status.get("state_commit"),
-            state_changed=status.get("state_changed"),
+            records_commit=status.get("records_commit"),
+            records_changed=status.get("records_changed"),
             error=status.get("error"),
         )

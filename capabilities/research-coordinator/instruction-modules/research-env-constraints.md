@@ -16,12 +16,12 @@
 - **Large files** (checkpoints, logs, datasets, generated data): never store in
   the code worktree. Use `$AR_ARTIFACTS_DIR` for bulky reusable project
   artifacts; by default it is `$AR_WORKSPACE_ROOT/artifacts/project`, shared
-  across AT work entries for this project. Use a unique run or experiment
+  across paired AT branches for this project. Use a unique run or experiment
   subdirectory for new writes and do not overwrite existing artifacts unless
   that is intentional.
 - **Report figures are state records**: report-ready PNG/PDF figures referenced
-  by work-state report pages are expected Git records. Save and commit them
-  under `$WORK_STATE_DIR/images/`; do not skip report-ready PNG/PDF figures
+  by branch records report pages are expected Git records. Save and commit them
+  under `$BRANCH_RECORDS_DIR/images/`; do not skip report-ready PNG/PDF figures
   merely because they are binary files. This exception is for final report
   figures only; raw arrays, checkpoints, full logs, datasets, and other bulky
   generated artifacts still belong in artifact/cache storage.

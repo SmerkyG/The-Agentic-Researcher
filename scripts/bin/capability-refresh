@@ -89,17 +89,14 @@ fi
 
 render_args=(
     "$REPO_ROOT/agentic-team"
+    "run"
+    "$project_dir"
     "--sandbox" "none"
     "--cli" "$cli"
     "--render-only"
     "--refresh-capabilities"
     "--main-agent" "$agent_type"
 )
-if [[ -n "${AR_WORK_BRANCH:-}" ]]; then
-    render_args+=("--work-branch" "$AR_WORK_BRANCH")
-fi
-render_args+=("$project_dir")
-
 if output="$("${render_args[@]}" 2>&1)"; then
     [[ -n "$output" ]] && printf '%s\n' "$output"
     printf 'Agentic Team refreshed configured capabilities and rematerialized %s.\n' "$instruction_path"

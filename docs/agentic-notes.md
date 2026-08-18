@@ -4,14 +4,14 @@ Agentic Notes is the built-in capability for Git-backed learned knowledge. It ow
 
 The capability also provides the Markdown-only `general` main agent for work
 that needs Agentic Notes but no domain-specific or imperative workflow. Select
-it with `agentic-team --main-agent general ...`; selecting the agent
+it with `agentic-team run BRANCH --main-agent general`; selecting the agent
 automatically enables its providing capability.
 
-Agentic Notes uses Agentic State for storage. See [agentic-state.md](agentic-state.md) for workspace naming, org/project/work-branch scopes, orphan state branches, locks, refresh behavior, visible workspace locations, and operational cache locations.
+Agentic Notes uses Agentic Records for storage. See [agentic-records.md](agentic-records.md) for workspace naming, org/project/branch scopes, orphan records branches, locks, refresh behavior, visible workspace locations, and operational cache locations.
 
 ## Layout
 
-Every Agentic State scope that supports notes uses the same layout:
+Every Agentic Records scope that supports notes uses the same layout:
 
 ```text
 agent-notes/
@@ -35,8 +35,8 @@ The same layout can appear in:
 | Scope | Backing location |
 |-------|------------------|
 | Org | Optional org repo configured by `AR_ORG_NOTES_REPO` |
-| Project | Project repo orphan branch `agentic/project-state` |
-| Work branch | Project repo orphan branch `agentic/work-state/<work-branch>` |
+| Project | Project repo orphan branch `agentic/project-records` |
+| Work branch | Project repo orphan branch `agentic/branch-records/<work-branch>` |
 
 ## Note Types
 
@@ -74,9 +74,9 @@ The merged topic list is intentionally compact and does not show which scope
 introduced a topic. If multiple scopes provide `Topic hints:` for the same note
 topic, the most-specific available hint is shown.
 
-When a new AT work entry is forked from an existing AT work entry, Agentic Team
-copies the source work branch's `agent-notes/` files into the new work-state
-branch. Existing non-empty notes in the new work-state branch are not
+When a new paired branch is created from an existing materialized AT branch, Agentic Team
+copies the source branch's `agent-notes/` files into the new branch records
+branch. Existing non-empty notes in the new records branch are not
 overwritten.
 
 The generated instruction file is a materialized view. Do not edit injected note text there directly.

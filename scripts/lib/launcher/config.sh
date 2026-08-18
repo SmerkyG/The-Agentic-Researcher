@@ -14,9 +14,8 @@ LAUNCHER_ENV_OVERRIDE_VARS=(
     AR_CAPABILITIES
     AR_ORG_NOTES_REPO
     AR_MAIN_AGENT
-    AR_WORK_BRANCH
     AR_USER_ID
-    AR_PROJECT_STATE_BRANCH
+    AR_PROJECT_RECORDS_BRANCH
     AR_NOTES_AUTO_REFRESH
     AR_NOTES_REFRESH_MODE
     AR_NOTES_REFRESH_INTERVAL_SECONDS
@@ -95,9 +94,6 @@ apply_env_overrides() {
     if [[ -n "${AR_MAIN_AGENT_OVERRIDE:-}" ]]; then
         AR_MAIN_AGENT="$AR_MAIN_AGENT_OVERRIDE"
     fi
-    if [[ -n "${AR_WORK_BRANCH_OVERRIDE:-}" ]]; then
-        AR_WORK_BRANCH="$AR_WORK_BRANCH_OVERRIDE"
-    fi
     if [[ -n "${AR_CLI_OVERRIDE:-}" ]]; then
         AR_CLI="$AR_CLI_OVERRIDE"
     fi
@@ -136,7 +132,7 @@ apply_defaults() {
     AR_MAIN_AGENT="${AR_MAIN_AGENT:-}"
     AR_WORK_BRANCH="${AR_WORK_BRANCH:-}"
     AR_USER_ID="${AR_USER_ID:-$USER}"
-    AR_PROJECT_STATE_BRANCH="${AR_PROJECT_STATE_BRANCH:-agentic/project-state}"
+    AR_PROJECT_RECORDS_BRANCH="${AR_PROJECT_RECORDS_BRANCH:-agentic/project-records}"
     AR_NOTES_AUTO_REFRESH="${AR_NOTES_AUTO_REFRESH:-true}"
     AR_NOTES_REFRESH_MODE="${AR_NOTES_REFRESH_MODE:-periodic}"
     AR_NOTES_REFRESH_INTERVAL_SECONDS="${AR_NOTES_REFRESH_INTERVAL_SECONDS:-120}"
@@ -155,13 +151,10 @@ MODEL_SPECIFIED=false
 DEBUG_LAUNCH=false
 WORKSPACE_DIR=""
 WORKSPACE_INPUT_DIR=""
-WORKTREE_PATH_ARG=""
 AT_WORKSPACE_DIR_ARG=""
-AT_WORK_NAME_ARG=""
-AT_FROM_REF=""
-AT_PROJECT_DIR_ARG=""
-AT_NEW_BRANCH_ARG=""
-AT_STATE_MODE="auto"
+AT_BRANCH_ARG=""
+TOP_LEVEL_RUN_ROOT=""
+TOP_LEVEL_ARGS=()
 CLI_ARGS=()
 POSITIONAL_ARGS=()
 SELECTED_CAPABILITIES=()
@@ -174,6 +167,88 @@ BRANCH_GUARD_HEARTBEAT_PID=""
 MAIN_AGENT_SOURCE_PATH=""
 MAIN_AGENT_CAPABILITY=""
 AGENTIC_NOTES_CAPABILITY_SETUP=false
+
+normalize_top_level_command() {
+    local command="" root="" index
+    local -a args=("$@")
+
+    if (( ${#args[@]} >= 1 )) && [[ "${args[0]}" == "-C" ]]; then
+        if (( ${#args[@]} < 3 )); then
+            echo "Error: -C requires an AT repository path and a command." >&2
+            exit 2
+        fi
+        root="${args[1]}"
+        command="${args[2]}"
+        case "$command" in
+            init|clone|checkout|branch)
+                exec "$SCRIPT_DIR/scripts/bin/agentic-workspace" -C "$root" "$command" "${args[@]:3}"
+                ;;
+            run)
+                TOP_LEVEL_RUN_ROOT="$root"
+                TOP_LEVEL_ARGS=("${args[@]:3}")
+                return
+                ;;
+            *)
+                echo "Error: Unknown Agentic Team command: $command" >&2
+                show_help >&2
+                exit 2
+                ;;
+        esac
+    fi
+
+    # Permit known launcher options before `run` while keeping the subcommand
+    # explicit. Option values are skipped so `--model run` is not mistaken for
+    # the subcommand.
+    index=0
+    while (( index < ${#args[@]} )); do
+        case "${args[$index]}" in
+            run)
+                TOP_LEVEL_ARGS=("${args[@]:0:$index}" "${args[@]:$((index + 1))}")
+                return
+                ;;
+            --sandbox|--cli|--capability|--main-agent|--model|--context)
+                index=$((index + 2))
+                ;;
+            --resume|-r)
+                if (( index + 1 < ${#args[@]} )) && [[ "${args[$((index + 1))]}" != "run" && "${args[$((index + 1))]}" != -* ]]; then
+                    index=$((index + 2))
+                else
+                    index=$((index + 1))
+                fi
+                ;;
+            --test|--render-only|--prepare-client|--refresh-capabilities|--debug-launch|--yolo|--continue|-c)
+                index=$((index + 1))
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    command="${args[0]:-}"
+    case "$command" in
+        init|clone|checkout|branch)
+            exec "$SCRIPT_DIR/scripts/bin/agentic-workspace" "$command" "${args[@]:1}"
+            ;;
+        run)
+            TOP_LEVEL_ARGS=("${args[@]:1}")
+            ;;
+        --setup|--clean|--uninstall|--help|-h)
+            TOP_LEVEL_ARGS=("${args[@]}")
+            ;;
+        "")
+            echo "Error: agentic-team requires a command." >&2
+            show_help >&2
+            exit 2
+            ;;
+        *)
+            echo "Error: Expected an Agentic Team command, not '$command'." >&2
+            echo "Use 'agentic-team run ...' to launch an agent." >&2
+            show_help >&2
+            exit 2
+            ;;
+    esac
+}
 
 append_capability_override() {
     local capability_name="$1"
@@ -188,12 +263,6 @@ parse_arguments() {
     local sandbox_options cli_options
     sandbox_options="$(registered_sandbox_option_list)"
     cli_options="$(registered_cli_option_list)"
-
-    if [[ $# -eq 0 ]]; then
-        echo "Error: agentic-team requires a project/workspace argument or an explicit mode." >&2
-        show_help >&2
-        exit 2
-    fi
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -271,71 +340,23 @@ parse_arguments() {
                 shift 2
                 ;;
             --work-branch)
-                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --work-branch requires a value"
-                    exit 1
-                fi
-                AR_WORK_BRANCH_OVERRIDE="$2"
-                shift 2
+                echo "Error: --work-branch is not a run option; select the paired branch in 'agentic-team run BRANCH'."
+                exit 1
                 ;;
-            --worktree-path)
-                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --worktree-path requires a value"
-                    exit 1
-                fi
-                WORKTREE_PATH_ARG="$2"
-                shift 2
-                ;;
-            --from)
-                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --from requires a value"
-                    exit 1
-                fi
-                AT_FROM_REF="$2"
-                shift 2
-                ;;
-            --project-dir)
-                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --project-dir requires a value"
-                    exit 1
-                fi
-                AT_PROJECT_DIR_ARG="$2"
-                shift 2
-                ;;
-            --branch)
-                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --branch requires a value"
-                    exit 1
-                fi
-                AT_NEW_BRANCH_ARG="$2"
-                shift 2
-                ;;
-            --state)
-                if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
-                    echo "Error: --state requires a value (auto or clean)"
-                    exit 1
-                fi
-                case "$2" in
-                    auto|clean)
-                        AT_STATE_MODE="$2"
-                        ;;
-                    *)
-                        echo "Error: --state must be auto or clean"
-                        exit 1
-                        ;;
-                esac
-                shift 2
+            --worktree-path|--from|--project-dir|--branch|--state)
+                echo "Error: $1 is not a run option. Use 'agentic-team checkout' to create a paired branch checkout."
+                exit 1
                 ;;
             --agent-branch)
-                echo "Error: --agent-branch has been removed. Use --work-branch with the Git branch name."
+                echo "Error: --agent-branch has been removed. Select the paired branch in 'agentic-team run BRANCH'."
                 exit 1
                 ;;
             --agent-topic)
-                echo "Error: --agent-topic has been removed. Use --work-branch with the Git branch name."
+                echo "Error: --agent-topic has been removed. Select the paired branch in 'agentic-team run BRANCH'."
                 exit 1
                 ;;
             --allow-shared-branch)
-                echo "Error: --allow-shared-branch has been removed. Launch a separate AT work entry instead."
+                echo "Error: --allow-shared-branch has been removed. Create a separate paired branch instead."
                 exit 1
                 ;;
             --yolo)
@@ -417,8 +438,12 @@ show_help() {
 agentic-team: Launch an AI coding agent for structured team workflows.
 
 Usage:
-  agentic-team [OPTIONS] [PROJECT_DIR] [CLI_OPTIONS...]
-  agentic-team [OPTIONS] AT_DIR WORK_NAME [CLI_OPTIONS...]
+  agentic-team init AT_DIR
+  agentic-team clone UPSTREAM_URL AT_DIR
+  agentic-team [-C AT_DIR] checkout BRANCH
+  agentic-team [-C AT_DIR] checkout -b NEW_BRANCH [START_POINT]
+  agentic-team [-C AT_DIR] branch
+  agentic-team [-C AT_DIR] run [BRANCH] [OPTIONS] [CLI_OPTIONS...]
 
 Options:
   --setup             Run the interactive setup wizard
@@ -431,49 +456,32 @@ Options:
   --refresh-capabilities
                       With --render-only, run capability refresh hooks before rendering
   --capability NAME   Enable a capability from capabilities/ (repeatable)
-  --project-dir DIR   Existing normal project checkout for creating/repairing an AT workspace
   --main-agent NAME   Override top-level main agent for this invocation
-  --work-branch NAME  Create/switch to this Git branch before launch
-  --worktree-path DIR Launch an explicit Git worktree path instead of AT_DIR WORK_NAME
-  --from REF_OR_WORK  Create missing AT work from a Git ref or existing AT work name
-  --branch NAME       New Git branch when creating missing AT work
-  --state MODE        Context inheritance for created AT work: auto or clean
   --debug-launch      Print extra launcher details and enable CLI startup logs where supported
   --cli CLI           Select CLI ($cli_options)
   --yolo              Auto-approve tool call permissions where supported
   --resume [ID]       Resume a session (interactive picker, or specify ID)
   --continue, -c      Continue the most recent conversation
   --model MODEL       Override default model
-  PROJECT_DIR         Normal project checkout for first-run setup
-  AT_DIR WORK_NAME    Launch or create the named AT work entry at AT_DIR/WORK_NAME/code
+  BRANCH              Existing paired AT branch to run
   CLI_OPTIONS         Additional options passed to the selected CLI
 
 Examples:
-  agentic-team --sandbox none ~/my-project-at research-main
-  agentic-team --capability cluster-run ~/my-project-at research-main
-  agentic-team --sandbox apptainer --capability remote-run ~/my-project-at research-main
-  agentic-team --sandbox apptainer --capability remote-run --test ~/my-project-at research-main
-  agentic-team --main-agent research-paper-author ~/my-project-at paper
+  agentic-team init ~/my-project-at
+  agentic-team clone https://github.com/example/project.git ~/my-project-at
+  agentic-team -C ~/my-project-at checkout main
+  agentic-team -C ~/my-project-at checkout -b agent/benchmarks main
+  agentic-team -C ~/my-project-at branch
+  agentic-team -C ~/my-project-at run agent/benchmarks --main-agent ml-engineer
+  agentic-team -C ~/my-project-at run agent/benchmarks --sandbox none --yolo
   agentic-team --setup                      # Setup wizard
   agentic-team --clean                      # Interactive cleanup of local state
   agentic-team --uninstall                  # Remove installed launcher
   agentic-team --clean --yes --include-config
-  agentic-team --test ~/my-project-at research-main
-  agentic-team --render-only --cli codex ~/my-project-at research-main
-  agentic-team --render-only --refresh-capabilities --cli codex ~/my-project-at research-main
-  agentic-team --prepare-client --cli codex ~/my-project-at research-main
-  agentic-team --cli opencode --debug-launch ~/my-project-at research-main
-  agentic-team ~/my-project
-  agentic-team ~/my-project-at research-main
-  agentic-team ~/my-project-at research-main --from main --project-dir ~/my-project
-  agentic-team ~/my-project-at kdtree-bounds --from research-main
-  agentic-team ~/my-project-at kdtree-bounds --from research-main --state clean
-  agentic-team --worktree-path ~/my-project-at/research-main/code
-  agentic-team --yolo ~/my-project-at research-main
-  agentic-team --cli gemini ~/my-project-at research-main
-  agentic-team --cli codex --worktree-path ~/my-project-at/research-main/code
-  agentic-team --yolo --model opus ~/my-project-at research-main
-  agentic-team --work-branch feature/kernel-search ~/my-project-at research-main
+  agentic-team -C ~/my-project-at run main --test
+  agentic-team -C ~/my-project-at run main --render-only --cli codex
+  agentic-team -C ~/my-project-at run main --prepare-client --cli codex
+  agentic-team run --main-agent general  # when invoked inside branches/BRANCH/code
 
 What's Sandboxed:
   The agent can write your project directory, AR_ARTIFACTS_DIR, AR_WORKSPACE_ROOT, AR_RUNTIME_ROOT, and AR_STATE_ROOT.

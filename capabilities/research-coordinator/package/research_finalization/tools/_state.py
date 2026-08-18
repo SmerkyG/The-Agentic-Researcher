@@ -47,7 +47,7 @@ def ticket(root: Path, manifest: dict[str, Any], state: str) -> FinalizationTick
         status_path=str(status_path(root)),
         code_branch=str(manifest["code_branch"]),
         code_commit=str(manifest["code_commit"]),
-        state_branch=str(manifest["state_branch"]),
+        records_branch=str(manifest["records_branch"]),
         state=state,
     )
 
@@ -88,8 +88,8 @@ def finish_ticket(
         update_status(root, **values)
     if state == "complete":
         drop_branch_worktree(
-            source_worktree=str(manifest["work_state_dir"]),
-            worktree=root / "state",
+            source_worktree=str(manifest["branch_records_dir"]),
+            worktree=root / "records",
         )
         shutil.rmtree(root / "assets", ignore_errors=True)
     return ticket(root, manifest, state)

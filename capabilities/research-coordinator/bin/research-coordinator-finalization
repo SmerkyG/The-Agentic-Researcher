@@ -25,7 +25,7 @@ from agentic_tools.runner import cli as tool_cli  # noqa: E402
 TOOLS = {
     "capture": "research_finalization.tools.capture:FinalizationCaptureTool",
     "ready": "research_finalization.tools.ready:FinalizationReadyTool",
-    "commit": "research_finalization.tools.commit:FinalizationStateCommitTool",
+    "commit": "research_finalization.tools.commit:FinalizationRecordsCommitTool",
     "finish": "research_finalization.tools.finish:FinalizationFinishTool",
     "status": "research_finalization.tools.status:FinalizationStatusTool",
     "reconcile": "research_finalization.tools.reconcile:FinalizationReconcileTool",

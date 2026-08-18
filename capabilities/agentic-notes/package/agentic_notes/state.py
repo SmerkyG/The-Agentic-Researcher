@@ -140,7 +140,7 @@ def ensure_work_agent_notes_state(
     if pull_remote and git_remote(repo):
         pull_ff(repo, branch, missing_ok=True)
     changed_paths = ensure_work_agent_notes_state_files(repo, active_work_branch)
-    changed = commit_if_changed(repo, f"work-state: initialize {active_work_branch}", changed_paths)
+    changed = commit_if_changed(repo, f"branch-records: initialize {active_work_branch}", changed_paths)
     if push_changes and (changed or not remote_branch_exists(repo, branch)):
         push(repo, branch)
     return repo
@@ -160,7 +160,7 @@ def refresh(args: argparse.Namespace) -> None:
         ("project", lambda: pull_ff(project_repo, state_branch(), missing_ok=True)),
     ]
     if work_state_repo is not None and active_work_branch is not None:
-        refresh_tasks.append(("work-state", lambda: pull_ff(work_state_repo, work_state_branch(active_work_branch), missing_ok=True)))
+        refresh_tasks.append(("branch-records", lambda: pull_ff(work_state_repo, work_state_branch(active_work_branch), missing_ok=True)))
     if org is not None:
         refresh_tasks.append(("org", lambda: pull_ff(org)))
     run_parallel_refresh(refresh_tasks)
@@ -859,7 +859,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--work-branch", default=os.environ.get("AR_WORK_BRANCH"))
     p.set_defaults(func=replace_note)
 
-    p = sub.add_parser("ensure-project-state")
+    p = sub.add_parser("ensure-project-records")
     p.add_argument("--project-dir", required=True)
     p.add_argument("--skip-pull", action="store_true")
     p.add_argument("--no-push", action="store_true")
@@ -890,7 +890,7 @@ def lock_paths_for_args(args: argparse.Namespace) -> list[Path]:
     def add_org_lock() -> None:
         paths.append(lock_file_for("org-agentic-notes"))
 
-    if command == "ensure-project-state":
+    if command == "ensure-project-records":
         add_project_lock()
     elif command == "refresh":
         if os.environ.get("AR_ORG_NOTES_REPO"):

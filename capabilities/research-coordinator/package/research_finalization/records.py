@@ -18,20 +18,20 @@ class FinalizationTicket(Record):
     status_path: str
     code_branch: str
     code_commit: str
-    state_branch: str
+    records_branch: str
     state: FinalizationState
 
 
 class FinalizationWorkspace(FinalizationTicket):
     """Temporary worktree created from the latest research-state commit."""
 
-    state_dir: str
-    state_base_commit: str
+    records_dir: str
+    records_base_commit: str
 
 
-class FinalizationStateCommitResult(FinalizationWorkspace):
-    state_commit: str
-    state_changed: bool
+class FinalizationRecordsCommitResult(FinalizationWorkspace):
+    records_commit: str
+    records_changed: bool
 
 
 class FinalizationStatusResult(FinalizationTicket):
@@ -43,8 +43,8 @@ class FinalizationStatusResult(FinalizationTicket):
     active_at: str | None = None
     finished_at: str | None = None
     failed_at: str | None = None
-    state_commit: str | None = None
-    state_changed: bool | None = None
+    records_commit: str | None = None
+    records_changed: bool | None = None
     error: str | None = None
 
 

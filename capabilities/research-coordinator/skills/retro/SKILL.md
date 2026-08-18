@@ -28,16 +28,16 @@ Read the following files (skip any that don't exist):
 9. Run `git diff --stat HEAD~5..HEAD 2>/dev/null || true` -- recent change patterns
 
 For work-branch records, use the experiment-log command and direct reads from
-the work-state worktree:
+the branch records worktree:
 
 ```bash
 experiment-log summary --project-dir "$PROJECT_DIR" --work-branch "$AR_WORK_BRANCH" 2>/dev/null || true
-WORK_STATE_DIR="${AR_WORK_STATE_DIR:?}"
-test -f "$WORK_STATE_DIR/condensed_report.md" && sed -n '1,180p' "$WORK_STATE_DIR/condensed_report.md"
-ls "$WORK_STATE_DIR"/report_page*.md 2>/dev/null || true
-latest_report="$(find "$WORK_STATE_DIR" -maxdepth 1 -type f -name 'report_page*.md' -printf '%f\n' | sort -V | tail -1)"
-test -n "$latest_report" && sed -n '1,220p' "$WORK_STATE_DIR/$latest_report"
-test -f "$WORK_STATE_DIR/TODO.md" && sed -n '1,220p' "$WORK_STATE_DIR/TODO.md"
+BRANCH_RECORDS_DIR="${AR_BRANCH_RECORDS_DIR:?}"
+test -f "$BRANCH_RECORDS_DIR/condensed_report.md" && sed -n '1,180p' "$BRANCH_RECORDS_DIR/condensed_report.md"
+ls "$BRANCH_RECORDS_DIR"/report_page*.md 2>/dev/null || true
+latest_report="$(find "$BRANCH_RECORDS_DIR" -maxdepth 1 -type f -name 'report_page*.md' -printf '%f\n' | sort -V | tail -1)"
+test -n "$latest_report" && sed -n '1,220p' "$BRANCH_RECORDS_DIR/$latest_report"
+test -f "$BRANCH_RECORDS_DIR/TODO.md" && sed -n '1,220p' "$BRANCH_RECORDS_DIR/TODO.md"
 ```
 
 ## Step 2: Commandment Compliance
@@ -71,7 +71,7 @@ Reflect on these additional dimensions:
 
 ### B. Experiment Log and Report Quality
 - Is the shared experiment log complete enough to reconstruct what was run?
-- Was completed code committed before detached finalization, then reported, logged, and note-triaged from a temporary state worktree without blocking the coordinator?
+- Was completed code committed before detached finalization, then reported, logged, and note-triaged from a temporary records worktree without blocking the coordinator?
 - Were corrections appended through `ExperimentLogCorrectTool` instead of manually altering old experiment fields?
 - Was `SUMMARY.md` append-maintained rather than regenerated or hand-edited?
 - Is `condensed_report.md` concise, current, and about one page rather than a growing chronology?

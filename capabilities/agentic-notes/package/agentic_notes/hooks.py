@@ -58,10 +58,10 @@ def refresh_loop() -> None:
 
 
 def create_work() -> None:
-    source_state = Path(_required("AT_CREATE_SOURCE_STATE_DIR"))
-    new_state = Path(_required("AT_CREATE_NEW_STATE_DIR"))
-    source_notes = source_state / "agent-notes"
-    new_notes = new_state / "agent-notes"
+    source_records = Path(_required("AT_CREATE_SOURCE_RECORDS_DIR"))
+    new_records = Path(_required("AT_CREATE_NEW_RECORDS_DIR"))
+    source_notes = source_records / "agent-notes"
+    new_notes = new_records / "agent-notes"
 
     if not source_notes.is_dir():
         print("No inherited Agentic Notes to copy.")

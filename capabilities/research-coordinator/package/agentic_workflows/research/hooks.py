@@ -1,4 +1,4 @@
-"""Package-native lifecycle hooks for research work-state creation."""
+"""Package-native lifecycle hooks for research branch-record creation."""
 
 from __future__ import annotations
 
@@ -26,10 +26,6 @@ def _git(repo: Path, *args: str) -> str:
         stderr=subprocess.PIPE,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
-
-
-def _work_name(branch: str) -> str:
-    return branch.rstrip("/").rsplit("/", 1)[-1] or "parent"
 
 
 def _report_page_key(name: str) -> tuple[int, str]:
@@ -63,8 +59,8 @@ def _selected_files(repo: Path) -> list[str]:
     return preferred
 
 
-def _read_references(parent_state: Path) -> list[dict[str, object]]:
-    path = parent_state / "context" / "manifest.yaml"
+def _read_references(parent_records: Path) -> list[dict[str, object]]:
+    path = parent_records / "context" / "manifest.yaml"
     if not path.exists():
         return []
     value = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -76,10 +72,9 @@ def _read_references(parent_state: Path) -> list[dict[str, object]]:
             continue
         references.append(
             {
-                "work_name": str(entry.get("work_name") or "unknown"),
                 "work_branch": str(entry.get("work_branch") or ""),
-                "state_branch": str(entry.get("state_branch") or ""),
-                "state_commit": str(entry.get("state_commit") or ""),
+                "records_branch": str(entry.get("records_branch") or ""),
+                "records_commit": str(entry.get("records_commit") or ""),
                 "files": [str(item) for item in entry.get("files", [])],
             }
         )
@@ -91,18 +86,17 @@ def _merge_references(references: list[dict[str, object]]) -> list[dict[str, obj
     for entry in references:
         key = (
             str(entry.get("work_branch") or ""),
-            str(entry.get("state_branch") or ""),
-            str(entry.get("state_commit") or ""),
+            str(entry.get("records_branch") or ""),
+            str(entry.get("records_commit") or ""),
         )
         if not any(key):
             continue
         target = merged.setdefault(
             key,
             {
-                "work_name": str(entry.get("work_name") or "unknown"),
                 "work_branch": key[0],
-                "state_branch": key[1],
-                "state_commit": key[2],
+                "records_branch": key[1],
+                "records_commit": key[2],
                 "files": [],
             },
         )
@@ -122,46 +116,43 @@ def _copy_if_missing(source: Path, target: Path) -> None:
 
 
 def create_work() -> None:
-    parent_state = Path(_required("AT_CREATE_SOURCE_STATE_DIR"))
-    new_state = Path(_required("AT_CREATE_NEW_STATE_DIR"))
-    work_name = _required("AT_CREATE_WORK_NAME")
+    parent_records = Path(_required("AT_CREATE_SOURCE_RECORDS_DIR"))
+    new_records = Path(_required("AT_CREATE_NEW_RECORDS_DIR"))
     parent_branch = _required("AT_CREATE_SOURCE_BRANCH")
     new_branch = _required("AT_CREATE_NEW_BRANCH")
 
-    parent_context = new_state / "context" / "parent"
+    parent_context = new_records / "context" / "parent"
     parent_context.mkdir(parents=True, exist_ok=True)
-    (new_state / "images").mkdir(parents=True, exist_ok=True)
-    _copy_if_missing(parent_state / "condensed_report.md", parent_context / "condensed_report.md")
-    reports = sorted(parent_state.glob("report_page*.md"), key=lambda path: _report_page_key(path.name))
+    (new_records / "images").mkdir(parents=True, exist_ok=True)
+    _copy_if_missing(parent_records / "condensed_report.md", parent_context / "condensed_report.md")
+    reports = sorted(parent_records.glob("report_page*.md"), key=lambda path: _report_page_key(path.name))
     if reports:
         _copy_if_missing(reports[-1], parent_context / reports[-1].name)
-    _copy_if_missing(parent_state / "TODO.md", parent_context / "TODO.md")
+    _copy_if_missing(parent_records / "TODO.md", parent_context / "TODO.md")
 
-    state_branch = _git(parent_state, "branch", "--show-current")
-    state_commit = _git(parent_state, "rev-parse", "--verify", "HEAD")
-    references = _read_references(parent_state)
-    parent_files = _selected_files(parent_state)
-    if state_commit and parent_files:
+    records_branch = _git(parent_records, "branch", "--show-current")
+    records_commit = _git(parent_records, "rev-parse", "--verify", "HEAD")
+    references = _read_references(parent_records)
+    parent_files = _selected_files(parent_records)
+    if records_commit and parent_files:
         references.append(
             {
-                "work_name": _work_name(parent_branch),
                 "work_branch": parent_branch,
-                "state_branch": state_branch,
-                "state_commit": state_commit,
+                "records_branch": records_branch,
+                "records_commit": records_commit,
                 "files": parent_files,
             }
         )
     manifest = {
         "version": 1,
         "created_from": {
-            "work_name": _work_name(parent_branch),
             "work_branch": parent_branch,
-            "state_branch": state_branch,
-            "state_commit": state_commit,
+            "records_branch": records_branch,
+            "records_commit": records_commit,
         },
         "references": _merge_references(references),
     }
-    context_dir = new_state / "context"
+    context_dir = new_records / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
     (context_dir / "manifest.yaml").write_text(
         yaml.safe_dump(manifest, sort_keys=False, allow_unicode=False),
@@ -183,34 +174,34 @@ def create_work() -> None:
         "Read a referenced file with:",
         "",
         "```bash",
-        'git -C "$AR_WORK_STATE_DIR" show <state_commit>:<path>',
+        'git -C "$AR_BRANCH_RECORDS_DIR" show <records_commit>:<path>',
         "```",
     ]
     if manifest["references"]:
         readme.extend(["", "## References", ""])
         for entry in manifest["references"]:
             readme.append(
-                f"- `{entry['work_name']}` (`{entry['work_branch']}`) "
-                f"state `{entry['state_branch']}` at `{entry['state_commit']}`"
+                f"- `{entry['work_branch']}` records `{entry['records_branch']}` "
+                f"at `{entry['records_commit']}`"
             )
             for file_name in entry["files"]:
                 readme.append(f"  - `{file_name}`")
     (context_dir / "README.md").write_text("\n".join(readme) + "\n", encoding="utf-8")
 
-    condensed_report = new_state / "condensed_report.md"
+    condensed_report = new_records / "condensed_report.md"
     if not condensed_report.exists():
         condensed_report.write_text(
-            f"# Condensed Report: {work_name}\n\n"
+            f"# Condensed Report: {new_branch}\n\n"
             f"Created from `{parent_branch}` into `{new_branch}`.\n\n"
             "Keep this condensed report to about one page. Rewrite it as the work evolves so it "
             "summarizes the current best findings, important negative results, open risks, and "
             "next direction without accumulating a long chronology.\n",
             encoding="utf-8",
         )
-    report = new_state / "report_page1.md"
+    report = new_records / "report_page1.md"
     if not report.exists():
         report.write_text(
-            f"# Research Log: {work_name}\n\n"
+            f"# Research Log: {new_branch}\n\n"
             f"Created from `{parent_branch}` into `{new_branch}`.\n\n"
             "## Inherited Context\n\nRead `context/README.md` first. The immediate parent's "
             "`condensed_report.md`, latest numbered report page, and `TODO.md` are copied under "
@@ -221,11 +212,11 @@ def create_work() -> None:
             "numbered page when the latest page already has 300 lines.\n",
             encoding="utf-8",
         )
-    todo = new_state / "TODO.md"
+    todo = new_records / "TODO.md"
     if not todo.exists():
         todo.write_text(
             "# TODO\n\n- [ ] Read inherited context from `context/README.md`\n"
-            f"- [ ] Define the first experiment for `{work_name}`\n",
+            f"- [ ] Define the first experiment for `{new_branch}`\n",
             encoding="utf-8",
         )
     print(f"Referenced inherited context in {context_dir / 'manifest.yaml'}")

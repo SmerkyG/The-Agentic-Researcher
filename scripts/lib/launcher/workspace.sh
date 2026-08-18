@@ -1,43 +1,33 @@
-# Sourced by agentic-team. Project/worktree validation and branch guard logic.
+# Sourced by agentic-team. Repository-v2 discovery, validation, and branch guards.
 
 validate_workspace() {
-    # Default to current directory
-    if [[ -z "$WORKSPACE_DIR" ]]; then
-        WORKSPACE_DIR="$(pwd)"
-    fi
-
-    # Resolve symlinks in a macOS/Linux portable way.
     local original_workspace resolved_workspace
+    [[ -n "$WORKSPACE_DIR" ]] || WORKSPACE_DIR="$(pwd)"
     original_workspace="$WORKSPACE_DIR"
     WORKSPACE_INPUT_DIR="$original_workspace"
     export WORKSPACE_INPUT_DIR
     if ! resolved_workspace="$(resolve_realpath "$WORKSPACE_DIR")"; then
-        echo "Error: Cannot resolve path: $original_workspace"
+        echo "Error: Cannot resolve path: $original_workspace" >&2
         exit 1
     fi
     WORKSPACE_DIR="$resolved_workspace"
+    [[ -d "$WORKSPACE_DIR" ]] || { echo "Error: Directory does not exist: $WORKSPACE_DIR" >&2; exit 1; }
 
-    if [[ ! -d "$WORKSPACE_DIR" ]]; then
-        echo "Error: Directory does not exist: $WORKSPACE_DIR"
-        exit 1
-    fi
-
-    # SECURITY: Prevent sandboxing of sensitive system directories
     case "$WORKSPACE_DIR" in
         /|/etc/*|/etc|/root/*|/root|/sys/*|/sys|/proc/*|/proc|/dev/*|/dev|/boot/*|/boot)
-            echo "Error: Cannot sandbox system directories: $WORKSPACE_DIR"
+            echo "Error: Cannot sandbox system directories: $WORKSPACE_DIR" >&2
             exit 1
             ;;
         /home/*/.ssh/*|/home/*/.ssh|/Users/*/.ssh/*|/Users/*/.ssh)
-            echo "Error: Cannot sandbox SSH directories: $WORKSPACE_DIR"
+            echo "Error: Cannot sandbox SSH directories: $WORKSPACE_DIR" >&2
             exit 1
             ;;
         /home/*/.gnupg/*|/home/*/.gnupg|/Users/*/.gnupg/*|/Users/*/.gnupg)
-            echo "Error: Cannot sandbox GPG directories: $WORKSPACE_DIR"
+            echo "Error: Cannot sandbox GPG directories: $WORKSPACE_DIR" >&2
             exit 1
             ;;
         /home/*/.aws/*|/home/*/.aws|/home/*/.kube/*|/home/*/.kube|/home/*/.config/gcloud/*|/home/*/.config/gcloud|/Users/*/.aws/*|/Users/*/.aws|/Users/*/.kube/*|/Users/*/.kube|/Users/*/.config/gcloud/*|/Users/*/.config/gcloud)
-            echo "Error: Cannot sandbox cloud credential directories: $WORKSPACE_DIR"
+            echo "Error: Cannot sandbox cloud credential directories: $WORKSPACE_DIR" >&2
             exit 1
             ;;
     esac
@@ -49,86 +39,146 @@ validate_cli_workspace() {
 
 slugify_workspace_name() {
     local text="$1" slug
-    slug="$(printf '%s' "$text" \
-        | tr '[:upper:]' '[:lower:]' \
+    slug="$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]' \
         | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')"
     slug="${slug:0:72}"
-    slug="${slug%-}"
-    printf '%s\n' "${slug:-project}"
+    printf '%s\n' "${slug%-}"
 }
 
-path_looks_like_at_workspace() {
-    local path="$1" base
-    base="$(basename "$path")"
-    [[ "$base" == *-at ]] && return 0
-    [[ -e "$path/project" || -e "$path/project-state" ]] && return 0
+expand_path() {
+    case "$1" in
+        "~") printf '%s\n' "$HOME" ;;
+        "~/"*) printf '%s/%s\n' "$HOME" "${1#~/}" ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+path_is_at_repository_root() {
+    [[ -f "$1/.agentic-team.json" && -d "$1/repo.git" ]]
+}
+
+find_at_repository_root() {
+    local path
+    path="$(expand_path "$1")"
+    path="$(resolve_realpath "$path" 2>/dev/null || true)"
+    [[ -n "$path" ]] || return 1
+    [[ -f "$path" ]] && path="$(dirname "$path")"
+    while [[ "$path" != "/" ]]; do
+        if path_is_at_repository_root "$path"; then
+            printf '%s\n' "$path"
+            return 0
+        fi
+        path="$(dirname "$path")"
+    done
     return 1
 }
 
-workspace_input_is_at_code_path() {
-    local path="${WORKSPACE_INPUT_DIR:-$WORKSPACE_DIR}"
-    [[ "$(basename "$path")" == "code" && "$(basename "$(dirname "$(dirname "$path")")")" == *-at ]]
+at_code_path_for_branch() {
+    printf '%s/branches/%s/code\n' "$1" "$2"
+}
+
+at_records_path_for_branch() {
+    printf '%s/branches/%s/records\n' "$1" "$2"
+}
+
+list_materialized_at_branches() {
+    local root="$1" line branch
+    git -C "$root/repo.git" worktree list --porcelain 2>/dev/null \
+        | while IFS= read -r line; do
+            [[ "$line" == "branch refs/heads/"* ]] || continue
+            branch="${line#branch refs/heads/}"
+            [[ "$branch" == "agentic/project-records" || "$branch" == agentic/branch-records/* ]] && continue
+            printf '%s\n' "$branch"
+        done | LC_ALL=C sort -u
+}
+
+show_materialized_at_branches() {
+    local root="$1" branches branch
+    branches="$(list_materialized_at_branches "$root")"
+    if [[ -z "$branches" ]]; then
+        echo "No paired branches have been checked out in $root." >&2
+        return
+    fi
+    echo "Available Agentic Team branches:" >&2
+    while IFS= read -r branch; do
+        [[ -n "$branch" ]] && printf '  %s\n' "$branch" >&2
+    done <<< "$branches"
 }
 
 resolve_launch_positionals() {
-    local count first
+    local count first root branch input resolved_input
     count="${#POSITIONAL_ARGS[@]}"
+    root="$TOP_LEVEL_RUN_ROOT"
 
-    if [[ -n "$WORKTREE_PATH_ARG" ]]; then
-        WORKSPACE_DIR="$WORKTREE_PATH_ARG"
+    if [[ -n "$root" ]]; then
+        if ! root="$(find_at_repository_root "$root")"; then
+            echo "Error: Not an Agentic Team repository: $TOP_LEVEL_RUN_ROOT" >&2
+            exit 1
+        fi
         if (( count > 0 )); then
-            CLI_ARGS+=("${POSITIONAL_ARGS[@]}")
+            branch="${POSITIONAL_ARGS[0]}"
+            (( count > 1 )) && CLI_ARGS+=("${POSITIONAL_ARGS[@]:1}")
         fi
-        return
-    fi
-
-    if (( count == 0 )); then
-        return
-    fi
-
-    first="${POSITIONAL_ARGS[0]}"
-    if (( count >= 2 )) && { path_looks_like_at_workspace "$first" || [[ -n "$AT_PROJECT_DIR_ARG" || -n "$AT_FROM_REF" ]]; }; then
-        AT_WORKSPACE_DIR_ARG="$first"
-        AT_WORK_NAME_ARG="${POSITIONAL_ARGS[1]}"
-        if (( count > 2 )); then
-            CLI_ARGS+=("${POSITIONAL_ARGS[@]:2}")
+    elif (( count > 0 )); then
+        first="$(expand_path "${POSITIONAL_ARGS[0]}")"
+        if [[ -d "$first" ]] && root="$(find_at_repository_root "$first" 2>/dev/null)"; then
+            resolved_input="$(resolve_realpath "$first")"
+            if path_is_at_repository_root "$resolved_input"; then
+                (( count > 1 )) && branch="${POSITIONAL_ARGS[1]}"
+                (( count > 2 )) && CLI_ARGS+=("${POSITIONAL_ARGS[@]:2}")
+            else
+                input="$resolved_input"
+                (( count > 1 )) && CLI_ARGS+=("${POSITIONAL_ARGS[@]:1}")
+            fi
+        else
+            if ! root="$(find_at_repository_root "$(pwd)" 2>/dev/null)"; then
+                echo "Error: Run from an Agentic Team repository or pass '-C AT_DIR'." >&2
+                exit 1
+            fi
+            branch="${POSITIONAL_ARGS[0]}"
+            (( count > 1 )) && CLI_ARGS+=("${POSITIONAL_ARGS[@]:1}")
         fi
-        return
+    else
+        if ! root="$(find_at_repository_root "$(pwd)" 2>/dev/null)"; then
+            echo "Error: Run from an Agentic Team repository or pass '-C AT_DIR'." >&2
+            exit 1
+        fi
+        input="$(resolve_realpath "$(pwd)")"
     fi
 
-    if (( count == 1 )) && { path_looks_like_at_workspace "$first" || [[ -n "$AT_PROJECT_DIR_ARG" ]]; }; then
-        AT_WORKSPACE_DIR_ARG="$first"
-        return
+    if [[ -n "$input" ]] && ! path_is_at_repository_root "$input"; then
+        WORKSPACE_DIR="$input"
+        branch="$(git -C "$WORKSPACE_DIR" branch --show-current 2>/dev/null || true)"
     fi
-
-    WORKSPACE_DIR="$first"
-    if (( count > 1 )); then
-        CLI_ARGS+=("${POSITIONAL_ARGS[@]:1}")
+    if [[ -z "$branch" ]]; then
+        show_materialized_at_branches "$root"
+        echo "Run with: agentic-team -C $root run BRANCH [OPTIONS]" >&2
+        exit 1
     fi
+    if ! git -C "$root/repo.git" check-ref-format --branch "$branch" >/dev/null 2>&1; then
+        echo "Error: Invalid branch name: $branch" >&2
+        exit 1
+    fi
+    WORKSPACE_DIR="${WORKSPACE_DIR:-$(at_code_path_for_branch "$root" "$branch")}"
+    if [[ ! -d "$WORKSPACE_DIR" ]]; then
+        echo "Error: Branch '$branch' has no paired checkout at $WORKSPACE_DIR" >&2
+        echo "Create it with: agentic-team -C $root checkout $branch" >&2
+        exit 1
+    fi
+    AT_WORKSPACE_DIR_ARG="$root"
+    AT_BRANCH_ARG="$branch"
+    AR_WORKSPACE_ROOT="$root"
+    export AR_WORKSPACE_ROOT
 }
 
-fallback_workspace_name_from_path() {
-    local path="$WORKSPACE_DIR" at_root project_link resolved_project base
-
-    if [[ "$(basename "$path")" == "code" && "$(basename "$(dirname "$(dirname "$path")")")" == *-at ]]; then
-        at_root="$(dirname "$(dirname "$path")")"
-        project_link="$at_root/project"
-        if [[ -e "$project_link" || -L "$project_link" ]]; then
-            if resolved_project="$(resolve_realpath "$project_link" 2>/dev/null)"; then
-                slugify_workspace_name "$(basename "$resolved_project")"
-                return
-            fi
-        fi
-        base="$(basename "$at_root")"
-        slugify_workspace_name "${base%-at}"
-        return
-    fi
-
-    slugify_workspace_name "$(basename "$path")"
+resolve_named_at_work() {
+    AR_WORKSPACE_ROOT="$AT_WORKSPACE_DIR_ARG"
+    export AR_WORKSPACE_ROOT
 }
 
 derive_workspace_name() {
-    AR_WORKSPACE_NAME="$(fallback_workspace_name_from_path)"
+    AR_WORKSPACE_NAME="$(slugify_workspace_name "$(basename "$AR_WORKSPACE_ROOT")")"
+    AR_WORKSPACE_NAME="${AR_WORKSPACE_NAME:-project}"
     export AR_WORKSPACE_NAME
 }
 
@@ -140,72 +190,20 @@ workspace_is_git_worktree() {
     [[ "$(git -C "$WORKSPACE_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" == "true" ]]
 }
 
-protected_work_branch() {
-    case "$1" in
-        main|master|trunk|dev|develop|release|release/*)
-            return 0
-            ;;
-    esac
-    return 1
-}
-
-work_branch_from_branch() {
-    local branch="$1"
-    if [[ "$branch" == */exp/* ]]; then
-        printf '%s\n' "${branch%%/exp/*}"
-    else
-        printf '%s\n' "$branch"
-    fi
-}
-
-work_branch_id() {
-    slugify_workspace_name "$1"
-}
-
-work_name_from_branch() {
-    local branch="$1" leaf
-    leaf="${branch##*/}"
-    slugify_workspace_name "${leaf:-$branch}"
-}
-
 agentic_workspace_root() {
-    local input_dir="${WORKSPACE_INPUT_DIR:-$WORKSPACE_DIR}" root_dir resolved_input parent
-
-    if [[ -n "${AR_WORKSPACE_ROOT:-}" ]]; then
-        resolve_realpath "$AR_WORKSPACE_ROOT" 2>/dev/null || printf '%s\n' "$AR_WORKSPACE_ROOT"
-        return
-    fi
-
-    if [[ "$(basename "$input_dir")" == "code" && "$(basename "$(dirname "$(dirname "$input_dir")")")" == *-at ]]; then
-        root_dir="$(dirname "$(dirname "$input_dir")")"
-        resolve_realpath "$root_dir" 2>/dev/null || printf '%s\n' "$root_dir"
-        return
-    fi
-
-    if resolved_input="$(resolve_realpath "$input_dir" 2>/dev/null)"; then
-        input_dir="$resolved_input"
-    fi
-
-    if [[ "$(basename "$input_dir")" == "code" && "$(basename "$(dirname "$(dirname "$input_dir")")")" == *-at ]]; then
-        dirname "$(dirname "$input_dir")"
-        return
-    fi
-
-    parent="$(dirname "$WORKSPACE_DIR")"
-    printf '%s/%s-at\n' "$parent" "$AR_WORKSPACE_NAME"
+    printf '%s\n' "$AR_WORKSPACE_ROOT"
 }
 
 set_agentic_workspace_root() {
-    AR_WORKSPACE_ROOT="$(agentic_workspace_root)"
     export AR_WORKSPACE_ROOT
 }
 
 agentic_runtime_root() {
     if [[ -n "${AR_RUNTIME_ROOT:-}" ]]; then
         resolve_realpath "$AR_RUNTIME_ROOT" 2>/dev/null || printf '%s\n' "$AR_RUNTIME_ROOT"
-        return
+    else
+        printf '%s/.runtime\n' "$AR_WORKSPACE_ROOT"
     fi
-    printf '%s/.runtime\n' "$AR_WORKSPACE_ROOT"
 }
 
 set_agentic_runtime_root() {
@@ -217,9 +215,9 @@ set_agentic_runtime_root() {
 agentic_artifacts_dir() {
     if [[ -n "${AR_ARTIFACTS_DIR:-}" ]]; then
         resolve_realpath "$AR_ARTIFACTS_DIR" 2>/dev/null || printf '%s\n' "$AR_ARTIFACTS_DIR"
-        return
+    else
+        printf '%s/artifacts/project\n' "$AR_WORKSPACE_ROOT"
     fi
-    printf '%s/artifacts/project\n' "$AR_WORKSPACE_ROOT"
 }
 
 set_agentic_artifacts_dir() {
@@ -227,37 +225,56 @@ set_agentic_artifacts_dir() {
     export AR_ARTIFACTS_DIR
 }
 
-project_state_dir_path() {
-    printf '%s/project-state\n' "$AR_WORKSPACE_ROOT"
+project_records_dir_path() {
+    printf '%s/project-records\n' "$AR_WORKSPACE_ROOT"
 }
 
-work_dir_path_for_branch() {
-    local branch="$1" work_name
-    work_name="$(work_name_from_branch "$branch")"
-    printf '%s/%s\n' "$AR_WORKSPACE_ROOT" "$work_name"
+branch_records_dir_path_for_branch() {
+    at_records_path_for_branch "$AR_WORKSPACE_ROOT" "$1"
 }
 
-code_worktree_path_for_branch() {
+work_branch_id() {
+    local branch="$1" slug digest
+    slug="$(slugify_workspace_name "$branch")"
+    slug="${slug:-branch}"
+    if [[ "$slug" == "$branch" ]]; then
+        printf '%s\n' "$slug"
+        return
+    fi
+    digest="$(printf '%s' "$branch" | git hash-object --stdin | cut -c1-10)"
+    printf '%s-%s\n' "$slug" "$digest"
+}
+
+git_commit_identity_configured() {
+    git -C "$WORKSPACE_DIR" var GIT_AUTHOR_IDENT >/dev/null 2>&1 \
+        && git -C "$WORKSPACE_DIR" var GIT_COMMITTER_IDENT >/dev/null 2>&1
+}
+
+setup_workspace_git_identity() {
+    local name email
+    workspace_is_git_worktree || return 0
+    git_commit_identity_configured && return 0
+    name="${AR_GIT_NAME:-${AR_NOTES_GIT_NAME:-}}"
+    email="${AR_GIT_EMAIL:-${AR_NOTES_GIT_EMAIL:-}}"
+    [[ -n "$name" && -n "$email" ]] || return 0
+    git -C "$WORKSPACE_DIR" config user.name "$name"
+    git -C "$WORKSPACE_DIR" config user.email "$email"
+}
+
+set_work_branch_vars() {
     local branch="$1"
-    printf '%s/code\n' "$(work_dir_path_for_branch "$branch")"
-}
-
-work_state_dir_path_for_branch() {
-    local branch="$1"
-    printf '%s/state\n' "$(work_dir_path_for_branch "$branch")"
-}
-
-git_branch_exists() {
-    git -C "$WORKSPACE_DIR" show-ref --verify --quiet "refs/heads/$1"
-}
-
-valid_git_branch_name() {
-    git -C "$WORKSPACE_DIR" check-ref-format --branch "$1" >/dev/null 2>&1
+    WORKSPACE_GIT_BRANCH="$branch"
+    AR_WORK_BRANCH="$branch"
+    AR_WORK_BRANCH_ID="$(work_branch_id "$branch")"
+    AR_WORK_BRANCH_PREFIX="$branch"
+    AR_PROJECT_RECORDS_DIR="$(project_records_dir_path)"
+    AR_BRANCH_RECORDS_DIR="$(branch_records_dir_path_for_branch "$branch")"
+    export WORKSPACE_GIT_BRANCH AR_WORK_BRANCH AR_WORK_BRANCH_ID AR_WORK_BRANCH_PREFIX
+    export AR_PROJECT_RECORDS_DIR AR_BRANCH_RECORDS_DIR
 }
 
 branch_guard_dir_for() {
-    local branch="$1"
-    printf '%s/branch-guards/%s\n' "$RUNTIME_ROOT" "$(slugify_workspace_name "$branch")"
+    printf '%s/branch-guards/%s\n' "$RUNTIME_ROOT" "$(work_branch_id "$1")"
 }
 
 file_mtime_epoch() {
@@ -265,21 +282,19 @@ file_mtime_epoch() {
 }
 
 branch_guard_is_fresh() {
-    local path="$1" now mtime stale_seconds
+    local now mtime stale_seconds
     stale_seconds="${AR_BRANCH_GUARD_STALE_SECONDS:-300}"
     now="$(date +%s)"
-    mtime="$(file_mtime_epoch "$path")"
-    [[ "$mtime" =~ ^[0-9]+$ ]] || return 1
-    (( now - mtime <= stale_seconds ))
+    mtime="$(file_mtime_epoch "$1")"
+    [[ "$mtime" =~ ^[0-9]+$ ]] && (( now - mtime <= stale_seconds ))
 }
 
 branch_guard_first_active_file() {
-    local branch="$1" guard_dir guard
-    guard_dir="$(branch_guard_dir_for "$branch")"
+    local guard_dir guard
+    guard_dir="$(branch_guard_dir_for "$1")"
     [[ -d "$guard_dir" ]] || return 1
     for guard in "$guard_dir"/*.guard; do
-        [[ -f "$guard" ]] || continue
-        [[ "$guard" == "${BRANCH_GUARD_FILE:-}" ]] && continue
+        [[ -f "$guard" && "$guard" != "${BRANCH_GUARD_FILE:-}" ]] || continue
         if branch_guard_is_fresh "$guard"; then
             printf '%s\n' "$guard"
             return 0
@@ -288,13 +303,8 @@ branch_guard_first_active_file() {
     return 1
 }
 
-branch_guard_is_occupied() {
-    branch_guard_first_active_file "$1" >/dev/null
-}
-
 branch_guard_summary() {
-    local guard="$1"
-    [[ -f "$guard" ]] || return 0
+    [[ -f "$1" ]] || return 0
     awk -F= '
         $1 == "session_id" { session=$2 }
         $1 == "main_agent" { main_agent=$2 }
@@ -309,531 +319,29 @@ branch_guard_summary() {
             if (workspace) printf "Workspace: %s\n", workspace
             if (started_at) printf "Started: %s\n", started_at
         }
-    ' "$guard"
-}
-
-git_ref_exists() {
-    git -C "$WORKSPACE_DIR" rev-parse --verify --quiet "$1^{commit}" >/dev/null 2>&1
-}
-
-workspace_has_uncommitted_changes() {
-    [[ -n "$(git -C "$WORKSPACE_DIR" status --porcelain 2>/dev/null || true)" ]]
-}
-
-git_commit_identity_configured() {
-    git -C "$WORKSPACE_DIR" var GIT_AUTHOR_IDENT >/dev/null 2>&1 \
-        && git -C "$WORKSPACE_DIR" var GIT_COMMITTER_IDENT >/dev/null 2>&1
-}
-
-configured_at_git_name() {
-    printf '%s\n' "${AR_GIT_NAME:-${AR_NOTES_GIT_NAME:-}}"
-}
-
-configured_at_git_email() {
-    printf '%s\n' "${AR_GIT_EMAIL:-${AR_NOTES_GIT_EMAIL:-}}"
-}
-
-setup_workspace_git_identity() {
-    local name email
-
-    workspace_is_git_worktree || return 0
-    git_commit_identity_configured && return 0
-
-    name="$(configured_at_git_name)"
-    email="$(configured_at_git_email)"
-    [[ -n "$name" && -n "$email" ]] || return 0
-
-    git -C "$WORKSPACE_DIR" config user.name "$name"
-    git -C "$WORKSPACE_DIR" config user.email "$email"
-}
-
-branch_config_get() {
-    local branch="$1" key="$2"
-    git -C "$WORKSPACE_DIR" config --get "branch.$branch.$key" 2>/dev/null || true
-}
-
-record_work_branch_base() {
-    local branch="$1" base_ref="$2" base_commit
-    [[ -n "$branch" && -n "$base_ref" ]] || return 0
-    git -C "$WORKSPACE_DIR" config "branch.$branch.agentic-base" "$base_ref" || true
-    if base_commit="$(git -C "$WORKSPACE_DIR" rev-parse "$base_ref^{commit}" 2>/dev/null)"; then
-        git -C "$WORKSPACE_DIR" config "branch.$branch.agentic-base-commit" "$base_commit" || true
-    fi
-}
-
-infer_work_branch_base_ref() {
-    local owner_branch="$1" current_branch="$2" value candidate upstream
-
-    value="$(branch_config_get "$owner_branch" "agentic-base")"
-    if [[ -n "$value" ]] && git_ref_exists "$value"; then
-        printf '%s\n' "$value"
-        return 0
-    fi
-
-    if [[ -n "$current_branch" ]] && [[ "$current_branch" != "$owner_branch" ]]; then
-        printf '%s\n' "$current_branch"
-        return 0
-    fi
-
-    upstream="$(git -C "$WORKSPACE_DIR" rev-parse --abbrev-ref "$owner_branch@{upstream}" 2>/dev/null || true)"
-    if [[ -n "$upstream" ]] && git_ref_exists "$upstream"; then
-        printf '%s\n' "$upstream"
-        return 0
-    fi
-
-    candidate="$(git -C "$WORKSPACE_DIR" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
-    if [[ -n "$candidate" ]] && git_ref_exists "$candidate"; then
-        printf '%s\n' "$candidate"
-        return 0
-    fi
-
-    for candidate in origin/main origin/master main master dev; do
-        if git_ref_exists "$candidate"; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    done
-
-    printf 'HEAD\n'
-}
-
-unused_work_branch_candidate() {
-    local base candidate n
-    base="work/$(slugify_workspace_name "${AR_USER_ID:-${USER:-agent}}")"
-    candidate="$base"
-    n=2
-    while git_branch_exists "$candidate" || branch_guard_is_occupied "$candidate"; do
-        candidate="$base-$n"
-        n=$((n + 1))
-    done
-    printf '%s\n' "$candidate"
-}
-
-default_worktree_path() {
-    local branch="$1" candidate n
-    set_agentic_workspace_root
-    candidate="$(code_worktree_path_for_branch "$branch")"
-    n=2
-    while [[ -e "$candidate" ]]; do
-        candidate="$(work_dir_path_for_branch "$branch")-$n/code"
-        n=$((n + 1))
-    done
-    printf '%s\n' "$candidate"
-}
-
-launch_is_interactive() {
-    [[ -t 0 && -t 1 ]]
-}
-
-expand_path() {
-    local path="$1"
-    case "$path" in
-        "~")
-            printf '%s\n' "$HOME"
-            ;;
-        "~/"*)
-            printf '%s/%s\n' "$HOME" "${path#~/}"
-            ;;
-        *)
-            printf '%s\n' "$path"
-            ;;
-    esac
-}
-
-default_project_for_at_root() {
-    local at_root="$1" base parent project_name
-    base="$(basename "$at_root")"
-    parent="$(dirname "$at_root")"
-    if [[ "$base" == *-at ]]; then
-        project_name="${base%-at}"
-        printf '%s/%s\n' "$parent" "$project_name"
-    else
-        printf '%s\n' "$parent/project"
-    fi
-}
-
-prompt_at_workspace_root() {
-    local default_root="$1" answer
-    read -r -p "AT workspace directory [$default_root]: " answer
-    printf '%s\n' "${answer:-$default_root}"
-}
-
-prompt_at_work_name() {
-    local default_name="$1" answer
-    read -r -p "AT work name [$default_name]: " answer
-    printf '%s\n' "${answer:-$default_name}"
-}
-
-list_at_work_names() {
-    local at_root="$1" code_dir
-
-    for code_dir in "$at_root"/*/code; do
-        [[ -d "$code_dir" || -L "$code_dir" ]] || continue
-        basename "$(dirname "$code_dir")"
-    done | LC_ALL=C sort
-}
-
-show_at_work_names() {
-    local work_names="$1" work_name
-
-    [[ -n "$work_names" ]] || return 0
-    echo "Existing AT work entries:" >&2
-    while IFS= read -r work_name; do
-        [[ -n "$work_name" ]] || continue
-        printf '  %s\n' "$work_name" >&2
-    done <<< "$work_names"
-}
-
-prompt_at_project_dir() {
-    local default_project="$1" answer
-    read -r -p "Project checkout [$default_project]: " answer
-    printf '%s\n' "${answer:-$default_project}"
-}
-
-prompt_at_source_ref() {
-    local default_ref="$1" answer
-    read -r -p "Create work from branch/ref or AT work [$default_ref]: " answer
-    printf '%s\n' "${answer:-$default_ref}"
-}
-
-relative_path_between() {
-    local relative_path
-
-    if command -v realpath >/dev/null 2>&1 \
-        && relative_path="$(realpath --relative-to="$2" "$1" 2>/dev/null)"; then
-        printf '%s\n' "$relative_path"
-        return 0
-    fi
-
-    python3 - "$1" "$2" <<'PY'
-import os
-import sys
-
-target, start = sys.argv[1], sys.argv[2]
-print(os.path.relpath(os.path.realpath(target), os.path.realpath(start)))
-PY
-}
-
-ensure_at_project_symlink() {
-    local project_dir="$1" link target
-    [[ -n "${AR_WORKSPACE_ROOT:-}" ]] || return 0
-    mkdir -p "$AR_WORKSPACE_ROOT"
-    link="$AR_WORKSPACE_ROOT/project"
-    if [[ -e "$link" || -L "$link" ]]; then
-        return 0
-    fi
-    target="$(relative_path_between "$project_dir" "$AR_WORKSPACE_ROOT")"
-    ln -s "$target" "$link"
-}
-
-current_branch_for_dir() {
-    git -C "$1" branch --show-current 2>/dev/null || true
-}
-
-resolve_named_at_work() {
-    local at_root work_name work_dir code_dir project_dir default_project source_ref default_ref
-    local existing_work_names default_work_name
-    local -a ensure_args
-
-    [[ -n "$AT_WORKSPACE_DIR_ARG" ]] || return 0
-
-    at_root="$(expand_path "$AT_WORKSPACE_DIR_ARG")"
-    if ! at_root="$(resolve_realpath "$at_root" 2>/dev/null)"; then
-        mkdir -p "$at_root"
-        at_root="$(resolve_realpath "$at_root")"
-    fi
-    AR_WORKSPACE_ROOT="$at_root"
-    export AR_WORKSPACE_ROOT
-
-    work_name="$AT_WORK_NAME_ARG"
-    if [[ -z "$work_name" ]]; then
-        existing_work_names="$(list_at_work_names "$at_root")"
-        show_at_work_names "$existing_work_names"
-        if ! launch_is_interactive; then
-            echo "Error: AT workspace launch requires a work name."
-            echo "Example: agentic-team $at_root research-main"
-            exit 1
-        fi
-        default_work_name="$(printf '%s\n' "$existing_work_names" | sed -n '1p')"
-        default_work_name="${default_work_name:-research-main}"
-        work_name="$(prompt_at_work_name "$default_work_name")"
-    fi
-    work_name="$(slugify_workspace_name "$work_name")"
-    work_dir="$at_root/$work_name"
-    code_dir="$work_dir/code"
-
-    if [[ -e "$code_dir" || -L "$code_dir" ]]; then
-        WORKSPACE_DIR="$code_dir"
-        return 0
-    fi
-
-    project_dir="$AT_PROJECT_DIR_ARG"
-    if [[ -z "$project_dir" && ( -e "$at_root/project" || -L "$at_root/project" ) ]]; then
-        project_dir="$at_root/project"
-    fi
-    if [[ -z "$project_dir" ]]; then
-        if ! launch_is_interactive; then
-            echo "Error: $code_dir does not exist and no project checkout is linked."
-            echo "Create it with:"
-            echo "  agentic-team $at_root $work_name --from BRANCH --project-dir PROJECT_DIR"
-            exit 1
-        fi
-        default_project="$(default_project_for_at_root "$at_root")"
-        project_dir="$(prompt_at_project_dir "$default_project")"
-    fi
-
-    source_ref="$AT_FROM_REF"
-    if [[ -z "$source_ref" ]]; then
-        if ! launch_is_interactive; then
-            echo "Error: $code_dir does not exist; pass --from REF_OR_WORK to create it."
-            exit 1
-        fi
-        default_ref="$(current_branch_for_dir "$project_dir")"
-        default_ref="${default_ref:-HEAD}"
-        source_ref="$(prompt_at_source_ref "$default_ref")"
-    fi
-
-    ensure_args=(
-        "$SCRIPT_DIR/scripts/bin/agentic-workspace"
-        ensure-work
-        "$work_name"
-        --workspace-root "$at_root"
-        --from "$source_ref"
-        --project-dir "$project_dir"
-        --state "$AT_STATE_MODE"
-        --capabilities "$AR_CAPABILITIES"
-    )
-    if [[ -n "$AT_NEW_BRANCH_ARG" ]]; then
-        ensure_args+=(--branch "$AT_NEW_BRANCH_ARG")
-    fi
-    "${ensure_args[@]}"
-
-    WORKSPACE_DIR="$code_dir"
-}
-
-prompt_menu_choice() {
-    local max="$1" default="$2" answer
-    while true; do
-        read -r -p "Choice [$default]: " answer
-        answer="${answer:-$default}"
-        if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= max )); then
-            printf '%s\n' "$answer"
-            return 0
-        fi
-        echo "Enter a number from 1 to $max."
-    done
-}
-
-prompt_work_branch_name() {
-    local default_branch="$1" branch
-    read -r -p "Work branch name [$default_branch]: " branch
-    branch="${branch:-$default_branch}"
-    printf '%s\n' "$branch"
-}
-
-prompt_worktree_path() {
-    local default_path="$1" path
-    read -r -p "Worktree path [$default_path]: " path
-    printf '%s\n' "${path:-$default_path}"
-}
-
-set_work_branch_vars() {
-    local owner_branch="$1" current_branch="$2"
-    WORKSPACE_GIT_BRANCH="$current_branch"
-    AR_WORK_BRANCH="$owner_branch"
-    AR_WORK_BRANCH_ID="$(work_branch_id "$owner_branch")"
-    AR_WORK_NAME="$(work_name_from_branch "$owner_branch")"
-    AR_WORK_BRANCH_PREFIX="$owner_branch"
-    set_agentic_workspace_root
-    AR_PROJECT_STATE_DIR="$(project_state_dir_path)"
-    AR_WORK_STATE_DIR="$(work_state_dir_path_for_branch "$owner_branch")"
-    export WORKSPACE_GIT_BRANCH AR_WORK_BRANCH AR_WORK_BRANCH_ID AR_WORK_NAME AR_WORK_BRANCH_PREFIX
-    export AR_PROJECT_STATE_DIR AR_WORK_STATE_DIR
-}
-
-switch_to_work_branch() {
-    local target="$1" base_ref="${2:-HEAD}" existed=false
-    if ! valid_git_branch_name "$target"; then
-        echo "Error: Invalid Git branch name: $target"
-        return 1
-    fi
-    if branch_guard_is_occupied "$target"; then
-        echo "Error: Branch '$target' appears to have another active local agent session."
-        branch_guard_summary "$(branch_guard_first_active_file "$target")"
-        return 1
-    fi
-    if git_branch_exists "$target"; then
-        existed=true
-        git -C "$WORKSPACE_DIR" switch "$target"
-    else
-        git -C "$WORKSPACE_DIR" switch -c "$target" "$base_ref"
-    fi
-    if [[ "$existed" != "true" ]]; then
-        record_work_branch_base "$target" "$base_ref"
-    fi
-}
-
-create_worktree() {
-    local target_branch="$1" base_ref="$2" target_dir="$3" base_commit
-    if ! valid_git_branch_name "$target_branch"; then
-        echo "Error: Invalid Git branch name: $target_branch"
-        return 1
-    fi
-    if branch_guard_is_occupied "$target_branch"; then
-        echo "Error: Branch '$target_branch' appears to have another active local agent session."
-        branch_guard_summary "$(branch_guard_first_active_file "$target_branch")"
-        return 1
-    fi
-    if [[ -e "$target_dir" ]]; then
-        echo "Error: Worktree path already exists: $target_dir"
-        return 1
-    fi
-    mkdir -p "$(dirname "$target_dir")"
-    if git_branch_exists "$target_branch"; then
-        if [[ "$(current_workspace_git_branch)" == "$target_branch" ]]; then
-            ln -s "$WORKSPACE_DIR" "$target_dir"
-            echo "Using existing checkout via symlink: $target_dir -> $WORKSPACE_DIR"
-        else
-            git -C "$WORKSPACE_DIR" worktree add "$target_dir" "$target_branch"
-        fi
-    else
-        git -C "$WORKSPACE_DIR" worktree add -b "$target_branch" "$target_dir" "$base_ref"
-        git -C "$target_dir" config "branch.$target_branch.agentic-base" "$base_ref" || true
-        if base_commit="$(git -C "$target_dir" rev-parse "$base_ref^{commit}" 2>/dev/null)"; then
-            git -C "$target_dir" config "branch.$target_branch.agentic-base-commit" "$base_commit" || true
-        fi
-    fi
-    WORKSPACE_DIR="$(resolve_realpath "$target_dir")"
-}
-
-print_branch_decision_context() {
-    local branch="$1" occupied="$2" dirty="$3" base_ref="$4" active_guard="${5:-}"
-    echo "Branch:          $branch"
-    echo "Another agent:   $occupied"
-    echo "Uncommitted:     $dirty"
-    echo "Base for branch: $base_ref"
-    if [[ -n "$active_guard" ]]; then
-        echo ""
-        echo "Active local agent:"
-        branch_guard_summary "$active_guard"
-    fi
-    echo ""
-}
-
-prepare_work_branch_interactive() {
-    local branch="$1" owner_branch="$2" occupied="$3" dirty="$4" active_guard="$5"
-    local base_ref candidate choice target_branch target_path max_choice default_choice
-
-    base_ref="$(infer_work_branch_base_ref "$owner_branch" "$branch")"
-    candidate="$(unused_work_branch_candidate)"
-
-    echo "Agentic Team main agents require their own work branch."
-    print_branch_decision_context "$branch" "$occupied" "$dirty" "$base_ref" "$active_guard"
-
-    if [[ "$occupied" == "yes" ]]; then
-        echo "Choose how to continue:"
-        echo "  1. Create a new worktree with a new work branch from $base_ref (recommended)"
-        echo "  2. Cancel"
-        max_choice=2
-        default_choice=1
-    elif [[ "$dirty" == "yes" ]]; then
-        echo "Choose how to continue:"
-        echo "  1. Create a new clean AT worktree with a work branch from $base_ref (recommended)"
-        echo "  2. Create a work branch in this worktree, carrying current changes"
-        echo "  3. Cancel"
-        max_choice=3
-        default_choice=1
-    else
-        echo "Choose how to continue:"
-        echo "  1. Create a new AT worktree with a work branch from $base_ref (recommended)"
-        echo "  2. Create a work branch in this worktree: $candidate"
-        echo "  3. Cancel"
-        max_choice=3
-        default_choice=1
-    fi
-
-    choice="$(prompt_menu_choice "$max_choice" "$default_choice")"
-    case "$choice" in
-        1)
-            AR_WORKSPACE_ROOT="$(prompt_at_workspace_root "$(agentic_workspace_root)")"
-            export AR_WORKSPACE_ROOT
-            ensure_at_project_symlink "$WORKSPACE_DIR"
-            base_ref="$(prompt_at_source_ref "$base_ref")"
-            target_branch="$(prompt_work_branch_name "$candidate")"
-            target_path="$(code_worktree_path_for_branch "$target_branch")"
-            create_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
-            return 0
-            ;;
-        2)
-            if [[ "$occupied" == "yes" ]]; then
-                echo "Launch cancelled."
-                exit 1
-            fi
-            target_branch="$(prompt_work_branch_name "$candidate")"
-            switch_to_work_branch "$target_branch" "HEAD" || exit 1
-            return 0
-            ;;
-        3)
-            echo "Launch cancelled."
-            exit 1
-            ;;
-    esac
-}
-
-prepare_at_work_entry_interactive() {
-    local branch="$1" owner_branch="$2" occupied="$3" dirty="$4" active_guard="$5"
-    local base_ref candidate target_branch target_path
-
-    base_ref="$(infer_work_branch_base_ref "$owner_branch" "$branch")"
-    candidate="$(unused_work_branch_candidate)"
-
-    echo "Agentic Team should run in an AT work entry."
-    print_branch_decision_context "$branch" "$occupied" "$dirty" "$base_ref" "$active_guard"
-
-    AR_WORKSPACE_ROOT="$(prompt_at_workspace_root "$(agentic_workspace_root)")"
-    export AR_WORKSPACE_ROOT
-    ensure_at_project_symlink "$WORKSPACE_DIR"
-    base_ref="$(prompt_at_source_ref "$base_ref")"
-    target_branch="$(prompt_work_branch_name "$candidate")"
-    target_path="$(code_worktree_path_for_branch "$target_branch")"
-    create_worktree "$target_branch" "$base_ref" "$target_path" || exit 1
+    ' "$1"
 }
 
 require_main_agent_selection() {
     if [[ -z "${AR_MAIN_AGENT:-}" ]]; then
-        echo "Error: No main agent selected."
-        echo "Run 'agentic-team --setup AR_MAIN_AGENT=NAME' or pass '--main-agent NAME'."
+        echo "Error: No main agent selected." >&2
+        echo "Run 'agentic-team --setup AR_MAIN_AGENT=NAME' or pass '--main-agent NAME'." >&2
         exit 1
     fi
 }
 
 resolve_main_agent_metadata() {
-    local main_agent="$AR_MAIN_AGENT" kind legacy_ownership
-
-    if ! valid_agent_name "$main_agent"; then
-        echo "Error: Invalid AR_MAIN_AGENT: $main_agent"
-        exit 1
-    fi
-
-    if ! MAIN_AGENT_SOURCE_PATH="$(find_agent_source_by_name "$main_agent")"; then
-        echo "Error: Main agent definition not found: $main_agent"
-        echo "Add an agents/$main_agent.md definition with 'kind: main' inside a project, org, or built-in capability."
+    local kind legacy_ownership
+    valid_agent_name "$AR_MAIN_AGENT" || { echo "Error: Invalid AR_MAIN_AGENT: $AR_MAIN_AGENT" >&2; exit 1; }
+    if ! MAIN_AGENT_SOURCE_PATH="$(find_agent_source_by_name "$AR_MAIN_AGENT")"; then
+        echo "Error: Main agent definition not found: $AR_MAIN_AGENT" >&2
         exit 1
     fi
     MAIN_AGENT_CAPABILITY="$(capability_name_for_source "$MAIN_AGENT_SOURCE_PATH" || true)"
-
     kind="$(agent_kind_for_source "$MAIN_AGENT_SOURCE_PATH")"
-    if [[ "$kind" != "main" ]]; then
-        echo "Error: AR_MAIN_AGENT '$main_agent' resolves to kind '$kind', not kind 'main'."
-        exit 1
-    fi
-
-    legacy_ownership="$(frontmatter_value "$MAIN_AGENT_SOURCE_PATH" "branch_ownership")"
-    if [[ -n "$legacy_ownership" ]]; then
-        echo "Error: Main agent '$main_agent' uses branch_ownership, which has been removed."
-        echo "All main agents require their own branches. Remove branch_ownership from the agent definition."
-        exit 1
-    fi
+    [[ "$kind" == "main" ]] || { echo "Error: AR_MAIN_AGENT '$AR_MAIN_AGENT' resolves to kind '$kind'." >&2; exit 1; }
+    legacy_ownership="$(frontmatter_value "$MAIN_AGENT_SOURCE_PATH" branch_ownership)"
+    [[ -z "$legacy_ownership" ]] || { echo "Error: Main agent '$AR_MAIN_AGENT' uses removed branch_ownership metadata." >&2; exit 1; }
 }
 
 ensure_branch_session_id() {
@@ -862,25 +370,16 @@ write_branch_guard_file() {
 }
 
 register_branch_guard() {
-    local guard_dir heartbeat_seconds launcher_pid
+    local heartbeat_seconds launcher_pid
     [[ "$TEST_MODE" == "true" || "$RENDER_ONLY" == "true" ]] && return 0
     ensure_branch_session_id
-    guard_dir="$(branch_guard_dir_for "$AR_WORK_BRANCH")"
-    BRANCH_GUARD_FILE="$guard_dir/$AR_SESSION_ID.guard"
+    BRANCH_GUARD_FILE="$(branch_guard_dir_for "$AR_WORK_BRANCH")/$AR_SESSION_ID.guard"
     BRANCH_GUARD_STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
     write_branch_guard_file
-
     heartbeat_seconds="${AR_BRANCH_GUARD_HEARTBEAT_SECONDS:-30}"
-    if ! [[ "$heartbeat_seconds" =~ ^[0-9]+$ ]] || [[ "$heartbeat_seconds" -lt 1 ]]; then
-        heartbeat_seconds=30
-    fi
+    [[ "$heartbeat_seconds" =~ ^[0-9]+$ && "$heartbeat_seconds" -ge 1 ]] || heartbeat_seconds=30
     launcher_pid="$$"
-    (
-        while kill -0 "$launcher_pid" 2>/dev/null; do
-            write_branch_guard_file
-            sleep "$heartbeat_seconds"
-        done
-    ) >/dev/null 2>&1 &
+    ( while kill -0 "$launcher_pid" 2>/dev/null; do write_branch_guard_file; sleep "$heartbeat_seconds"; done ) >/dev/null 2>&1 &
     BRANCH_GUARD_HEARTBEAT_PID="$!"
 }
 
@@ -890,140 +389,28 @@ cleanup_branch_guard() {
         wait "$BRANCH_GUARD_HEARTBEAT_PID" >/dev/null 2>&1 || true
         BRANCH_GUARD_HEARTBEAT_PID=""
     fi
-    if [[ -n "${BRANCH_GUARD_FILE:-}" ]]; then
-        rm -f "$BRANCH_GUARD_FILE"
-        BRANCH_GUARD_FILE=""
-    fi
+    [[ -z "${BRANCH_GUARD_FILE:-}" ]] || rm -f "$BRANCH_GUARD_FILE"
+    BRANCH_GUARD_FILE=""
 }
 
 prepare_work_branch() {
-    local branch owner_branch active_guard candidate base_ref occupied dirty
-
-    [[ "$TEST_MODE" == "true" ]] && return 0
-
-    if ! workspace_is_git_worktree; then
-        [[ "$RENDER_ONLY" == "true" ]] && return 0
-        echo "Error: Agentic Team main agents require launching from a Git worktree."
-        echo ""
-        echo "Create or enter a project Git checkout, then relaunch."
-        exit 1
-    fi
-
+    local branch active_guard
+    workspace_is_git_worktree || { echo "Error: Paired code checkout is not a Git worktree: $WORKSPACE_DIR" >&2; exit 1; }
     branch="$(current_workspace_git_branch)"
-    if [[ -z "$branch" ]]; then
-        [[ "$RENDER_ONLY" == "true" ]] && return 0
-        echo "Error: Agentic Team main agents require a named Git branch, but this worktree is detached."
+    if [[ -z "$branch" || "$branch" != "$AT_BRANCH_ARG" ]]; then
+        echo "Error: Expected branch '$AT_BRANCH_ARG' at $WORKSPACE_DIR, found '${branch:-detached HEAD}'." >&2
         exit 1
     fi
-
-    if [[ -n "${AR_WORK_BRANCH:-}" ]]; then
-        if [[ "$RENDER_ONLY" != "true" && "$branch" != "$AR_WORK_BRANCH" ]]; then
-            switch_to_work_branch "$AR_WORK_BRANCH" || exit 1
-            branch="$(current_workspace_git_branch)"
-        elif [[ "$RENDER_ONLY" == "true" ]]; then
-            branch="$AR_WORK_BRANCH"
-        fi
-    fi
-
-    owner_branch="$(work_branch_from_branch "$branch")"
-    set_work_branch_vars "$owner_branch" "$branch"
-
-    [[ "$RENDER_ONLY" == "true" ]] && return 0
-
-    active_guard=""
-    if active_guard="$(branch_guard_first_active_file "$AR_WORK_BRANCH")"; then
-        occupied="yes"
-    else
-        occupied="no"
-    fi
-    if workspace_has_uncommitted_changes; then
-        dirty="yes"
-    else
-        dirty="no"
-    fi
-
-    if [[ -z "$WORKTREE_PATH_ARG" ]] && ! workspace_input_is_at_code_path; then
-        candidate="$(unused_work_branch_candidate)"
-        base_ref="$(infer_work_branch_base_ref "$AR_WORK_BRANCH" "$branch")"
-        if ! launch_is_interactive; then
-            echo "Error: Agentic Team must launch from an AT work entry."
-            echo "Current branch: $branch"
-            echo "Another active agent: $occupied"
-            echo "Uncommitted changes: $dirty"
-            if [[ -n "$active_guard" ]]; then
-                echo ""
-                echo "Another active local agent appears to be using branch '$AR_WORK_BRANCH':"
-                branch_guard_summary "$active_guard"
-            fi
-            echo ""
-            echo "Create or launch an AT work entry:"
-            echo "  agentic-team $(agentic_workspace_root) $(work_name_from_branch "$candidate") --from $base_ref --project-dir $WORKSPACE_DIR --branch $candidate"
-            if [[ "$dirty" == "yes" ]]; then
-                echo ""
-                echo "Note: uncommitted changes in the current checkout stay where they are."
-            fi
-            echo ""
-            echo "Or launch an existing code worktree explicitly:"
-            echo "  agentic-team --worktree-path PATH"
-            exit 1
-        fi
-
-        prepare_at_work_entry_interactive "$branch" "$AR_WORK_BRANCH" "$occupied" "$dirty" "$active_guard"
-        branch="$(current_workspace_git_branch)"
-        owner_branch="$(work_branch_from_branch "$branch")"
-        set_work_branch_vars "$owner_branch" "$branch"
-        if branch_guard_is_occupied "$AR_WORK_BRANCH"; then
-            echo "Error: Branch '$AR_WORK_BRANCH' appears to have another active local agent session."
-            branch_guard_summary "$(branch_guard_first_active_file "$AR_WORK_BRANCH")"
-            exit 1
-        fi
-        register_branch_guard
-        return 0
-    fi
-
-    if ! protected_work_branch "$branch" && ! branch_guard_is_occupied "$AR_WORK_BRANCH"; then
-        register_branch_guard
-        return 0
-    fi
-
-    if ! launch_is_interactive; then
-        echo "Error: Main agent '$AR_MAIN_AGENT' cannot use this AT work entry as-is."
-        echo "Current branch: $branch"
-        echo "Another active agent: $occupied"
-        echo "Uncommitted changes: $dirty"
-        if [[ -n "$active_guard" ]]; then
-            echo ""
-            echo "Another active local agent appears to be using branch '$AR_WORK_BRANCH':"
-            branch_guard_summary "$active_guard"
-        fi
-        candidate="$(unused_work_branch_candidate)"
-        base_ref="$(infer_work_branch_base_ref "$AR_WORK_BRANCH" "$branch")"
-        echo ""
-        if [[ "$occupied" == "yes" ]]; then
-            echo "Create a new AT work entry with an unused work branch:"
-            echo "  agentic-team $(agentic_workspace_root) $(work_name_from_branch "$candidate") --from $base_ref --project-dir $WORKSPACE_DIR --branch $candidate"
-        else
-            echo "Create a new AT work entry for the branch:"
-            echo "  agentic-team $(agentic_workspace_root) $(work_name_from_branch "$candidate") --from $base_ref --project-dir $WORKSPACE_DIR --branch $candidate"
-        fi
-        if [[ "$dirty" == "yes" && "$occupied" == "yes" ]]; then
-            echo ""
-            echo "Note: uncommitted changes in the current worktree stay where they are."
-        fi
+    if [[ "$(resolve_realpath "$WORKSPACE_DIR")" != "$(resolve_realpath "$(at_code_path_for_branch "$AR_WORKSPACE_ROOT" "$branch")")" ]]; then
+        echo "Error: Agentic Team only runs from its managed checkout for '$branch'." >&2
         exit 1
     fi
-
-    prepare_work_branch_interactive "$branch" "$AR_WORK_BRANCH" "$occupied" "$dirty" "$active_guard"
-    branch="$(current_workspace_git_branch)"
-    owner_branch="$(work_branch_from_branch "$branch")"
-    set_work_branch_vars "$owner_branch" "$branch"
-
-    if branch_guard_is_occupied "$AR_WORK_BRANCH"; then
-        echo "Error: Branch '$AR_WORK_BRANCH' appears to have another active local agent session."
-        branch_guard_summary "$(branch_guard_first_active_file "$AR_WORK_BRANCH")"
+    set_work_branch_vars "$branch"
+    [[ "$TEST_MODE" == "true" || "$RENDER_ONLY" == "true" ]] && return 0
+    if active_guard="$(branch_guard_first_active_file "$branch")"; then
+        echo "Error: Branch '$branch' already has an active local agent session." >&2
+        branch_guard_summary "$active_guard"
         exit 1
     fi
-
     register_branch_guard
-    return 0
 }

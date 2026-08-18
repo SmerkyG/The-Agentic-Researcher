@@ -1,13 +1,14 @@
-"""Shared Git-backed Agentic Team state mechanics.
+"""Shared Git-backed Agentic Records mechanics.
 
-This module owns local state worktree management, work-branch identity, locking,
+This module owns local records-worktree management, branch identity, locking,
 and ordinary Git synchronization. Capabilities use it as substrate; they own
-the files and schemas they place in those state worktrees.
+the files and schemas they place in those records worktrees.
 """
 
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -79,11 +80,11 @@ def explicit_runtime_root() -> Path | None:
 
 
 def state_branch() -> str:
-    return os.environ.get("AR_PROJECT_STATE_BRANCH", "agentic/project-state")
+    return os.environ.get("AR_PROJECT_RECORDS_BRANCH", "agentic/project-records")
 
 
 def work_state_branch(branch: str) -> str:
-    return f"agentic/work-state/{work_branch(branch)}"
+    return f"agentic/branch-records/{work_branch(branch)}"
 
 
 def agent_type(value: str | None = None) -> str:
@@ -110,12 +111,12 @@ def work_branch(value: str | None = None) -> str:
 
 
 def work_branch_id(value: str | None = None) -> str:
-    return slugify(work_branch(value), default="branch")
-
-
-def work_name(value: str | None = None) -> str:
     branch = work_branch(value)
-    return slugify(Path(branch).name, default=work_branch_id(branch))
+    slug = slugify(branch, default="branch")
+    if slug == branch:
+        return slug
+    digest = hashlib.sha256(branch.encode("utf-8")).hexdigest()[:10]
+    return f"{slug}-{digest}"
 
 
 def safe_load_yaml(path: Path) -> dict[str, Any]:
@@ -167,16 +168,8 @@ def slugify(text: str, *, default: str = "item", max_len: int = 72) -> str:
 
 def fallback_workspace_name(project_dir: Path) -> str:
     expanded = project_dir.expanduser()
-    if expanded.name == "code" and expanded.parent.parent.name.endswith("-at"):
-        at_root = expanded.parent.parent
-        project_link = at_root / "project"
-        if project_link.exists() or project_link.is_symlink():
-            try:
-                return slugify(project_link.resolve().name, default="project")
-            except OSError:
-                pass
-        return slugify(at_root.name.removesuffix("-at"), default="project")
-
+    if expanded.name == "repo.git" and (expanded.parent / ".agentic-team.json").is_file():
+        return slugify(expanded.parent.name, default="project")
     try:
         return slugify(expanded.resolve().name, default="project")
     except OSError:
@@ -202,13 +195,12 @@ def workspace_root(project_dir: Path) -> Path:
         return configured
 
     expanded = project_dir.expanduser()
-    if expanded.name == "code" and expanded.parent.parent.name.endswith("-at"):
-        return expanded.parent.parent.resolve()
-
+    if expanded.name == "repo.git" and (expanded.parent / ".agentic-team.json").is_file():
+        return expanded.parent.resolve()
+    for candidate in (expanded.resolve(), *expanded.resolve().parents):
+        if (candidate / ".agentic-team.json").is_file() and (candidate / "repo.git").is_dir():
+            return candidate
     resolved = expanded.resolve()
-    if resolved.name == "code" and resolved.parent.parent.name.endswith("-at"):
-        return resolved.parent.parent
-
     return resolved.parent / f"{workspace_name(project_dir)}-at"
 
 
@@ -232,14 +224,14 @@ def org_checkout_path() -> Path:
 
 
 def project_state_path(project_dir: Path) -> Path:
-    return workspace_root(project_dir) / "project-state"
+    return workspace_root(project_dir) / "project-records"
 
 
 def work_state_path(
     project_dir: Path,
     branch: str,
 ) -> Path:
-    return workspace_root(project_dir) / work_name(branch) / "state"
+    return workspace_root(project_dir) / "branches" / work_branch(branch) / "records"
 
 
 def lock_file_for(
@@ -322,7 +314,10 @@ def is_git_repo(path: Path) -> bool:
     if not path.exists():
         return False
     result = run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"], check=False)
-    return result.returncode == 0 and result.stdout.strip() == "true"
+    if result.returncode == 0 and result.stdout.strip() == "true":
+        return True
+    bare = run(["git", "-C", str(path), "rev-parse", "--is-bare-repository"], check=False)
+    return bare.returncode == 0 and bare.stdout.strip() == "true"
 
 
 def git_remote(repo: Path) -> str | None:

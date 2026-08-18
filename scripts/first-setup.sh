@@ -326,7 +326,7 @@ AR_HTTP_PROXY="$AR_HTTP_PROXY"
 # Base directory for local state, caches, and container temp data
 AR_STATE_ROOT="$AR_STATE_ROOT"
 
-# Optional visible AT workspace root. Blank means sibling <repo-name>-at.
+# Set by `agentic-team run` from the selected repository; do not configure.
 AR_WORKSPACE_ROOT=""
 
 # Extra directories to bind into the sandbox (colon-separated)
@@ -343,12 +343,12 @@ AR_EXTRA_BIND_DIRS="$AR_EXTRA_BIND_DIRS"
 AR_ORG_NOTES_REPO="$AR_ORG_NOTES_REPO"
 AR_MAIN_AGENT="$AR_MAIN_AGENT"
 AR_USER_ID="\$USER"
-AR_PROJECT_STATE_BRANCH="agentic/project-state"
+AR_PROJECT_RECORDS_BRANCH="agentic/project-records"
 AR_NOTES_AUTO_REFRESH="true"
 # Git identity for Agentic Team-created commits when a repo lacks identity.
 AR_GIT_NAME="$AR_GIT_NAME"
 AR_GIT_EMAIL="$AR_GIT_EMAIL"
-# Optional override for Agentic State commits. Blank means use AR_GIT_*.
+# Optional override for Agentic Records commits. Blank means use AR_GIT_*.
 AR_NOTES_GIT_NAME=""
 AR_NOTES_GIT_EMAIL=""
 AR_AUTO_BUILD="true"
@@ -366,16 +366,18 @@ echo ""
 echo "Next steps:"
 if [[ "$AR_SANDBOX" == "none" ]]; then
     echo "  1. Make sure '$AR_CLI' is installed on PATH"
-    echo "  2. Launch from your project Git checkout: agentic-team ~/your-project"
-    echo "     If you are on main/master, Agentic Team can prompt to create a work branch."
+    echo "  2. Clone an upstream: agentic-team clone UPSTREAM_URL ~/project-at"
+    echo "  3. Create a checkout: agentic-team -C ~/project-at checkout main"
 elif [[ "$AR_CLI" == "claude" ]]; then
-    echo "  1. Launch from your project Git checkout: agentic-team ~/your-project  (will prompt for OAuth login)"
-    echo "     If you are on main/master, Agentic Team can prompt to create a work branch."
+    echo "  1. Clone an upstream: agentic-team clone UPSTREAM_URL ~/project-at"
+    echo "  2. Create a checkout: agentic-team -C ~/project-at checkout main"
+    echo "  3. Run it: agentic-team -C ~/project-at run main  (will prompt for OAuth login)"
     echo "     The container image builds automatically on first launch."
 else
-    echo "  1. Launch from your project Git checkout: agentic-team ~/your-project"
-    echo "     If you are on main/master, Agentic Team can prompt to create a work branch."
+    echo "  1. Clone an upstream: agentic-team clone UPSTREAM_URL ~/project-at"
+    echo "  2. Create a checkout: agentic-team -C ~/project-at checkout main"
+    echo "  3. Run it: agentic-team -C ~/project-at run main"
     echo "     The container image builds automatically on first launch."
-    echo "  2. If needed, export the selected CLI's standard API key env var before launch"
+    echo "  4. If needed, export the selected CLI's standard API key env var before launch"
 fi
 echo "════════════════════════════════════════════════════════════════"

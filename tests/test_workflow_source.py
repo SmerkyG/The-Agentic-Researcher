@@ -70,7 +70,7 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     assert "```python agentic-workflow" not in rendered
     assert "class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):" in rendered
     assert 'summary: str = Value("Compact topic hints, at most 80 characters")' in rendered
-    assert "class FinalizationStateCommitTool" in rendered
+    assert "class FinalizationRecordsCommitTool" in rendered
     assert "class ExperimentLogAppendTool" in rendered
     assert "class AgenticNotesUpdateTool" in rendered
     assert "class ResearchFinalizer(SubagentWorkflow[ResearchFinalizerResult]):" in rendered
@@ -79,7 +79,7 @@ def test_rendered_finalizer_contains_semantic_inputs_and_private_dependencies() 
     assert "records.experiment_log.code.commit = workspace.code_commit" in rendered
     workflow = rendered[rendered.index("class ResearchFinalizer(SubagentWorkflow") :]
     assert workflow.index("FinalizationReadyTool(") < workflow.index("ReportAppendTool(")
-    assert workflow.index("FinalizationStateCommitTool(") < workflow.index("records.experiment_log.run()")
+    assert workflow.index("FinalizationRecordsCommitTool(") < workflow.index("records.experiment_log.run()")
     assert workflow.index("FinalizationFinishTool(") < workflow.index("NoteUpdater(")
     assert "experiment_log_state" not in rendered
     assert "BranchSnapshotAfterCommit" not in rendered
@@ -107,7 +107,7 @@ def test_coordinator_admits_and_detaches_finalizer_without_waiting() -> None:
     )
     assert "the snapshot name-status contains unexpected files" not in rendered
     assert "experiment_log: ExperimentLogAppendTool = self.fill" not in rendered
-    assert "relative to the work-state directory" in rendered
+    assert "relative to the branch records directory" in rendered
     assert "uv run --no-project python ..." in rendered
     assert "Use ordinary `uv run` only when the check imports project dependencies" in rendered
     assert "Do not add a separate `py_compile` check" in rendered

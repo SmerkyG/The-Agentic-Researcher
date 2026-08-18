@@ -21,7 +21,7 @@ class FinalizationStart(ExecutableWorkflow[FinalizationTicket]):
 
     guidance: ClassVar[str] = (
         "Use explicit code paths, a focused commit message, immutable-snapshot checks, "
-        "and work-state-relative report asset paths. Paths that already match HEAD are a "
+        "and branch-records-relative report asset paths. Paths that already match HEAD are a "
         "valid replay no-op. The operation is inert until Python calls run()."
     )
 
@@ -45,11 +45,11 @@ class FinalizationStart(ExecutableWorkflow[FinalizationTicket]):
         default_factory=list,
     )
     report_assets: list[str] = Value(
-        "Explicit report-asset paths relative to the work-state directory",
+        "Explicit report-asset paths relative to the branch records directory",
         default_factory=list,
     )
     project_dir: str = "."
-    work_state_dir: str | None = None
+    branch_records_dir: str | None = None
 
     def workflow(self) -> FinalizationTicket:
         if self.code_paths:
@@ -80,5 +80,5 @@ class FinalizationStart(ExecutableWorkflow[FinalizationTicket]):
         return FinalizationCaptureTool(
             report_assets=self.report_assets,
             project_dir=self.project_dir,
-            work_state_dir=self.work_state_dir,
+            branch_records_dir=self.branch_records_dir,
         ).run()

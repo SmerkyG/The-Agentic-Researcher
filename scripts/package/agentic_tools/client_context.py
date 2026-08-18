@@ -68,7 +68,6 @@ def register_context(args: argparse.Namespace) -> int:
         "instruction_path": args.instruction_path,
         "main_agent": args.main_agent,
         "work_branch": args.work_branch,
-        "work_name": args.work_name,
         "capabilities": [item for item in args.capabilities.split(",") if item],
         "environment": environment,
         "commands": {
@@ -308,7 +307,18 @@ def run_hook(args: argparse.Namespace) -> int:
     if args.mode in {"claude-compact", "codex-post-compact"}:
         message = _refresh_message(manifest)
         if args.mode == "codex-post-compact":
-            print(json.dumps({"systemMessage": message}))
+            event_name = payload.get("hook_event_name") or "SessionStart"
+            print(
+                json.dumps(
+                    {
+                        "systemMessage": "Agentic Team refreshed post-compaction instructions.",
+                        "hookSpecificOutput": {
+                            "hookEventName": event_name,
+                            "additionalContext": message,
+                        },
+                    }
+                )
+            )
         else:
             event_name = payload.get("hook_event_name") or "SessionStart"
             print(
@@ -409,7 +419,6 @@ def build_parser() -> argparse.ArgumentParser:
     register.add_argument("--instruction-path", required=True)
     register.add_argument("--main-agent", required=True)
     register.add_argument("--work-branch", default="")
-    register.add_argument("--work-name", default="")
     register.add_argument("--capabilities", default="")
     register.add_argument("--workflow-mcp", default="")
     register.add_argument("--capability-refresh", required=True)

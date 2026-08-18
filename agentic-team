@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # agentic-team: Launch an AI coding agent for structured research.
-# Usage: agentic-team [OPTIONS] [PROJECT_DIR|AT_DIR WORK_NAME] [CLI_OPTIONS...]
+# Usage: agentic-team {init|clone|checkout|branch|run} ...
 # Run with --help for details.
 #
 
@@ -63,6 +63,8 @@ main() {
     profile_step "capture_env_overrides" capture_env_overrides
     profile_step "load_cli_adapters" load_cli_adapters
     profile_step "load_sandbox_adapters" load_sandbox_adapters
+    normalize_top_level_command "$@"
+    set -- "${TOP_LEVEL_ARGS[@]}"
     profile_step "parse_arguments" parse_arguments "$@"
     profile_step "load_config" load_config
     profile_step "apply_env_overrides" apply_env_overrides

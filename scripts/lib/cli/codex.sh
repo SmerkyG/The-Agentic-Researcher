@@ -9,7 +9,44 @@ cli_codex_apply_defaults() {
 
 cli_codex_setup_storage() {
     CODEX_STATE_DIR="${CODEX_HOME:-$HOME/.codex}"
+    CODEX_HOOK_REVIEW_REQUIRED=false
     mkdir -p "$AR_CONFIG_STORE/.codex" "$CODEX_STATE_DIR"
+}
+
+codex_hook_definition_exists() {
+    local path="$1"
+    local event_name="$2"
+    local matcher="$3"
+    local command="$4"
+    local timeout="$5"
+    local status_message="$6"
+
+    python3 - "$path" "$event_name" "$matcher" "$command" "$timeout" "$status_message" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+event_name, matcher, command, timeout, status_message = sys.argv[2:]
+try:
+    document = json.loads(path.read_text(encoding="utf-8"))
+except (FileNotFoundError, json.JSONDecodeError, OSError):
+    raise SystemExit(1)
+
+expected = {
+    "matcher": matcher,
+    "hooks": [
+        {
+            "type": "command",
+            "command": command,
+            "timeout": int(timeout),
+            "statusMessage": status_message,
+        }
+    ],
+}
+groups = document.get("hooks", {}).get(event_name, [])
+raise SystemExit(0 if expected in groups else 1)
+PY
 }
 
 cli_codex_instruction_target() {
@@ -66,12 +103,23 @@ cli_codex_render_agent() {
 cli_codex_setup_compaction_hooks() {
     local post_compact_command patch_json legacy_script
     post_compact_command="agentic-team-client hook codex-post-compact --client codex"
+    if ! codex_hook_definition_exists \
+        "$CODEX_STATE_DIR/hooks.json" \
+        SessionStart \
+        compact \
+        "$post_compact_command" \
+        120 \
+        "Agentic Team compaction refresh"
+    then
+        CODEX_HOOK_REVIEW_REQUIRED=true
+    fi
     patch_json=$(cat <<EOF
 {
   "hooks": {
-    "PostCompact": [
+    "PostCompact": [],
+    "SessionStart": [
       {
-        "matcher": "manual|auto",
+        "matcher": "compact",
         "hooks": [
           {
             "type": "command",
@@ -82,8 +130,7 @@ cli_codex_setup_compaction_hooks() {
         ]
       }
     ],
-    "UserPromptSubmit": [],
-    "SessionStart": []
+    "UserPromptSubmit": []
   }
 }
 EOF
@@ -105,6 +152,16 @@ EOF
 cli_codex_setup_steering_hooks() {
     local command patch_json legacy_script
     command="agentic-team-client hook codex-post-tool --client codex"
+    if ! codex_hook_definition_exists \
+        "$CODEX_STATE_DIR/hooks.json" \
+        PostToolUse \
+        '*' \
+        "$command" \
+        15 \
+        "Agentic Notes steering"
+    then
+        CODEX_HOOK_REVIEW_REQUIRED=true
+    fi
     patch_json=$(cat <<EOF
 {
   "hooks": {
@@ -249,6 +306,13 @@ cli_codex_prepare_external_client() {
     fi
     codex mcp remove agentic_workflows >/dev/null 2>&1 || true
     codex mcp add agentic_workflows -- "$dispatcher" exec-workflow-mcp --client codex
+
+    if [[ "${CODEX_HOOK_REVIEW_REQUIRED:-false}" == "true" ]]; then
+        printf '\nAgentic Team installed or changed Codex hooks. Codex requires explicit review before they can run.\n'
+        printf 'After preparation completes, run: codex -C %q\n' "$WORKSPACE_DIR"
+        printf 'Then enter /hooks in the Codex TUI and trust the Agentic Team hooks.\n'
+        printf 'This review is normally needed only once after installation.\n\n'
+    fi
 }
 
 cli_codex_cleanup_legacy_client_configuration() {
